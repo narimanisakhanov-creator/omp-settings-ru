@@ -47,6 +47,6 @@ jobs:
       - name: check markdown links
         run: npx --yes markdown-link-check@3.13.7 --config .github/markdown-link-check.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/faq.md docs/glossary.md docs/architecture.md
       - name: scan for secrets
-        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2.13.2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.13.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
