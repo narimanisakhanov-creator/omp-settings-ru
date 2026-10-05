@@ -9,7 +9,7 @@ if (await child.exited !== 0) throw new Error("package-list-failed: " + err);
 const report = JSON.parse(out) as Array<{ files: Array<{ path: string }> }> | Record<string, { files: Array<{ path: string }> }>;
 const packages = Array.isArray(report) ? report : Object.values(report);
 const files = packages[0]!.files.map(file => file.path).sort();
-const allowedRoot: Readonly<Record<string, true>> = { "package.json": true, "README.md": true, "CONTRIBUTING.md": true, "CHANGELOG.md": true, "LICENSE": true, "THIRD_PARTY_NOTICES.md": true, "SECURITY.md": true };
+const allowedRoot: Readonly<Record<string, true>> = { "package.json": true, "README.md": true, "CONTRIBUTING.md": true, "CHANGELOG.md": true, "LICENSE": true, "THIRD_PARTY_NOTICES.md": true, "SECURITY.md": true, "CODE_OF_CONDUCT.md": true };
 const failures: string[] = [];
 for (const path of files) {
   if (!path.startsWith("src/") && !Object.hasOwn(allowedRoot, path)) failures.push("unexpected-file:" + path);

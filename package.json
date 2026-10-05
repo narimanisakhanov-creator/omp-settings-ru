@@ -10,7 +10,7 @@
   "repository": { "type": "git", "url": "git+https://github.com/narimanisakhanov-creator/omp-settings-ru.git" },
   "bugs": { "url": "https://github.com/narimanisakhanov-creator/omp-settings-ru/issues" },
   "keywords": ["oh-my-pi", "omp", "settings", "russian", "localization", "typescript"],
-  "files": ["src", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md"],
+  "files": ["src", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md", "CODE_OF_CONDUCT.md"],
   "omp": { "extensions": ["./src/index.ts"] },
   "scripts": {
     "test": "bun test",

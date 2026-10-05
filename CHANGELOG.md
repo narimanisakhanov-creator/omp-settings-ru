@@ -1,5 +1,11 @@
 # изменения
 
+## [Unreleased]
+
+- docs: скриншоты панели из одноразового профиля, faq, русский глоссарий терминов, страница архитектуры;
+- гигиена: editorconfig, gitattributes, CODEOWNERS, dependabot для actions, нормы поведения;
+- CI: job hygiene с проверкой ссылок и секрет-сканом (gitleaks);
+
 ## [0.1.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.1.0) — 2026-10-06
 
 - отдельное расширение русского перевода штатного `/settings` OMP 18.6.1: 398 настроек, описания, предупреждения и статические варианты.

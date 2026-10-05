@@ -33,3 +33,20 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
+
+  hygiene:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: check markdown links
+        run: npx --yes markdown-link-check@3.13.7 --config .github/markdown-link-check.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/faq.md docs/glossary.md docs/architecture.md
+      - name: scan for secrets
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2.13.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

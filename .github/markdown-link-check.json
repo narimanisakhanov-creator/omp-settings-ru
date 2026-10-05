@@ -1,0 +1,9 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^https://github.com/narimanisakhanov-creator/omp-settings-ru/(actions|releases|security|issues)" },
+    { "pattern": "^https://img.shields.io/" }
+  ],
+  "retryOn429": true,
+  "retries": 3,
+  "timeout": "20s"
+}

@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.{ts,json,yml,md} text diff
+*.svg text diff
+*.tgz binary
+*.png binary
+dist/ export-ignore
+.smoke/ export-ignore
+.tools/ export-ignore
+local-shots/ export-ignore
