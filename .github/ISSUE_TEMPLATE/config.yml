@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Сообщить об уязвимости приватно
+    url: https://github.com/narimanisakhanov-creator/omp-settings-ru/security/advisories/new
+    about: Не публикуйте детали уязвимости и секреты в обычных issues.

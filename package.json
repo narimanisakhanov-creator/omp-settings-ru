@@ -1,0 +1,30 @@
+{
+  "name": "omp-settings-ru",
+  "version": "0.1.0",
+  "description": "Русский перевод штатной панели /settings Oh My Pi",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "author": "narimanisakhanov-creator",
+  "homepage": "https://github.com/narimanisakhanov-creator/omp-settings-ru#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/narimanisakhanov-creator/omp-settings-ru.git" },
+  "bugs": { "url": "https://github.com/narimanisakhanov-creator/omp-settings-ru/issues" },
+  "keywords": ["oh-my-pi", "omp", "settings", "russian", "localization", "typescript"],
+  "files": ["src", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md"],
+  "omp": { "extensions": ["./src/index.ts"] },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "source:export": "bun scripts/export-source.ts",
+    "coverage:check": "bun scripts/check-coverage.ts",
+    "drift:check": "bun scripts/diff-upstream.ts",
+    "smoke": "bun scripts/smoke-extension.ts",
+    "smoke:panel": "bun scripts/smoke-panel.ts",
+    "release:check": "bun scripts/check-release.ts",
+    "check": "bun run typecheck && bun test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check"
+  },
+  "peerDependencies": { "@oh-my-pi/pi-coding-agent": "18.6.1", "@oh-my-pi/pi-utils": "18.6.1" },
+  "devDependencies": { "@oh-my-pi/pi-coding-agent": "18.6.1", "@oh-my-pi/pi-utils": "18.6.1", "@oh-my-pi/pi-tui": "18.6.1", "@types/bun": "1.3.14", "typescript": "5.9.2" },
+  "packageManager": "bun@1.3.14",
+  "engines": { "bun": ">=1.3.14" }
+}

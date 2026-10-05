@@ -1,0 +1,32 @@
+name: ошибка
+description: Воспроизводимая ошибка перевода или поведения /settings
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: Не прикладывайте ключи, сессии и личные конфиги. Сначала проверьте OMP 18.6.1.
+  - type: input
+    id: versions
+    attributes:
+      label: Версии плагина и OMP
+      placeholder: omp-settings-ru 0.1.0, omp 18.6.1
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: ОС и терминал
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      description: Минимальные шаги, ожидаемый и фактический результат; ID настройки, если известен.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Очищенный вывод или снимок
+      description: Без ключей, личных путей и содержимого сессий.

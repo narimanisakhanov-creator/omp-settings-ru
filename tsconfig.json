@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "Preserve", "moduleResolution": "Bundler",
+    "strict": true, "noUncheckedIndexedAccess": true, "skipLibCheck": true,
+    "noEmit": true, "types": ["bun"], "allowImportingTsExtensions": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}
