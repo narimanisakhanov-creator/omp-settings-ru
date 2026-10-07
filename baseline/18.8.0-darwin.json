@@ -1,6 +1,6 @@
 {
   "version": "18.8.0",
-  "platform": "win32",
+  "platform": "darwin",
   "settings": {
     "advisor.enabled": {
       "sourceHash": "9a5b44778ea7e6735705a0795f47639f3f498461a65d0f811734d5a32124e1be",
