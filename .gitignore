@@ -10,3 +10,5 @@ Thumbs.db
 .smoke/
 dist/
 .firecrawl/
+upgrade-report.md
+check-output.txt

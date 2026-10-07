@@ -49,4 +49,5 @@ assert.equal(createSettingsHost().get("symbolPreset"), "nerd");
 assert.equal(await controller.setLanguage("ru", "main"), undefined);
 assert.equal(await controller.shutdown("main"), undefined);
 assert.equal(createSettingsHost().entries.find(entry => entry.path === "colorBlindMode")?.ui?.label, "Color-Blind Mode");
-console.log(JSON.stringify({ hostVersion: "18.6.1", platform: process.platform, russianSearch: true, nativeBooleanEdit: true, staticOptions: true, originalEnumValue: true, englishRestore: true, childOwnership: true, shutdownRestore: true, isolated: true, ok: true }, null, 2));
+const hostVersion = (await getHostMetadata()).version;
+console.log(JSON.stringify({ hostVersion, platform: process.platform, russianSearch: true, nativeBooleanEdit: true, staticOptions: true, originalEnumValue: true, englishRestore: true, childOwnership: true, shutdownRestore: true, isolated: true, ok: true }, null, 2));

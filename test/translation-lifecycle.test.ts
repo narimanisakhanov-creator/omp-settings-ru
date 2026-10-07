@@ -5,9 +5,9 @@ import type { LocalePack } from "../src/translations/types";
 import { applyTranslations } from "../src/apply-translations";
 import { computeSourceHash, normalizeSource } from "../src/source";
 function fixture() {
-  const host: HostMetadata = { version: "18.6.1", platform: "win32", schema: { "test.mode": { type: "string", default: "off", values: ["off", "on"], ui: { tab: "general", label: "Mode", description: "Choose mode", options: [{ value: "off", label: "Off" }, { value: "on", label: "On" }] } } } };
+  const host: HostMetadata = { version: "18.8.0", platform: "win32", schema: { "test.mode": { type: "string", default: "off", values: ["off", "on"], ui: { tab: "general", label: "Mode", description: "Choose mode", options: [{ value: "off", label: "Off" }, { value: "on", label: "On" }] } } } };
   const ui = host.schema["test.mode"]!.ui!;
-  const pack: LocalePack = { locale: "ru", sourceOmpVersion: "18.6.1", settings: { "test.mode": { sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим", options: { off: { label: "Выключено" }, on: { label: "Включено" } } } } };
+  const pack: LocalePack = { locale: "ru", sourceOmpVersion: "18.8.0", settings: { "test.mode": { sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим", options: { off: { label: "Выключено" }, on: { label: "Включено" } } } } };
   return { host, pack, ui };
 }
 
@@ -55,7 +55,7 @@ describe("translation lifecycle", () => {
     if (result.status === "applied") result.restore();
   });
   test("only the exact reviewed host and pack version may mutate", () => {
-    for (const version of ["18.6.2", "18.6.1-beta", "19.0.0"]) {
+      for (const version of ["18.8.1", "18.8.0-beta", "19.0.0"]) {
       const { host, pack, ui } = fixture();
       host.version = version;
       expect(applyTranslations(host, pack).status).toBe("skipped");

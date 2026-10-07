@@ -19,7 +19,7 @@ function setting(ui?: HostUiMetadata): HostSettingDefinition {
 }
 
 function hostOf(schema: Record<string, HostSettingDefinition>, platform = "win32"): HostMetadata {
-  return { version: "18.6.1", platform, schema };
+  return { version: "18.8.0", platform, schema };
 }
 
 function entry(ui: HostUiMetadata, template: string | undefined, fields: Omit<SettingTranslation, "sourceHash"> & { sourceHash?: string }): SettingTranslation {
@@ -27,7 +27,7 @@ function entry(ui: HostUiMetadata, template: string | undefined, fields: Omit<Se
 }
 
 function pack(settings: Record<string, SettingTranslation>): LocalePack {
-  return { locale: "ru", sourceOmpVersion: "18.6.1", settings };
+  return { locale: "ru", sourceOmpVersion: "18.8.0", settings };
 }
 
 describe("coverage report", () => {
@@ -201,7 +201,7 @@ describe("upstream drift", () => {
   const other: HostUiMetadata = { tab: "general", label: "Timeout", description: "Request timeout" };
   const previousMode: HostUiMetadata = { ...mode, label: "Old Mode" };
   const baseline = {
-    version: "18.6.1",
+    version: "18.8.0",
     platform: "win32",
     settings: {
       keep: { sourceHash: computeSourceHash(normalizeSource(mode)), ...normalizeSource(mode) },
@@ -229,7 +229,7 @@ describe("upstream drift", () => {
     const snapshot = buildSourceSnapshot(hostOf({ keep: setting(mode), plain: setting() }));
     expect(Object.keys(snapshot.settings)).toEqual(["keep"]);
     expect(snapshot.settings.keep!.sourceHash).toBe(computeSourceHash(normalizeSource(mode)));
-    expect(snapshot.version).toBe("18.6.1");
+    expect(snapshot.version).toBe("18.8.0");
     expect(JSON.stringify(buildSourceSnapshot(host))).toBe(JSON.stringify(buildSourceSnapshot(host)));
   });
 });

@@ -7,7 +7,7 @@ const spelling = ruPart1["spelling.autocomplete"]!;
 
 export const ru: LocalePack = {
   locale: "ru",
-  sourceOmpVersion: "18.6.1",
+  sourceOmpVersion: "18.8.0",
   settings: {
     ...ruPart1,
     ...ruPart2,

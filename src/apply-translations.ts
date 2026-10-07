@@ -166,7 +166,7 @@ function restoreMutations(mutations: readonly Mutation[], lastIndex: number, own
 export function applyTranslations(host: HostMetadata, pack: LocalePack): ApplyTranslationsResult {
   const compatibility = checkHostCompatibility(host);
   if (!compatibility.compatible) return { status: "skipped", reason: compatibility.reason };
-  if (pack.locale !== "ru" || pack.sourceOmpVersion !== "18.6.1") return { status: "skipped", reason: "unsupported-locale-pack" };
+  if (pack.locale !== "ru" || pack.sourceOmpVersion !== "18.8.0") return { status: "skipped", reason: "unsupported-locale-pack" };
   const previous = active.get(host.schema);
   if (previous) return previous.pack === pack ? previous.result : { status: "skipped", reason: "translation-already-active" };
   let mutations: Mutation[];

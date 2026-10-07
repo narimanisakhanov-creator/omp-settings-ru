@@ -14,19 +14,19 @@ export const ruPart3: Readonly<Record<string, SettingTranslation>> = {
       "Включает доступную только для чтения преамбулу eval archive: история промптов, недавние проекты, прошлые сессии и сводки",
   },
   "computer.display": {
-    sourceHash: "14af977285f7a02466d758697e30a16b5a46a926260fb40d3c033689371f2fc2",
+    sourceHash: "f42b63e05ca3ced233cf1a9e544f364dfa655c64aa6425c7e05b37b6019e1448",
     label: "Дисплей компьютера",
-    description: "Объединять все дисплеи или выбрать id нативного дисплея",
+    description: "Дисплей активного окна (active), все дисплеи (all) или id нативного дисплея",
   },
   "computer.maxWidth": {
-    sourceHash: "8383e8e3add55068a4da3a01af53a7b798068674d0deb77595f42de58fd88613",
+    sourceHash: "ff889e5dda1bc35ab41a3de01847aaf718c25eb387c8c520338863d9a133354b",
     label: "Ширина скриншота компьютера",
-    description: "Максимальная ширина составного скриншота в пикселях",
+    description: "Максимальная ширина скриншота в пикселях",
   },
   "computer.maxHeight": {
-    sourceHash: "8e7a2ef0f3e68b6ac14a285b89c594229783a34b3d068dda590539a16c62ac01",
+    sourceHash: "3fda41698ce87415bfb563a37b35c631e53d20d0d14f96acb966dcf6d4b92c9f",
     label: "Высота скриншота компьютера",
-    description: "Максимальная высота составного скриншота в пикселях",
+    description: "Максимальная высота скриншота в пикселях",
   },
   "images.questionTimeoutMs": {
     sourceHash: "addb2c58be4eb11390500602f75075398a60ffae7ff3fe3c1ac5546ddb46b078",
@@ -728,10 +728,10 @@ export const ruPart3: Readonly<Record<string, SettingTranslation>> = {
       "Использовать поверхности cmux WKWebView для автоматизации браузера, когда доступен сокет cmux. Задайте PI_BROWSER_CMUX=0 или PI_BROWSER_CMUX=1 для переопределения.",
   },
   "browser.tern": {
-    sourceHash: "d47907979a3e419cc7b0946a0e51675354af6c0f07826bc46399dc1085d6c544",
+    sourceHash: "0355bf9a5c9e3401be54aef02e646c40378f212309afe8f3214238285229832f",
     label: "Браузер Tern",
     description:
-      "Внутри панели Tern открывать вкладки браузера как картинку в картинке поверх панели omp (нативное веб-представление) вместо безголового Chromium; при отсутствии окна Tern, способного их разместить, происходит возврат к Chromium. Явные параметры app, ретранслятор и CDP URL браузера имеют приоритет; headed:false или app.tern:false исключает одно открытие. Задайте PI_BROWSER_TERN=0 или PI_BROWSER_TERN=1 для переопределения.",
+      "Внутри панели Tern открывать вкладки браузера как картинку в картинке поверх панели omp (нативное веб-представление) вместо безголового Chromium; при отсутствии окна Tern, способного их разместить, происходит возврат к Chromium. Явные параметры app, ретранслятор и CDP URL браузера имеют приоритет; app.tern:false исключает одно открытие. Задайте PI_BROWSER_TERN=0 или PI_BROWSER_TERN=1 для переопределения.",
   },
   "browser.freezeOnTurnEnd": {
     sourceHash: "4277a2304699c39a135dfc0706b3e20347f6ffec2d72f737b055432131d1ea00",

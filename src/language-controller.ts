@@ -4,7 +4,7 @@ import type { HostMetadata } from "./host-types";
 import type { LocalePack } from "./translations/types";
 
 const refusalMessages: Readonly<Record<string, string>> = {
-  "unsupported-host-version": "версия OMP не поддерживается; проверена только 18.6.1",
+  "unsupported-host-version": "версия OMP не поддерживается; проверена только 18.8.0",
   "invalid-host-platform": "платформа хоста не определена",
   "invalid-host-schema": "структура реестра настроек несовместима",
   "invalid-setting-definition": "структура определения настройки несовместима",
