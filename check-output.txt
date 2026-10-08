@@ -1,0 +1,96 @@
+$ bun run typecheck && bun test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check
+$ tsc --noEmit
+bun test v1.3.14 (0d9b296a)
+
+::group::test/report.test.ts:
+(pass) coverage report > separates complete, partial, untranslated and stale entries [0.49ms]
+(pass) coverage report > does not credit a translation that invents a warning [0.08ms]
+(pass) coverage report > reports missing and stale option values separately [0.10ms]
+(pass) coverage report > requires an option description only where the source option has one [0.06ms]
+(pass) coverage report > static catalog options for dynamic or absent sources are stale, never missing [0.09ms]
+(pass) coverage report > flags a source hash mismatch even when every text is translated [0.04ms]
+(pass) reviewed templates > tolerate live keybinding changes but not changed wording [0.53ms]
+(pass) reviewed templates > a translation cannot claim a template the source does not have [0.05ms]
+(pass) reviewed templates > a platform entry that drops the reviewed template stays partial [0.07ms]
+(pass) platform resolution > platform entries replace the whole entry, not single fields [0.04ms]
+(pass) platform resolution > coverage uses the override for the host platform [0.08ms]
+(pass) upstream drift > reports added, removed and changed paths explicitly [0.41ms]
+(pass) upstream drift > an unchanged registry and a different platform label are not drift [0.15ms]
+(pass) upstream drift > snapshot hashes normalized metadata and skips settings without ui [0.13ms]
+
+::endgroup::
+
+::group::test/source.test.ts:
+(pass) source identity > keybinding changes preserve identity only inside a reviewed template [0.10ms]
+(pass) source identity > changed option values and warnings invalidate translation identity [0.05ms]
+
+::endgroup::
+
+::group::test/translation-lifecycle.test.ts:
+(pass) translation lifecycle > round trip keeps enum values and the shared option source unchanged [0.86ms]
+(pass) translation lifecycle > unwritable fields refuse atomically before any label changes [0.37ms]
+(pass) translation lifecycle > later foreign labels survive English restoration [0.12ms]
+(pass) translation lifecycle > changed known sources and unknown settings stay English [0.07ms]
+(pass) translation lifecycle > only the exact reviewed host and pack version may mutate [0.08ms]
+(pass) translation lifecycle > reapplication shares restoration ownership instead of nesting translations [0.12ms]
+(pass) translation lifecycle > foreign descriptor edits survive even with the localized value unchanged [0.10ms]
+(pass) translation lifecycle > foreign option fields and array descriptors keep the display copy alive [0.13ms]
+(pass) translation lifecycle > live description getters retain key hints and fall back after wording drift [0.35ms]
+(pass) translation lifecycle > unsafe setter and inherited fields refuse without invoking writes [0.21ms]
+(pass) translation lifecycle > identical shared targets deduplicate while conflicting translations refuse atomically [0.24ms]
+(pass) translation lifecycle > proxy rejection rolls back earlier writes with sanitized diagnostics [0.12ms]
+(pass) translation lifecycle > failed restoration can be retried without losing ownership [0.17ms]
+(pass) translation lifecycle > foreign replacement getters remain intact on restoration [0.15ms]
+(pass) translation lifecycle > deleted fields and replaced options are not recreated on restoration [0.16ms]
+(pass) translation lifecycle > a proxy that mutates before throwing still restores exact descriptors [0.20ms]
+(pass) translation lifecycle > platform overrides are complete rather than inherited base fields [0.16ms]
+(pass) translation lifecycle > restoring a stale handle cannot orphan a newer application [0.23ms]
+(pass) translation lifecycle > invalid metadata and throwing reads refuse before mutation [0.18ms]
+(pass) translation lifecycle > added warnings restore absence rather than creating undefined fields [0.13ms]
+(pass) translation lifecycle > nonconfigurable live getters refuse atomically [0.13ms]
+(pass) translation lifecycle > distinct UIs sharing completion options localize independently [0.16ms]
+(pass) translation lifecycle > write verification catches a proxy falsely claiming success [0.13ms]
+(pass) translation lifecycle > rollback failures are stable codes rather than thrown local data [0.18ms]
+(pass) translation lifecycle > shared option translation conflicts refuse before any mutation [0.11ms]
+
+::endgroup::
+
+::group::test/language-controller.test.ts:
+(pass) child transitions and shutdown cannot undo main-session language [0.36ms]
+(pass) queued language choices finish in user order, then restore on shutdown [0.17ms]
+(pass) incompatible hosts warn in Russian without exposing source exception details [0.19ms]
+(pass) unfinished rollback remains pending until English or shutdown restores it [0.46ms]
+
+::endgroup::
+
+ 45 pass
+ 0 fail
+ 175 expect() calls
+Ran 45 tests across 4 files. [32.00ms]
+$ bun scripts/check-coverage.ts
+{
+  "locale": "ru",
+  "sourceOmpVersion": "18.8.0",
+  "hostVersion": "18.8.4",
+  "platform": "linux",
+  "versionMismatch": true,
+  "ok": false,
+  "report": {
+    "totalUiSettings": 404,
+    "translatedSettings": 404,
+    "completeSettings": 403,
+    "partialSettings": 1,
+    "untranslatedPaths": [],
+    "partialPaths": [
+      "title.icons"
+    ],
+    "stalePaths": [],
+    "optionMismatches": [],
+    "sourceHashMismatches": [
+      "title.icons"
+    ]
+  }
+}
+error: script "coverage:check" exited with code 1
+error: script "check" exited with code 1
+check exit status: 1
