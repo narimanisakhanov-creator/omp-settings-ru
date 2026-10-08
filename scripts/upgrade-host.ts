@@ -35,7 +35,7 @@ if (requested === "latest") {
   if (!latest) throw new Error("npm registry returned no dist-tags.latest");
   version = latest;
 } else version = requested;
-if (!/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version)) throw new Error(`Invalid version: ${version}`);
+if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.test(version)) throw new Error(`Invalid version: ${version}`);
 const current = packageJson.peerDependencies["@oh-my-pi/pi-coding-agent"];
 for (const name of pinned) {
   const metadata = await fetchJson(`https://registry.npmjs.org/${name.replace("/", "%2F")}`);
