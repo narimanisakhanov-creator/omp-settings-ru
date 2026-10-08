@@ -3,7 +3,7 @@
 ## [0.2.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.2.0) — 2026-10-07
 
 - обновлённая поддержка OMP 18.8.0: 404 настройки (было 398), +6 новых, 10 изменившихся описаний, 0 удалённых;
-- добавлены baseline 18.8.0 для Windows, Linux и macOS; Linux JSON-эквивалентен Windows, macOS дополнительно содержит вариант `apple` у `spelling.autocomplete`;
+- добавлены baseline 18.8.0 для Windows, Linux и macOS; метаданные настроек Linux (`.settings`) эквивалентны Windows, macOS дополнительно содержит вариант `apple` у `spelling.autocomplete`;
 - фикстуры доменных тестов и текст отказа обновлены на 18.8.0; smoke штатной панели теперь печатает фактическую версию хоста;
 - docs: скриншоты панели из одноразового профиля, faq, русский глоссарий терминов, страница архитектуры;
 - гигиена: editorconfig, gitattributes, CODEOWNERS, dependabot для actions, нормы поведения;
@@ -15,7 +15,7 @@
 
 ### фактически проверено
 
-`bun run check` завершился с exit 0: typecheck, 45 доменных тестов, покрытие 404/404, drift 0, smoke расширения (404 настройки, 5445 мутаций, failureCount 0), smoke штатной панели с печатью реальной версии хоста 18.8.0 и release:check (22 файла, без срабатываний). baseline 18.8.0 подготовлены для Windows, Linux и macOS; Linux JSON-эквивалентен win32, darwin добавляет вариант `apple` у `spelling.autocomplete`. фикстуры и текст отказа обновлены на 18.8.0.
+`bun run check` завершился с exit 0: typecheck, 45 доменных тестов, покрытие 404/404, drift 0, smoke расширения (404 настройки, 5445 мутаций, failureCount 0), smoke штатной панели с печатью реальной версии хоста 18.8.0 и release:check (22 файла, без срабатываний). baseline 18.8.0 подготовлены для Windows, Linux и macOS; метаданные настроек Linux (`.settings`) эквивалентны Windows, darwin добавляет вариант `apple` у `spelling.autocomplete`. фикстуры и текст отказа обновлены на 18.8.0.
 
 не проверено: ручной запуск установленной панели на 18.8.0 (интерактивный TUI) и прогон macOS.
 
