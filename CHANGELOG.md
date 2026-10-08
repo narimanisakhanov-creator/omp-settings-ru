@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - watcher проверяет версии до shell-вызовов, использует минимальные права и не перезаписывает существующие upgrade-ветки или PR.
+- исправлен `sourceHash` у `spelling.autocomplete` в baseline OMP 18.8.0 для darwin: значение согласовано с платформенными полями и живым macOS export OMP 18.8.4.
 
 ## [0.2.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.2.0) — 2026-10-07
 
