@@ -45,7 +45,7 @@ jobs:
           fi
           branch="upgrade/omp-$version"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          existing_pr=$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$branch" --state all --json number --jq 'length > 0')
+          existing_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length > 0')
           if [ "$existing_pr" = true ]; then
             printf 'mode=skip\n' >> "$GITHUB_OUTPUT"
             echo "$branch already has a PR; leaving its branch and body untouched"
@@ -145,7 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="upgrade/omp-$VERSION"
-          existing_pr=$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$branch" --state all --json number --jq 'length > 0')
+          existing_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length > 0')
           if [ "$existing_pr" = true ]; then
             echo "$branch already has a PR; leaving its branch and body untouched"
             exit 0
@@ -172,7 +172,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="upgrade/omp-$VERSION"
-          existing_pr=$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$branch" --state all --json number --jq 'length > 0')
+          existing_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length > 0')
           if [ "$existing_pr" = true ]; then
             echo "$branch acquired a PR; leaving it untouched"
             exit 0
