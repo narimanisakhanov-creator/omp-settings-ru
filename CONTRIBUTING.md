@@ -20,7 +20,7 @@ runtime получает живой реестр запущенного OMP; л�
 
 ```text
 bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to marketplace --spec omp-settings-ru@omp-settings-ru --backup <new-private-backup.json> --apply
-bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to npm --spec github:narimanisakhanov-creator/omp-settings-ru#v0.3.1 --backup <another-private-backup.json> --apply
+bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to npm --spec github:narimanisakhanov-creator/omp-settings-ru#v0.4.0 --backup <another-private-backup.json> --apply
 ```
 
 Скрипт требует explicit named profile, до удаления типизированно проверяет lock и сохраняет own state/settings с JSON types, `null`/`[]` features и disabled-state; чужие записи и неизвестные поля переносятся без изменений. Marketplace должен быть добавлен заранее. Backup приватный, не перезаписывается. При сбое install частично поставленный альтернативный канал сначала удаляется, затем восстанавливается исходный канал и его own запись; если и это невозможно, скрипт сообщает точный backup и не выдаёт сбой за успех — не копируй весь старый lockfile поверх текущего. Для личного профиля нужна отдельная разрешённая операция; local proof использует только disposable homes.

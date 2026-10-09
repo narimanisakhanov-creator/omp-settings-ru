@@ -18,10 +18,10 @@
 
 выбери **один** канал; не добавляй вторую копию через `-e`, `--plugin-dir` или settings extensions. После установки нужна новая сессия.
 
-**npm-managed GitHub** — фиксированный [выпуск v0.3.1](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.1), не npm registry:
+**npm-managed GitHub** — фиксированный тег [v0.4.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.4.0), не npm registry:
 
 ```text
-omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.3.1
+omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.4.0
 ```
 
 **marketplace** — после публикации проверенного индекса сопровождающим:

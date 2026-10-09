@@ -1,12 +1,15 @@
 # изменения
 
-## не выпущено
+## [0.4.0] — 2026-10-10
 
-- два альтернативных канала одного `omp.extensions`: npm-managed GitHub и нативный marketplace; `private:true` сохранён.
-- `scripts/switch-channel.ts`: state-preserving смена канала с типизированной проверкой lock до удаления, приватным backup и восстановлением исходного канала при сбое.
-- `scripts/distribution-smoke.ts`: native proof обоих каналов, обеих миграций, панели (поиск/bool/enum/языковой цикл) и реального `off/notify/auto` на owned stale каталоге; `--source` проверяет текущий checkout.
-- post-release index publisher с immutable SHA/ref, живым exact-commit workflow proof и сверкой archive/SHA256SUMS; remote публикация не выполнялась.
-- README/FAQ явно отделяют глобальный opt-in auto от SHA256SUMS/ReleasePin gate и предупреждают о state loss при uninstall.
+- второй канал того же `omp.extensions` — нативный marketplace OMP рядом с npm-managed GitHub; одновременно загружается одна копия, `private:true` сохранён, npm registry publication отсутствует.
+- индекс каталога `.omp-plugin/marketplace.json` публикуется отдельной веткой и закрепляет release commit полным `source.sha` и тегом `source.ref`; `main` и `stable` не являются источником пакета.
+- `scripts/marketplace-catalog.ts` / `scripts/marketplace-index.ts`: до любой записи живой выпуск перепроверяется по annotated tag → commit, успешному exact-commit workflow `check` и digest assets archive/`SHA256SUMS`; публикация индекса монотонна и идемпотентна, понижение версии и перезапись конфликтующего индекса отклоняются.
+- `.github/workflows/marketplace-index.yml` запускается после успешного выпуска и прогоняет оба нативных канала по целевому каталогу до обычного fast-forward push только ветки индекса.
+- `scripts/switch-channel.ts`: state-preserving смена канала с типизированной проверкой lock до удаления, приватным backup собственной записи, переносом `null`/`[]` features и disabled-state без изменения чужих ключей; при сбое install частично поставленный канал удаляется и восстанавливается исходный.
+- `scripts/distribution-smoke.ts`: native proof обоих каналов — точный SHA/load path, отказ на коллизии имени и недоступном SHA, обе миграции канала, панель (поиск/bool/enum/языковой цикл) и реальный `off/notify/auto` на owned stale каталоге; `--source` проверяет текущий checkout.
+- `marketplace.autoUpdate=auto` — только явный общий opt-in OMP для всех marketplace-плагинов пользователя и активного проекта, не настройка расширения; он не заменяет SHA256SUMS/ReleasePin gate и не гарантирует установку при сетевой ошибке.
+- README/FAQ явно отделяют глобальный opt-in auto от SHA256SUMS/ReleasePin gate и предупреждают о state loss при uninstall; установка описана для обоих каналов, `main` не назван источником пакета.
 
 ## [0.3.1] — 2026-10-09
 
