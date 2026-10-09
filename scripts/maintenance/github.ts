@@ -93,16 +93,17 @@ export class GitHub {
   async api(path:string):Promise<any>{const result=await command("gh",["api",path],this.policy.deadlinesMs.command);if(result.code!==0)throw Object.assign(new Error("github-read-unavailable"),{cause:result.stderr});return JSON.parse(result.stdout);}
   async observePr(number:number):Promise<PrObservation>{
     if(!Number.isSafeInteger(number)||number<1)throw new Error("invalid-pr-number");const root=`repos/${this.policy.repository}`;const pr=await this.api(`${root}/pulls/${number}`);
-    const files=[];for(let page=1;page<=30;page++){const rows=await this.api(`${root}/pulls/${number}/files?per_page=100&page=${page}`);files.push(...rows);if(rows.length<100)break;if(page===30)throw new Error("changed-paths-truncated");}
-    const tree=await this.api(`${root}/git/trees/${pr.head.sha}?recursive=1`),baseTree=await this.api(`${root}/git/trees/${pr.base.sha}?recursive=1`);if(tree.truncated||baseTree.truncated)throw new Error("git-tree-truncated");
-    const contents=async(ref:string,path="package.json")=>{const data=await this.api(`${root}/contents/${path}?ref=${ref}`);return Buffer.from(data.content,"base64").toString("utf8");};
-    const after=JSON.parse(await contents(pr.head.sha)),before=JSON.parse(await contents(pr.base.sha));
+    const contents=(ref:string,path="package.json")=>this.api(`${root}/contents/${path}?ref=${ref}`).then(data=>Buffer.from(data.content,"base64").toString("utf8"));
+    const changedFiles=async()=>{const files=[];for(let page=1;page<=30;page++){const rows=await this.api(`${root}/pulls/${number}/files?per_page=100&page=${page}`);files.push(...rows);if(rows.length<100)break;if(page===30)throw new Error("changed-paths-truncated");}return files;};
+    const [files,tree,baseTree,afterBytes,beforeBytes]=await Promise.all([changedFiles(),this.api(`${root}/git/trees/${pr.head.sha}?recursive=1`),this.api(`${root}/git/trees/${pr.base.sha}?recursive=1`),contents(pr.head.sha),contents(pr.base.sha)]);
+    if(tree.truncated||baseTree.truncated)throw new Error("git-tree-truncated");
+    const after=JSON.parse(afterBytes),before=JSON.parse(beforeBytes);
     const candidate=new RegExp(this.policy.branchPattern).exec(pr.head.ref)?.[1]??"";
     const candidateAlias=candidateHostAlias(candidate);
     const hostPins=Object.entries(after.devDependencies??{}).filter(([name,value])=>/^@oh-my-pi\/(pi-coding-agent|pi-utils|pi-tui|pi-natives)$/.test(name)||name===candidateAlias&&value===`npm:@oh-my-pi/pi-coding-agent@${candidate}`).map(([,value])=>typeof value==="string"?value.replace(/^npm:@oh-my-pi\/pi-coding-agent@/,""):String(value));
     let lockReceipt:LockReceipt|undefined;
     if(files.some(f=>f.filename==="bun.lock"&&f.status!=="removed")) {
-      const oldLock=await contents(pr.base.sha,"bun.lock"),newLock=await contents(pr.head.sha,"bun.lock");
+      const [oldLock,newLock]=await Promise.all([contents(pr.base.sha,"bun.lock"),contents(pr.head.sha,"bun.lock")]);
       const candidate=new RegExp(this.policy.branchPattern).exec(pr.head.ref)?.[1]??"";
       const trusted=await resolveHostLock(oldLock,candidate,this.policy.deadlinesMs.command);
       const workspace=record(record(Bun.JSON5.parse(oldLock)).workspaces)[""] as Record<string,unknown>;
@@ -249,9 +250,10 @@ export function verifyLockChange(oldBytes:string,newBytes:string,headSha:string,
         }
       }
     };
-    const devDependencies=record(record(record(after.workspaces)[""]).devDependencies??{});
-    const candidateAlias=candidateHostAlias(candidate);
-    for(const name of Object.keys(devDependencies))if(direct.test(name)||name===candidateAlias&&devDependencies[name]===`npm:@oh-my-pi/pi-coding-agent@${candidate}`)visit(name);
+    const canonicalAlias=(name:string,value:unknown):boolean=>{if(typeof value!=="string")return false;const match=/^npm:@oh-my-pi\/pi-coding-agent@(\d+\.\d+\.\d+)$/.exec(value);return !!match&&name===candidateHostAlias(match[1]!);};
+    const seed=(deps:Record<string,unknown>,candidateOnly:boolean):void=>{for(const name of Object.keys(deps)){if(direct.test(name)){visit(name);continue;}if(!canonicalAlias(name,deps[name]))continue;if(candidateOnly&&deps[name]!==`npm:@oh-my-pi/pi-coding-agent@${candidate}`)continue;visit(name);}};
+    seed(record(oldRoot.devDependencies??{}),false);
+    seed(record(record(workspaces[""]).devDependencies??{}),true);
     for(const name of new Set([...Object.keys(oldPackages),...Object.keys(packages)])) {
       if(JSON.stringify(oldPackages[name])===JSON.stringify(packages[name]))continue;
       const row=packages[name];

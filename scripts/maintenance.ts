@@ -1,10 +1,11 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, isAbsolute, resolve } from "node:path";
 import { readFile, realpath, mkdir, writeFile } from "node:fs/promises";
 import { command, GitHub, precheck, botIdentity, sanitizeCause, mergeGate, manifestChecks, validateMetadata, verifyProvenance, prepareScanner, verifyLockChange, resolveHostLock, validateReleasePairs } from "./maintenance/github";
 import type { Precheck, PrObservation, PublicationEvidence } from "./maintenance/github";
 import { StateStore, initialState, resumeFence, rebaseReviewState } from "./maintenance/state";
 import { Orca } from "./maintenance/orca";
+import { hostPrecheck, policyDigest } from "./maintenance/automation";
 import { runUpdate, prepareActivation, hasCompletedActivation, type UpdateOptions } from "./maintenance/updater";
 import type { MaintenancePolicy, MaintenanceState, LockRecord, ReleasePin, MaintenanceStage } from "./maintenance/contracts";
 export async function loadAcceptedPolicy():Promise<MaintenancePolicy>{
@@ -107,7 +108,19 @@ export async function advanceController(policy:MaintenancePolicy,store:StateStor
 }
 async function pendingState(store:StateStore,number?:number):Promise<MaintenanceState|undefined>{return number?store.findPr(number):store.findAnyPending();}
 export async function cli(args:readonly string[]):Promise<number>{
-  const subcommand=args[0]??"status";if(!["--precheck","run","resume","status"].includes(subcommand)){console.log(JSON.stringify({kind:"blocked",reason:"unknown-subcommand"}));return 11;}const fixture=args.includes("--fixture-stdin");if(fixture&&subcommand!=="--precheck"){console.log(JSON.stringify({kind:"blocked",reason:"fixture-cannot-launch"}));return 13;}
+  const subcommand=args[0]??"status";if(!["--precheck","run","resume","status","--policy-digest"].includes(subcommand)){console.log(JSON.stringify({kind:"blocked",reason:"unknown-subcommand"}));return 11;}
+  if(subcommand==="--policy-digest"){
+    const repoIndex=args.indexOf("--repo"),checkoutIndex=args.indexOf("--checkout");
+    const selector=repoIndex>=0?args[repoIndex+1]:undefined,checkout=checkoutIndex>=0?args[checkoutIndex+1]:undefined;
+    if(!selector||!checkout||!isAbsolute(checkout)){console.log(JSON.stringify({kind:"blocked",reason:"policy-digest-input-invalid"}));return 13;}
+    try{
+      const accepted=await loadAcceptedPolicy();
+      if(selector!==accepted.repository&&selector!==`github:${accepted.repository}`){console.log(JSON.stringify({kind:"blocked",reason:"policy-selector-mismatch"}));return 13;}
+      console.log(policyDigest(accepted,selector,hostPrecheck(resolve(checkout,"scripts","maintenance.ts"))));
+      return 0;
+    }catch(error){const reason=error instanceof Error&&/^[a-z0-9-]+$/.test(error.message)?error.message:"policy-digest-unverifiable";console.log(JSON.stringify({kind:"blocked",reason}));return 13;}
+  }
+  const fixture=args.includes("--fixture-stdin");if(fixture&&subcommand!=="--precheck"){console.log(JSON.stringify({kind:"blocked",reason:"fixture-cannot-launch"}));return 13;}
   const deadline=Date.now()+30000;let timer:NodeJS.Timeout|undefined;if(subcommand==="--precheck")timer=setTimeout(()=>{console.log(JSON.stringify({kind:"blocked",reason:"deadline-expired"}));process.exit(12);},30000);let lock:LockRecord|undefined;let store:StateStore|undefined;
   try{
     let policy:MaintenancePolicy,observation:PrObservation|undefined;if(fixture){const input=JSON.parse(await Bun.stdin.text());policy=input.policy;observation=input.pr;}else policy=await loadAcceptedPolicy();const index=args.indexOf("--state-dir");const directory=index>=0?args[index+1]:join(homedir(),".local","state","omp-settings-ru-maintenance");if(!directory)throw new Error("state-directory-missing");store=new StateStore(directory);

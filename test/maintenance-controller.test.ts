@@ -6,7 +6,7 @@ import { precheck, mergeGate, deriveChecks, releaseDecision, publicationPlan, co
 import type { PublicationEvidence, PrObservation } from "../scripts/maintenance/github";
 import { StateStore, initialState, effectDecision, resumeFence, rebaseReviewState } from "../scripts/maintenance/state";
 import { workerDecision, Orca } from "../scripts/maintenance/orca";
-import { registrationDecision } from "../scripts/maintenance/automation";
+import { registrationDecision, policyDigest, hostPrecheck, maintenancePrompt } from "../scripts/maintenance/automation";
 import type { MaintenancePolicy, ReleasePin } from "../scripts/maintenance/contracts";
 import { advanceController } from "../scripts/maintenance";
 import * as maintenanceGithub from "../scripts/maintenance/github";
@@ -335,3 +335,60 @@ test("verifying resume regenerates independent review before reading advanced-ba
     await store.release(lock);
   } finally {observation.mockRestore();api.mockRestore();orca.mockRestore();await rm(dir,{recursive:true,force:true});}
 });
+
+test("preserved canonical base aliases seed their subtrees while non-canonical aliases cannot", () => {
+  const candidate="18.8.6",base="18.8.4",nested="@oh-my-pi/pi-utils";
+  const alias=(version:string)=>`omp-host-${version.replaceAll(".","")}`;
+  const row=(spec:string,deps:Record<string,string>,integrity:string)=>[spec,"",{dependencies:deps},integrity];
+  const root=(direct:string,extra:Record<string,string>)=>({devDependencies:{"@oh-my-pi/pi-coding-agent":direct,[alias("18.6.1")]:"npm:@oh-my-pi/pi-coding-agent@18.6.1",[alias("18.8.0")]:"npm:@oh-my-pi/pi-coding-agent@18.8.0",[alias(base)]:`npm:@oh-my-pi/pi-coding-agent@${base}`,...extra},peerDependencies:{"@oh-my-pi/pi-coding-agent":"18.6.1 || 18.8.0 || 18.8.4"}});
+  const before={lockfileVersion:1,workspaces:{"":root(base,{})},packages:{"@oh-my-pi/pi-coding-agent":row(`@oh-my-pi/pi-coding-agent@${base}`,{},"sha512-AAAA"),[alias(base)]:row(`@oh-my-pi/pi-coding-agent@${base}`,{[nested]:base},"sha512-BBBB"),[`${alias(base)}/${nested}`]:row(`${nested}@${base}`,{},"sha512-CCCC")}};
+  const after=structuredClone(before);
+  after.workspaces[""].devDependencies["@oh-my-pi/pi-coding-agent"]=candidate;
+  after.workspaces[""].devDependencies[alias(candidate)]=`npm:@oh-my-pi/pi-coding-agent@${candidate}`;
+  after.packages["@oh-my-pi/pi-coding-agent"][0]=`@oh-my-pi/pi-coding-agent@${candidate}`;
+  after.packages[alias(candidate)]=row(`@oh-my-pi/pi-coding-agent@${candidate}`,{},"sha512-DDDD");
+  after.packages[`${alias(base)}/${nested}`]=row(`${nested}@18.8.5`,{},"sha512-EEEE");
+  expect(verifyLockChange(JSON.stringify(before),JSON.stringify(after),sha,candidate,JSON.stringify(after)).refusal).toBeUndefined();
+  const forgedAliases:readonly [string,string][]=[["omp-host-legacy",`npm:@oh-my-pi/pi-coding-agent@${base}`],["omp-host-1887",`npm:@oh-my-pi/pi-coding-agent@${base}`]];
+  for(const [name,spec] of forgedAliases){
+    const forgedBefore=structuredClone(before),forged=structuredClone(after);
+    for(const lock of [forgedBefore,forged]){
+      lock.workspaces[""].devDependencies[name]=spec;
+      lock.packages[name]=row(`@oh-my-pi/pi-coding-agent@${base}`,{[nested]:base},`sha512-FFFF`);
+      lock.packages[`${name}/${nested}`]=row(`${nested}@${lock===forged?"18.8.5":base}`,{},"sha512-GGGG");
+    }
+    expect(verifyLockChange(JSON.stringify(forgedBefore),JSON.stringify(forged),sha,candidate,JSON.stringify(forged)).refusal).toBe("lockfile-unexpected-package-change");
+  }
+});
+test("policy digest is deterministic and bound to the accepted policy, selector and registration checkout", async () => {
+  const selector=`github:${policy.repository}`,checkout=process.cwd();
+  const accepted=JSON.parse((await command("git",["show","origin/main:maintenance.config.json"],5000)).stdout) as MaintenancePolicy;
+  const precheck=hostPrecheck(join(checkout,"scripts","maintenance.ts"));
+  const digest=policyDigest(accepted,selector,precheck);
+  expect(digest).toMatch(/^[a-f0-9]{64}$/);
+  expect(policyDigest({...accepted,baseBranch:"release"},selector,precheck)).not.toBe(digest);
+  expect(policyDigest(accepted,`github:${accepted.repository}-fork`,precheck)).not.toBe(digest);
+  expect(policyDigest(accepted,selector,hostPrecheck(join(tmpdir(),"other-checkout","scripts","maintenance.ts")))).not.toBe(digest);
+  const child=Bun.spawn(["bun","scripts/maintenance.ts","--policy-digest","--repo",selector,"--checkout",checkout],{stdout:"pipe",stderr:"pipe"});
+  const output=await new Response(child.stdout).text();
+  expect(await child.exited).toBe(0);
+  expect(output).toBe(`${digest}\n`);
+  const otherCheckout=join(tmpdir(),"omp-settings-ru-registration");
+  const otherChild=Bun.spawn(["bun","scripts/maintenance.ts","--policy-digest","--repo",selector,"--checkout",otherCheckout],{stdout:"pipe",stderr:"pipe"});
+  const otherOutput=await new Response(otherChild.stdout).text();
+  expect(await otherChild.exited).toBe(0);
+  expect(otherOutput).toBe(`${policyDigest(accepted,selector,hostPrecheck(join(otherCheckout,"scripts","maintenance.ts")))}\n`);
+  expect(otherOutput).not.toBe(output);
+  const rejected=Bun.spawn(["bun","scripts/maintenance.ts","--policy-digest","--repo",selector,"--checkout","relative/checkout"],{stdout:"pipe",stderr:"pipe"});
+  const rejectedOutput=await new Response(rejected.stdout).text();
+  expect(await rejected.exited).not.toBe(0);
+  expect(JSON.parse(rejectedOutput)).toMatchObject({kind:"blocked",reason:"policy-digest-input-invalid"});
+});
+test("maintenance prompt refuses an unsafe selector, unsafe path and non-absolute checkout", () => {
+  const selector=`github:${policy.repository}`,checkout=process.cwd();
+  const digest=policyDigest(policy,selector,hostPrecheck(join(checkout,"scripts","maintenance.ts")));
+  expect(()=>maintenancePrompt(digest,"evil;rm -rf /",checkout)).toThrow("automation-selector-unsafe");
+  expect(()=>maintenancePrompt(digest,selector,`${tmpdir()}\\unsafe"path`)).toThrow("automation-path-unsafe");
+  expect(()=>maintenancePrompt(digest,selector,"relative-checkout")).toThrow("automation-checkout-not-absolute");
+});
+
