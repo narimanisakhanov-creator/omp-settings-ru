@@ -15,14 +15,19 @@ function sanitizedDiagnostic(error: unknown): string {
 const [alias, version, platform] = process.argv.slice(2);
 if (!alias || !/^omp-host-[0-9]+$/.test(alias) || !version || !platform || !["win32", "darwin", "linux"].includes(platform)) throw new Error("invalid-registry-input");
 const nativePlatform = process.platform;
-// Load the real native module while its actual OS identity still applies; source branches only are derived below.
 const registryPath = import.meta.resolve(`${alias}/config/all-settings`);
 const registryDir = dirname(registryPath.startsWith("file:") ? fileURLToPath(registryPath) : registryPath);
-const nativePaths = new Set([
-  Bun.resolveSync("@oh-my-pi/pi-natives", registryDir),
-  Bun.resolveSync("@oh-my-pi/pi-natives", import.meta.dirname),
+// The registry graph imports @oh-my-pi/pi-utils, whose env module resolves the project directory at
+// module scope; on Windows that path reaches the native 8.3 helper and loads the addon. Warm the
+// exact instance the graph imports while the real OS identity still applies, so the derived-platform
+// import reuses the cached project directory instead of loading an addon for a platform this runner
+// cannot host. Warming pi-utils also loads the addon for the real platform, which is what the Windows
+// path helper needs.
+const warmedUtils = new Set([
+  Bun.resolveSync("@oh-my-pi/pi-utils", registryDir),
+  Bun.resolveSync("@oh-my-pi/pi-utils", import.meta.dirname),
 ]);
-await Promise.all([...nativePaths].map(path => import(path)));
+await Promise.all([...warmedUtils].map(path => import(path)));
 // Source-derived export deliberately evaluates the package's platform source branch; never native-panel evidence.
 // Registry resolution selects a version at runtime; its module graph must initialize under the requested source platform.
 Object.defineProperty(process, "platform", {configurable: true, value: platform});
