@@ -473,6 +473,8 @@ test("failed real activation rolls back exact registry and previous package", ()
     await rm(`${old.registry}.new`);
     return;
   }
+  const rollbackFailure = await Bun.file(join(root, "activation-rollback-failure.json")).json().catch(() => undefined);
+  console.log("rollback failure proof: " + JSON.stringify(rollbackFailure ?? { missing: true }));
   expect(receipt.phase).toBe("rolled-back");
   await rm(`${old.registry}.new`);
   expect(await readFile(old.registry)).toEqual(old.snapshot);
