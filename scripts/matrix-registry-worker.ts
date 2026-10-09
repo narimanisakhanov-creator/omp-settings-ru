@@ -18,8 +18,11 @@ const nativePlatform = process.platform;
 // Load the real native module while its actual OS identity still applies; source branches only are derived below.
 const registryPath = import.meta.resolve(`${alias}/config/all-settings`);
 const registryDir = dirname(registryPath.startsWith("file:") ? fileURLToPath(registryPath) : registryPath);
-const nativePath = Bun.resolveSync("@oh-my-pi/pi-natives", registryDir);
-await import(nativePath);
+const nativePaths = new Set([
+  Bun.resolveSync("@oh-my-pi/pi-natives", registryDir),
+  Bun.resolveSync("@oh-my-pi/pi-natives", import.meta.dirname),
+]);
+await Promise.all([...nativePaths].map(path => import(path)));
 // Source-derived export deliberately evaluates the package's platform source branch; never native-panel evidence.
 // Registry resolution selects a version at runtime; its module graph must initialize under the requested source platform.
 Object.defineProperty(process, "platform", {configurable: true, value: platform});
