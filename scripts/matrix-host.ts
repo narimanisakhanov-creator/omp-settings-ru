@@ -22,7 +22,7 @@ export async function loadMatrixHost(version: string, platform: string): Promise
   }
   // Export package source branches in a fresh process, independently of the committed baseline.
   const exported = Bun.spawnSync(["bun", "scripts/matrix-registry-worker.ts", record.package, version, platform], {stdout: "pipe", stderr: "pipe", timeout: 30000});
-  if (exported.exitCode !== 0) throw new Error("source-registry-export-failed");
+  if (exported.exitCode !== 0) throw new Error(`source-registry-export-failed: ${exported.stderr.toString().trim().slice(0, 500)}`);
   const baseline = JSON.parse(exported.stdout.toString()) as BaselineSnapshot;
   const schema: HostMetadata["schema"] = Object.create(null);
   for (const [path, source] of Object.entries(baseline.settings)) {
