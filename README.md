@@ -18,7 +18,7 @@
 архив и `SHA256SUMS` лежат в [выпуске](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases); перед установкой сверь SHA-256 архива со списком.
 
 ```text
-omp plugin install github:narimanisakhanov-creator/omp-settings-ru@v0.3.0
+omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.3.0
 ```
 
 после установки открой новую сессию. Перед использованием проверь [совместимость](#проверенная-совместимость-checkout) и [процедуру проверки](CONTRIBUTING.md#проверка-установленного-хоста).
