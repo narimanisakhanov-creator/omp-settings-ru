@@ -14,6 +14,25 @@ bun install --frozen-lockfile --ignore-scripts
 runtime получает живой реестр запущенного OMP; локальные пакеты нужны для сопровождения.
 не загружай установленную и локальную копии плагина одновременно.
 
+## смена канала
+
+Закрой старые сессии и убери explicit `-e`/`--plugin-dir`/configured extension roots. `omp plugin list --json` должен показывать одну user install; project install сначала разбери отдельно. Uninstall удаляет собственные plugin settings/features, поэтому для state-preserving смены используй внешний скрипт checkout, не runtime:
+
+```text
+bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to marketplace --spec omp-settings-ru@omp-settings-ru --backup <new-private-backup.json> --apply
+bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to npm --spec github:narimanisakhanov-creator/omp-settings-ru#v0.3.1 --backup <another-private-backup.json> --apply
+```
+
+Скрипт требует explicit named profile, до удаления типизированно проверяет lock и сохраняет own state/settings с JSON types, `null`/`[]` features и disabled-state; чужие записи и неизвестные поля переносятся без изменений. Marketplace должен быть добавлен заранее. Backup приватный, не перезаписывается. При сбое install частично поставленный альтернативный канал сначала удаляется, затем восстанавливается исходный канал и его own запись; если и это невозможно, скрипт сообщает точный backup и не выдаёт сбой за успех — не копируй весь старый lockfile поверх текущего. Для личного профиля нужна отдельная разрешённая операция; local proof использует только disposable homes.
+
+## распространение и auto
+
+`private:true` остаётся: npm-managed использует GitHub release, npm registry publication отсутствует. `.omp-plugin/marketplace.json` публикуется отдельно в ветке `marketplace`, не внутри pin-имого release tree. `marketplace.autoUpdate` — штатный общий переключатель OMP; `auto` не проверяет project ReleasePin/наши receipts. Runtime перевода сети не получает.
+
+После опубликованного release и успешного exact-commit `check` workflow: `bun scripts/marketplace-catalog.ts --generate --tag v<version> --check-run <workflow-run-id> --output <catalog.json>`. Команда читает живые GitHub release/tag/workflow, dereferences annotated tag, скачивает archive/SHA256SUMS и сверяет hashes. Remote операция отдельно: dispatch `.github/workflows/marketplace-index.yml` с tag/check_run; он проверяет native channels перед обычным push только index branch. Публикующий CLI (`bun scripts/marketplace-index.ts`) повторно проверяет тот же живой release через `loadVerifiedCatalog`, поэтому рукописный файл каталога им не публикуется; monotonic/idempotent/conflict-решение покрыто доменным тестом на реальном owned Git. Этот checkout ничего не публиковал.
+
+`bun run smoke:distribution --catalog <verified-catalog.json>` устанавливает настоящий npm-managed GitHub выпуск, добавляет owned каталог, прогоняет обе миграции канала, обычный native startup и `off/notify/auto` на stale каталоге с двумя настоящими выпусками и вторым fixture-плагином. `bun run smoke:source` проверяет именно текущий checkout: собирает package allowlist в реальный локальный Git-репозиторий, ставит его нативным marketplace-каналом и сверяет content hash, затем открывает русскую панель. Оба — channel proof, отдельный от старого link-based `smoke:installed`; сетевые ошибки git-транспорта сообщаются как `network-transport-failed` с сохранённым backup, а не как дефект канала.
+
 ## обновление источников
 
 1. зафиксируй точную версию upstream и commit. начни с `bun scripts/upgrade-host.ts <version> --dry-run`; режим без `--dry-run` выполняй в отдельной рабочей ветке.

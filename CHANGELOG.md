@@ -1,5 +1,13 @@
 # изменения
 
+## не выпущено
+
+- два альтернативных канала одного `omp.extensions`: npm-managed GitHub и нативный marketplace; `private:true` сохранён.
+- `scripts/switch-channel.ts`: state-preserving смена канала с типизированной проверкой lock до удаления, приватным backup и восстановлением исходного канала при сбое.
+- `scripts/distribution-smoke.ts`: native proof обоих каналов, обеих миграций, панели (поиск/bool/enum/языковой цикл) и реального `off/notify/auto` на owned stale каталоге; `--source` проверяет текущий checkout.
+- post-release index publisher с immutable SHA/ref, живым exact-commit workflow proof и сверкой archive/SHA256SUMS; remote публикация не выполнялась.
+- README/FAQ явно отделяют глобальный opt-in auto от SHA256SUMS/ReleasePin gate и предупреждают о state loss при uninstall.
+
 ## [0.3.1] — 2026-10-09
 
 - поддержка OMP 18.8.7: 410 настроек (было 404), +6 новых, 2 изменившихся описания, 0 удалённых; все исторические варианты 18.6.1/18.8.0/18.8.4 сохранены.

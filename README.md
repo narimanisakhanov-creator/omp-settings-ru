@@ -1,5 +1,7 @@
 # omp-settings-ru
 
+[![лицензия MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![последний выпуск](https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru)](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases)
+
 русский перевод штатной панели `/settings` в [Oh My Pi](https://github.com/can1357/oh-my-pi).
 отдельное расширение — не форк OMP и не патч `omp.exe`.
 
@@ -14,14 +16,33 @@
 
 ## установка
 
-установка выпуска `v0.3.1` — [тег и выпуск](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.1):
-архив и `SHA256SUMS` лежат в [выпуске](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases); перед установкой сверь SHA-256 архива со списком.
+выбери **один** канал; не добавляй вторую копию через `-e`, `--plugin-dir` или settings extensions. После установки нужна новая сессия.
+
+**npm-managed GitHub** — фиксированный [выпуск v0.3.1](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.1), не npm registry:
 
 ```text
 omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.3.1
 ```
 
-после установки открой новую сессию. Перед использованием проверь [совместимость](#проверенная-совместимость-checkout) и [процедуру проверки](CONTRIBUTING.md#проверка-установленного-хоста).
+**marketplace** — после публикации проверенного индекса сопровождающим:
+
+```text
+omp plugin marketplace add https://raw.githubusercontent.com/narimanisakhanov-creator/omp-settings-ru/marketplace/.omp-plugin/marketplace.json
+omp plugin install omp-settings-ru@omp-settings-ru
+```
+
+индекс пока не опубликован этой локальной работой. Он закрепляет release commit полным `source.sha` и тегом `source.ref`; `main` не источник пакета. Архив и `SHA256SUMS` доступны в выпуске; сверка суммы не независимая подпись.
+
+## обновление
+
+штатный marketplace auto включается **отдельно и добровольно**:
+
+```text
+omp config get marketplace.autoUpdate
+omp config set marketplace.autoUpdate auto
+```
+
+`off` — не проверять; `notify` — проверять без установки (штатный default); `auto` — устанавливать обновления на старте. Это общая настройка OMP для всех marketplace-плагинов пользователя и активного проекта, не только перевода. Каталог обновляется после 24 часов; для немедленного обновления: `omp plugin marketplace update omp-settings-ru`, затем `omp plugin upgrade omp-settings-ru@omp-settings-ru`. Открой новую сессию; auto не является SHA256SUMS/ReleasePin gate и не гарантирует успешную установку при сетевой ошибке. Перед [сменой канала](CONTRIBUTING.md#смена-канала) сохрани состояние: uninstall удаляет plugin settings/features; см. [совместимость](#проверенная-совместимость-checkout).
 
 ## язык и удаление
 
@@ -35,14 +56,14 @@ omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.3.1
 язык относится к текущей сессии и не записывается в конфиг.
 следующая основная сессия с плагином начинает с русского.
 
-для немедленного возврата сначала выполни `/settings-language en`, затем удали плагин:
+для возврата в текущей сессии сначала `/settings-language en`, затем удали выбранный канал:
 
 ```text
 omp plugin uninstall omp-settings-ru
+omp plugin uninstall omp-settings-ru@omp-settings-ru
 ```
 
-новая сессия без плагина использует исходные тексты.
-при запуске через `-e` убери этот аргумент.
+выполни только соответствующую своей установке команду. Новая сессия без плагина использует исходные тексты. Если использовались explicit extension roots, убери их тоже. Для отключения без потери state — `omp plugin disable <свой-name-or-id>`; uninstall стирает собственные plugin settings/features.
 
 ## проверенная совместимость checkout
 

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { canonicalContentHash, executableIdentity, extractPackageArchive, validateArtifactReceipt, verifyArtifactBinding } from "../scripts/installed-smoke";
+import { buildMarketplaceCatalog, decideMarketplaceIndexPublish, validateMarketplaceCatalog, type MarketplaceCatalog, type ReleaseAssetEvidence, type ReleaseEvidence } from "../scripts/marketplace-catalog";
+import { publishMarketplaceIndex } from "../scripts/marketplace-index";
 import type { ArtifactReceiptExpectation } from "../scripts/installed-smoke";
 
 interface ArtifactFixture {directory: string; archivePath: string; headSha: string; treeHash: string; archiveSha256: string}
@@ -323,4 +325,89 @@ test("refuses receipts whose run or check identity does not match the trusted Gi
   expect(validateArtifactReceipt(validReceipt(), {...expectation, workflowRunId: "999"})).toEqual({ok: false, reason: "receipt-workflow-mismatch"});
   expect(validateArtifactReceipt(validReceipt(), {...expectation, runAttempt: "2"})).toEqual({ok: false, reason: "receipt-workflow-mismatch"});
   expect(validateArtifactReceipt(validReceipt(), {...expectation, workflowRunId: "123456", runAttempt: "1"})).toEqual({ok: true});
+});
+
+test("marketplace release gate rejects each unproven release dimension with its exact reason", () => {
+  const sha = "a".repeat(40);
+  const hash = "b".repeat(64);
+  const catalog = buildMarketplaceCatalog({version: "0.3.1", commitSha: sha, repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
+  const asset = (name: string): ReleaseAssetEvidence => ({name, digest: `sha256:${hash}`, browserDownloadUrl: `https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/download/v0.3.1/${name}`});
+  const assetsFor = (version: string): ReleaseAssetEvidence[] => [{...asset(`omp-settings-ru-${version}.tgz`), browserDownloadUrl: `https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/download/v0.3.1/omp-settings-ru-${version}.tgz`}, asset("SHA256SUMS")];
+  const evidence: ReleaseEvidence = {
+    tag: "v0.3.1", version: "0.3.1", targetCommitSha: sha, draft: false, prerelease: false, published: true,
+    checksPassed: true, checksHeadSha: sha, archiveSha256: hash, sumsSha256: hash, sumsArchiveSha256: hash,
+    assets: assetsFor("0.3.1"),
+  };
+  expect(validateMarketplaceCatalog(catalog, evidence)).toEqual([]);
+  const cases: readonly [readonly string[], (value: ReleaseEvidence) => ReleaseEvidence][] = [
+    [["marketplace-release-draft"], value => ({...value, draft: true})],
+    [["marketplace-release-prerelease"], value => ({...value, prerelease: true})],
+    [["marketplace-release-unpublished"], value => ({...value, published: false})],
+    [["marketplace-release-checks-failed"], value => ({...value, checksHeadSha: "c".repeat(40)})],
+    [["marketplace-release-checks-failed"], value => ({...value, checksPassed: false})],
+    [["marketplace-release-tag-mismatch", "marketplace-release-ref-mismatch"], value => ({...value, tag: "v0.3.0"})],
+    [["marketplace-release-tag-mismatch", "marketplace-release-version-mismatch"], value => ({...value, version: "0.3.2", assets: assetsFor("0.3.2")})],
+    [["marketplace-release-sha-mismatch"], value => ({...value, targetCommitSha: "e".repeat(40), checksHeadSha: "e".repeat(40)})],
+    [["marketplace-release-archive-integrity-failed"], value => ({...value, sumsArchiveSha256: "d".repeat(64)})],
+    [["marketplace-release-archive-integrity-failed", "marketplace-release-archive-asset-invalid"], value => ({...value, archiveSha256: "not-a-hash"})],
+    [["marketplace-release-assets-ambiguous"], value => ({...value, assets: [...value.assets, asset("omp-settings-ru-0.3.1.tgz")]})],
+    [["marketplace-release-assets-ambiguous", "marketplace-release-checksums-asset-invalid"], value => ({...value, assets: [asset("omp-settings-ru-0.3.1.tgz")]})],
+    [["marketplace-release-archive-asset-invalid"], value => ({...value, assets: [{...asset("omp-settings-ru-0.3.1.tgz"), digest: `sha256:${"d".repeat(64)}`}, asset("SHA256SUMS")]})],
+    [["marketplace-release-checksums-asset-invalid"], value => ({...value, assets: [asset("omp-settings-ru-0.3.1.tgz"), {...asset("SHA256SUMS"), digest: null}]})],
+  ];
+  for (const [reasons, change] of cases) expect(validateMarketplaceCatalog(catalog, change(evidence))).toEqual([...reasons]);
+  const entry = catalog.plugins[0]!;
+  const githubSource = {source: "github" as const, repo: "narimanisakhanov-creator/omp-settings-ru", ref: "v0.3.1", sha};
+  expect(validateMarketplaceCatalog({...catalog, plugins: [{...entry, source: {...githubSource, sha: ""}}]}, evidence)).toEqual(["marketplace-source-sha-required", "marketplace-release-sha-mismatch"]);
+  expect(validateMarketplaceCatalog({...catalog, plugins: [{...entry, source: {...githubSource, ref: "main"}}]}, evidence)).toEqual(["marketplace-source-ref-mismatch", "marketplace-release-ref-mismatch"]);
+  expect(validateMarketplaceCatalog({...catalog, plugins: [{...entry, source: {...githubSource, repo: "someone/else"}}]}, evidence)).toEqual(["marketplace-source-repository-mismatch"]);
+  expect(validateMarketplaceCatalog({...catalog, plugins: []}, evidence)).toEqual(["marketplace-plugin-count-invalid"]);
+});
+
+test("index publication is monotonic, idempotent and conflict-refusing", () => {
+  const catalog = (version: string, sha: string): MarketplaceCatalog => buildMarketplaceCatalog({version, commitSha: sha, repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
+  const older = catalog("0.3.1", "a".repeat(40));
+  const newer = catalog("0.3.2", "b".repeat(40));
+  expect(decideMarketplaceIndexPublish(null, older)).toBe("publish");
+  expect(decideMarketplaceIndexPublish(older, older)).toBe("identical");
+  expect(decideMarketplaceIndexPublish(older, newer)).toBe("publish");
+  expect(() => decideMarketplaceIndexPublish(newer, older)).toThrow("marketplace-index-downgrade");
+  expect(() => decideMarketplaceIndexPublish(older, catalog("0.3.1", "c".repeat(40)))).toThrow("marketplace-index-conflict");
+  expect(() => decideMarketplaceIndexPublish({name: "omp-settings-ru"}, older)).toThrow("marketplace-current-index-plugin-count-invalid");
+});
+
+test("publishes the index branch through a real owned Git remote and never rewrites a release", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "omp-index-publish-"));
+  const origin = join(directory, "origin.git");
+  const work = join(directory, "work");
+  const git = (repo: string, args: string[]): string => {
+    const result = Bun.spawnSync(["git", "-C", repo, ...args], {stdout: "pipe", stderr: "pipe"});
+    if (result.exitCode !== 0) throw new Error(`fixture-git-failed:${args.join(" ")}:${result.stderr.toString()}`);
+    return result.stdout.toString().trim();
+  };
+  try {
+    expect(Bun.spawnSync(["git", "init", "--bare", "--quiet", origin], {stdout: "pipe", stderr: "pipe"}).exitCode).toBe(0);
+    expect(Bun.spawnSync(["git", "init", "--quiet", work], {stdout: "pipe", stderr: "pipe"}).exitCode).toBe(0);
+    git(work, ["remote", "add", "origin", origin]);
+    git(work, ["config", "user.name", "Proof"]);
+    git(work, ["config", "user.email", "proof@example.invalid"]);
+    const catalog = (version: string, sha: string): MarketplaceCatalog => buildMarketplaceCatalog({version, commitSha: sha, repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
+    const first = await publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.1", "a".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.1"});
+    expect(first.decision).toBe("publish");
+    const firstCommit = first.commit!;
+    expect(git(origin, ["rev-parse", "refs/heads/marketplace"])).toBe(firstCommit);
+    expect(git(origin, ["show", "refs/heads/marketplace:.omp-plugin/marketplace.json"])).toBe(JSON.stringify(catalog("0.3.1", "a".repeat(40)), null, 2));
+    const repeat = await publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.1", "a".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.1"});
+    expect(repeat).toEqual({decision: "identical"});
+    expect(git(origin, ["rev-parse", "refs/heads/marketplace"])).toBe(firstCommit);
+    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.0", "a".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.0"})).rejects.toThrow("marketplace-index-downgrade");
+    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.1", "c".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.1"})).rejects.toThrow("marketplace-index-conflict");
+    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "bad branch", catalog: catalog("0.3.2", "b".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.2"})).rejects.toThrow("marketplace-index-branch-invalid");
+    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.2", "b".repeat(40)), indexPath: "../escape.json", message: "marketplace: v0.3.2"})).rejects.toThrow("marketplace-index-path-invalid");
+    expect(git(origin, ["rev-parse", "refs/heads/marketplace"])).toBe(firstCommit);
+    const second = await publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.2", "b".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.2"});
+    expect(second.decision).toBe("publish");
+    expect(git(origin, ["rev-list", "--count", "refs/heads/marketplace"])).toBe("2");
+    expect(git(origin, ["show", "refs/heads/marketplace:.omp-plugin/marketplace.json"])).toBe(JSON.stringify(catalog("0.3.2", "b".repeat(40)), null, 2));
+  } finally {await rm(directory, {recursive: true, force: true});}
 });

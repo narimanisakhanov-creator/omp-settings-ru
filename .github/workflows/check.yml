@@ -75,6 +75,10 @@ jobs:
           OMP_WORKFLOW_HEAD: ${{ github.sha }}
           OMP_CHECK_NAME: check (${{ matrix.os }}, ${{ matrix.version }})
         run: bun scripts/smoke-ci-host.ts ${{ matrix.version }}
+      # The reviewed source itself, not an already published release: a real native
+      # marketplace clone of the working tree must load the translation.
+      - name: Exercise reviewed source through the native marketplace channel
+        run: bun scripts/distribution-smoke.ts --source --executable "${{ steps.updater-host.outputs.executable }}"
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: installed-smoke-${{ matrix.version }}-${{ matrix.platform }}

@@ -1,0 +1,90 @@
+name: marketplace-index
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Already published release tag (vX.Y.Z)
+        required: true
+        type: string
+      check_run:
+        description: Successful check workflow run for that release commit
+        required: true
+        type: string
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: marketplace-index
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+      # The index only follows a release that already created its tag, assets and checksums.
+      - name: Resolve release tag and its exact check run
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          DISPATCH_CHECK_RUN: ${{ inputs.check_run }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${DISPATCH_TAG}" ]; then
+            tag="${DISPATCH_TAG}"
+            check_run="${DISPATCH_CHECK_RUN}"
+          else
+            tag="${RELEASE_TAG}"
+            check_run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${RELEASE_SHA}&status=completed&per_page=100" \
+              --jq "[.workflow_runs[] | select(.path == \".github/workflows/check.yml\" and .conclusion == \"success\")] | sort_by(.id) | last | .id // empty")
+            if [ -z "${check_run}" ]; then
+              echo "No successful check run for ${RELEASE_SHA}" >&2
+              exit 1
+            fi
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "check_run=$check_run" >> "$GITHUB_OUTPUT"
+      # The exercised native host is the same reviewed pin the release itself ran with.
+      - name: Resolve reviewed native host version
+        id: host-version
+        shell: bash
+        run: echo "version=$(bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).devDependencies["@oh-my-pi/pi-coding-agent"])')" >> "$GITHUB_OUTPUT"
+      - name: Validate published release and generate immutable catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          CHECK_RUN: ${{ steps.release.outputs.check_run }}
+        run: bun scripts/marketplace-catalog.ts --generate --tag "$RELEASE_TAG" --check-run "$CHECK_RUN" --output "$RUNNER_TEMP/marketplace.json"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Prepare native host
+        id: native-host
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOST_VERSION: ${{ steps.host-version.outputs.version }}
+        run: bun scripts/ci/prepare-host.ts "$HOST_VERSION" linux
+      - name: Exercise target release through both native channels
+        run: bun scripts/distribution-smoke.ts --executable "${{ steps.native-host.outputs.executable }}" --catalog "$RUNNER_TEMP/marketplace.json"
+      # Monotonic, idempotent, plain fast-forward push to the index branch only.
+      - name: Publish index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          CHECK_RUN: ${{ steps.release.outputs.check_run }}
+        run: |
+          bun scripts/marketplace-index.ts --repo . --remote origin --branch marketplace --tag "$RELEASE_TAG" --check-run "$CHECK_RUN" --catalog "$RUNNER_TEMP/marketplace.json" --message "marketplace: $RELEASE_TAG"
