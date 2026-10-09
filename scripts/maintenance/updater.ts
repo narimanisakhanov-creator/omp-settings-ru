@@ -153,7 +153,7 @@ const LIVENESS_UNVERIFIABLE = "liveness-query-unverifiable";
 function isLivenessRow(row: unknown): row is LivenessRow {
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
   const candidate = row as { pid?: unknown; line?: unknown };
-  return Number.isInteger(candidate.pid) && typeof candidate.line === "string";
+  return typeof candidate.pid === "number" && Number.isSafeInteger(candidate.pid) && candidate.pid > 0 && typeof candidate.line === "string";
 }
 
 export function selectLiveOmpRows(livePids: readonly number[], cimRows: readonly LivenessRow[]): LivenessRow[] {
@@ -185,7 +185,7 @@ export function parseLivenessSample(profile: string, query: LivenessQuery): Live
   const { live, cim } = parsed as { live?: unknown; cim?: unknown };
   if (!Array.isArray(live) || !Array.isArray(cim)) return failed;
   // A dropped invalid row could turn a busy snapshot into an idle verdict.
-  if (!live.every((pid): pid is number => Number.isInteger(pid))) return failed;
+  if (!live.every((pid): pid is number => typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0)) return failed;
   if (!cim.every(isLivenessRow)) return failed;
   return classifyLiveness(profile, selectLiveOmpRows(live, cim));
 }

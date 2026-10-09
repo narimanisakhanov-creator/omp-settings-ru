@@ -103,6 +103,13 @@ test("activation liveness is fail-closed for every unverifiable sample", () => {
   expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":"7","line":""}]}'))).toEqual(failed);
   expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":7}]}'))).toEqual(failed);
   expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[null]}'))).toEqual(failed);
+  // A pid must be a positive safe integer: 0, negatives and unsafe magnitudes are malformed.
+  expect(parseLivenessSample(profile, livenessSample('{"live":[0],"cim":[]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[-7],"cim":[]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[9007199254740993],"cim":[]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":0,"line":""}]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":-7,"line":""}]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":9007199254740993,"line":""}]}'))).toEqual(failed);
 });
 
 test("owned readonly fixture teardown unlinks both junctions without touching external target", async () => {
