@@ -11,8 +11,13 @@ const registryPath = import.meta.resolve(`${alias}/config/all-settings`);
 const nativePath = Bun.resolveSync("@oh-my-pi/pi-natives", dirname(registryPath.startsWith("file:") ? fileURLToPath(registryPath) : registryPath));
 await import(nativePath);
 // Source-derived export deliberately evaluates the package's platform source branch; never native-panel evidence.
-if (platform !== nativePlatform) Object.defineProperty(process, "platform", {value: platform});
-const { orderedSettings } = await import(`${alias}/config/all-settings`);
-const schema: HostMetadata["schema"] = Object.create(null);
-for (const setting of orderedSettings()) schema[setting.id] = setting.definition as HostSettingDefinition;
-console.log(JSON.stringify(buildSourceSnapshot({version, platform, schema})));
+// Registry resolution selects a version at runtime; its module graph must initialize under the requested source platform.
+Object.defineProperty(process, "platform", {configurable: true, value: platform});
+try {
+  const { orderedSettings } = await import(`${alias}/config/all-settings`);
+  const schema: HostMetadata["schema"] = Object.create(null);
+  for (const setting of orderedSettings()) schema[setting.id] = setting.definition as HostSettingDefinition;
+  console.log(JSON.stringify(buildSourceSnapshot({version, platform, schema})));
+} finally {
+  Object.defineProperty(process, "platform", {configurable: true, value: nativePlatform});
+}
