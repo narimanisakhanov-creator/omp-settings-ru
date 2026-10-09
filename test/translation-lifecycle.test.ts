@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { HostMetadata } from "../src/host-types";
-import type { LocalePack } from "../src/translations/types";
+import type { LocalePack, SettingTranslationFields } from "../src/translations/types";
 
 import { applyTranslations } from "../src/apply-translations";
 import { computeSourceHash, normalizeSource } from "../src/source";
+function setting(fields: SettingTranslationFields) {
+  return { variants: [{ ...fields, platforms: ["win32", "darwin", "linux"] as const, observedIn: [] }] };
+}
 function fixture() {
   const host: HostMetadata = { version: "18.8.0", platform: "win32", schema: { "test.mode": { type: "string", default: "off", values: ["off", "on"], ui: { tab: "general", label: "Mode", description: "Choose mode", options: [{ value: "off", label: "Off" }, { value: "on", label: "On" }] } } } };
   const ui = host.schema["test.mode"]!.ui!;
-  const pack: LocalePack = { locale: "ru", sourceOmpVersion: "18.8.0", settings: { "test.mode": { sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим", options: { off: { label: "Выключено" }, on: { label: "Включено" } } } } };
+  const pack: LocalePack = { locale: "ru", settings: { "test.mode": setting({ sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим", options: { off: { label: "Выключено" }, on: { label: "Включено" } } }) } };
   return { host, pack, ui };
 }
 
@@ -54,16 +57,16 @@ describe("translation lifecycle", () => {
     expect(host.schema.unknown.ui!.label).toBe("Unknown");
     if (result.status === "applied") result.restore();
   });
-  test("only the exact reviewed host and pack version may mutate", () => {
-      for (const version of ["18.8.1", "18.8.0-beta", "19.0.0"]) {
+  test("structurally compatible unreviewed versions preserve round-trip ownership", () => {
+    for (const version of ["18.8.1", "18.8.0-beta", "19.0.0"]) {
       const { host, pack, ui } = fixture();
       host.version = version;
-      expect(applyTranslations(host, pack).status).toBe("skipped");
+      const result = applyTranslations(host, pack);
+      expect(result.status).toBe("applied");
+      expect(ui.label).toBe("Режим");
+      if (result.status === "applied") expect(result.restore()).toEqual([]);
       expect(ui.label).toBe("Mode");
     }
-    const { host, pack, ui } = fixture();
-    expect(applyTranslations(host, { ...pack, sourceOmpVersion: "18.6.2" }).status).toBe("skipped");
-    expect(ui.label).toBe("Mode");
   });
   test("reapplication shares restoration ownership instead of nesting translations", () => {
     const { host, pack, ui } = fixture();
@@ -109,10 +112,10 @@ describe("translation lifecycle", () => {
     const getter = () => changed ? "Changed wording" : `Press ${key} to choose`;
     Object.defineProperty(ui, "description", { get: getter, configurable: true, enumerable: true });
     const template = "Press {key} to choose";
-    const dynamicPack: LocalePack = { ...pack, settings: { "test.mode": {
-      ...pack.settings["test.mode"]!, sourceHash: computeSourceHash(normalizeSource(ui, template)),
+    const dynamicPack: LocalePack = { ...pack, settings: { "test.mode": setting({
+      ...pack.settings["test.mode"]!.variants[0]!, sourceHash: computeSourceHash(normalizeSource(ui, template)),
       descriptionSource: template, description: "Нажмите {key} для выбора",
-    } } };
+    }) } };
     const result = applyTranslations(host, dynamicPack);
     if (result.status !== "applied") throw new Error("Expected application");
     expect(ui.description).toBe("Нажмите Ctrl+A для выбора");
@@ -145,7 +148,7 @@ describe("translation lifecycle", () => {
       const { host, pack, ui } = fixture();
       host.schema.alias = host.schema["test.mode"];
       const aliasPack: LocalePack = { ...pack, settings: { ...pack.settings,
-        alias: { ...pack.settings["test.mode"]!, label: conflicting ? "Другой" : "Режим" },
+        alias: setting({ ...pack.settings["test.mode"]!.variants[0]!, label: conflicting ? "Другой" : "Режим" }),
       } };
       const before = Object.getOwnPropertyDescriptors(ui);
       const options = ui.options;
@@ -238,11 +241,10 @@ describe("translation lifecycle", () => {
   });
   test("platform overrides are complete rather than inherited base fields", () => {
     const { host, pack, ui } = fixture();
-    const platformPack: LocalePack = { ...pack, settings: { "test.mode": {
-      ...pack.settings["test.mode"]!, byPlatform: { win32: {
-        sourceHash: pack.settings["test.mode"]!.sourceHash, label: "Режим Windows",
-      } },
-    } } };
+    const platformPack: LocalePack = { ...pack, settings: { "test.mode": { variants: [{
+      sourceHash: pack.settings["test.mode"]!.variants[0]!.sourceHash, label: "Режим Windows",
+      platforms: ["win32"], observedIn: [],
+    }] } } };
     const result = applyTranslations(host, platformPack);
     if (result.status !== "applied") throw new Error("Expected application");
     expect(ui.label).toBe("Режим Windows");
@@ -271,9 +273,9 @@ describe("translation lifecycle", () => {
   });
   test("added warnings restore absence rather than creating undefined fields", () => {
     const { host, pack, ui } = fixture();
-    const warningPack: LocalePack = { ...pack, settings: { "test.mode": {
-      ...pack.settings["test.mode"]!, warning: "Осторожно",
-    } } };
+    const warningPack: LocalePack = { ...pack, settings: { "test.mode": setting({
+      ...pack.settings["test.mode"]!.variants[0]!, warning: "Осторожно",
+    }) } };
     const result = applyTranslations(host, warningPack);
     if (result.status !== "applied") throw new Error("Expected application");
     expect(ui.warning).toBe("Осторожно");
@@ -284,10 +286,10 @@ describe("translation lifecycle", () => {
     const { host, pack, ui } = fixture();
     const source = "Press {key} to choose";
     Object.defineProperty(ui, "description", { get: () => "Press Ctrl+A to choose", configurable: false });
-    const dynamicPack: LocalePack = { ...pack, settings: { "test.mode": {
-      ...pack.settings["test.mode"]!, sourceHash: computeSourceHash(normalizeSource(ui, source)),
+    const dynamicPack: LocalePack = { ...pack, settings: { "test.mode": setting({
+      ...pack.settings["test.mode"]!.variants[0]!, sourceHash: computeSourceHash(normalizeSource(ui, source)),
       descriptionSource: source, description: "Нажмите {key}",
-    } } };
+    }) } };
     expect(applyTranslations(host, dynamicPack).status).toBe("skipped");
     expect(ui.label).toBe("Mode");
   });
@@ -296,9 +298,9 @@ describe("translation lifecycle", () => {
     const otherUi = { ...ui };
     host.schema.alias = { ...host.schema["test.mode"]!, ui: otherUi };
     const original = ui.options;
-    const aliasPack: LocalePack = { ...pack, settings: { ...pack.settings, alias: {
-      ...pack.settings["test.mode"]!, options: { off: { label: "Иной вариант" } },
-    } } };
+    const aliasPack: LocalePack = { ...pack, settings: { ...pack.settings, alias: setting({
+      ...pack.settings["test.mode"]!.variants[0]!, options: { off: { label: "Иной вариант" } },
+    }) } };
     const result = applyTranslations(host, aliasPack);
     if (result.status !== "applied") throw new Error("Expected application");
     expect(Array.isArray(ui.options) && ui.options[0]!.label).toBe("Выключено");
@@ -339,9 +341,9 @@ describe("translation lifecycle", () => {
   test("shared option translation conflicts refuse before any mutation", () => {
     const { host, pack, ui } = fixture();
     host.schema.alias = host.schema["test.mode"];
-    const conflictPack: LocalePack = { ...pack, settings: { ...pack.settings, alias: {
-      ...pack.settings["test.mode"]!, options: { off: { label: "Противоречие" } },
-    } } };
+    const conflictPack: LocalePack = { ...pack, settings: { ...pack.settings, alias: setting({
+      ...pack.settings["test.mode"]!.variants[0]!, options: { off: { label: "Противоречие" } },
+    }) } };
     expect(applyTranslations(host, conflictPack)).toEqual({ status: "skipped", reason: "conflicting-translations" });
     expect(ui.label).toBe("Mode");
     expect(Array.isArray(ui.options) && ui.options[0]!.label).toBe("Off");

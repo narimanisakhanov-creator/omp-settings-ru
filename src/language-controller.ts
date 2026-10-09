@@ -4,17 +4,17 @@ import type { HostMetadata } from "./host-types";
 import type { LocalePack } from "./translations/types";
 
 const refusalMessages: Readonly<Record<string, string>> = {
-  "unsupported-host-version": "версия OMP не поддерживается; проверена только 18.8.0",
   "invalid-host-platform": "платформа хоста не определена",
   "invalid-host-schema": "структура реестра настроек несовместима",
   "invalid-setting-definition": "структура определения настройки несовместима",
   "invalid-ui-metadata": "структура отображаемых метаданных несовместима",
   "invalid-ui-options": "структура вариантов настройки несовместима",
   "host-read-failed": "метаданные хоста недоступны",
-  "unsupported-locale-pack": "каталог перевода не соответствует версии хоста",
+  "unsupported-locale-pack": "каталог перевода имеет неподдерживаемый язык",
   "translation-already-active": "реестром уже владеет другой каталог перевода",
   "unsafe-property": "метаданные нельзя изменить и восстановить безопасно",
   "conflicting-translations": "общие метаданные содержат конфликтующие переводы",
+  "ambiguous-source-variant": "исходному тексту соответствуют конфликтующие варианты перевода",
   "plan-failed": "не удалось подготовить безопасный план перевода",
   "write-failed": "хост отклонил изменение; выполнен откат",
 };

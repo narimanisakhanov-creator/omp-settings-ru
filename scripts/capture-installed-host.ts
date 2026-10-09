@@ -1,0 +1,16 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+const [executable, profile, plugin] = process.argv.slice(2) as [string,string,string];
+if(!/^omp-settings-ru-proof-[a-zA-Z0-9-]+$/.test(profile))throw new Error("refusing-unowned-profile");
+const home=join(tmpdir(),profile);
+const agent=join(home,".omp","profiles",profile,"agent");
+await mkdir(agent,{recursive:true});
+await writeFile(join(agent,"config.yml"),"startup:\n  setupWizard: false\n");
+const env:Record<string,string>={};
+for(const key of ["PATH","PATHEXT","SYSTEMROOT","WINDIR","COMSPEC","TEMP","TMP"])if(process.env[key])env[key]=process.env[key]!;
+Object.assign(env,{HOME:home,USERPROFILE:home,APPDATA:join(home,"appdata"),LOCALAPPDATA:join(home,"localappdata")});
+const installed=Bun.spawnSync([executable,"--profile",profile,"plugin","link",resolve(plugin)],{env,stdout:"pipe",stderr:"pipe",timeout:30000});
+if(installed.exitCode!==0)throw new Error("native-owned-install-failed");
+const host=Bun.spawn([executable,"--profile",profile,"--plugin-dir",resolve(plugin),"--no-session","--no-skills","--no-rules","--no-tools","--no-lsp","--no-title"],{cwd:home,env,stdin:"inherit",stdout:"inherit",stderr:"inherit"});
+process.exit(await host.exited);

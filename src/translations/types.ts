@@ -14,12 +14,18 @@ export interface SettingTranslationFields {
   readonly options?: Readonly<Record<string, OptionTranslation>>;
 }
 
-export interface SettingTranslation extends SettingTranslationFields {
-  readonly byPlatform?: Readonly<Record<string, SettingTranslationFields | undefined>>;
+export type SourcePlatform = "win32" | "darwin" | "linux";
+
+export interface SourceVariant extends SettingTranslationFields {
+  readonly platforms: readonly SourcePlatform[];
+  readonly observedIn: readonly string[];
+}
+
+export interface SettingTranslation {
+  readonly variants: readonly SourceVariant[];
 }
 
 export interface LocalePack {
   readonly locale: "ru";
-  readonly sourceOmpVersion: string;
   readonly settings: Readonly<Record<string, SettingTranslation>>;
 }

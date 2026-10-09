@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { verifyVariantReviews } from "./verify-variant-reviews";
 
 // Inspect npm's actual allowlisted package, without creating an archive or publishing.
 const command = process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", "npm.cmd pack --dry-run --json --ignore-scripts"] : ["npm", "pack", "--dry-run", "--json", "--ignore-scripts"];
@@ -10,7 +11,7 @@ const report = JSON.parse(out) as Array<{ files: Array<{ path: string }> }> | Re
 const packages = Array.isArray(report) ? report : Object.values(report);
 const files = packages[0]!.files.map(file => file.path).sort();
 const allowedRoot: Readonly<Record<string, true>> = { "package.json": true, "README.md": true, "CONTRIBUTING.md": true, "CHANGELOG.md": true, "LICENSE": true, "THIRD_PARTY_NOTICES.md": true, "SECURITY.md": true, "CODE_OF_CONDUCT.md": true };
-const failures: string[] = [];
+const failures: string[] = verifyVariantReviews();
 for (const path of files) {
   if (!path.startsWith("src/") && !Object.hasOwn(allowedRoot, path)) failures.push("unexpected-file:" + path);
   const text = await Bun.file(resolve(path)).text();

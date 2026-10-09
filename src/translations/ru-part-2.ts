@@ -1,6 +1,6 @@
-import type { SettingTranslation } from "./types";
+import type { SettingTranslationFields } from "./types";
 
-export const ruPart2: Readonly<Record<string, SettingTranslation>> = {
+export const ruPart2: Readonly<Record<string, SettingTranslationFields>> = {
   "providers.cacheWarming": {
     sourceHash: "92adf61f240c5286461b82e98d2369cd0d6cc9c9656ae09b4c6f936e160699a8",
     label: "Прогрев кэша",
@@ -187,7 +187,7 @@ export const ruPart2: Readonly<Record<string, SettingTranslation>> = {
   "codexResets.salvageHorizonHours": {
     sourceHash: "efd62d6b11839a167ec6bbb8f47081a81b9e80b68c8dfc586ca7884d47103cc3",
     label: "Горизонт спасения сбросов Codex",
-    description: "При включённом автоиспользовании автоматически расходовать сохранённый сброс Codex в течение указанного числа часов до истечения, если любое окно чата имеет значимый расход. 0 отключает досрочное спасение; кредиты, истекающие в течение 5 минут, всё равно используются.",
+    description: "При включённом автоиспользовании расходовать сохранённый сброс Codex в течение указанного числа часов до истечения, если любое окно чата имеет значимый расход. 0 отключает досрочное спасение; попытка использовать кредиты, истекающие в течение 5 минут, всё равно выполняется независимо от расхода.",
   },
   "claudeResets.keepCredits": {
     sourceHash: "e011ed7107e11bb6d0bbffe6588bfa0c4598f1aa4d597a5882158639a6b94a6c",
@@ -197,7 +197,7 @@ export const ruPart2: Readonly<Record<string, SettingTranslation>> = {
   "claudeResets.salvageHorizonHours": {
     sourceHash: "d23b0074003328c50ff49b895d71f93356ccc8adec0148122068a256d944d9cf",
     label: "Горизонт спасения сбросов Claude",
-    description: "При включённом автоиспользовании использовать выбранный сервером сброс Cedar в течение указанного числа часов до истечения, если покрываемые окна имеют значимый расход. 0 отключает досрочное спасение; сбросы Cedar или Juniper, истекающие в течение 5 минут, всё равно используются. Требования к лимитам провайдера по-прежнему применяются.",
+    description: "При включённом автоиспользовании использовать выбранный сервером сброс Cedar в течение указанного числа часов до истечения, если покрываемые окна имеют значимый расход. 0 отключает досрочное спасение; попытка использовать подходящие сбросы Cedar или Juniper, истекающие в течение 5 минут, всё равно выполняется независимо от расхода или резерва. Требования к лимитам провайдера по-прежнему применяются.",
   },
   "claudeResets.autoRedeem": {
     sourceHash: "0c206e1a18fc62c4b293935ec3c40a2c8d47efd5ca1e3c6193bad12558bc3c47",

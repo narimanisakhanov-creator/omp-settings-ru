@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "structuralFallback": "Exact path/sourceHash/platform only; unreviewed versions are not an installed-panel support promise",
+  "versions": [
+    {
+      "version": "18.6.1",
+      "package": "omp-host-1861",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "3669fa3109d43a4ed9b27da3f82fd4538cd7b08df866736d895dff8d76b04d16",
+        "darwin": "1ed1a01f21d8c8de87fd212fb7526d576c69f4781852d817ab94aa2591c34aa8",
+        "linux": "38c37e2930d652907df875d8242c7402648ce529a6c8a8afee7d96a362b9437a"
+      }
+    },
+    {
+      "version": "18.8.0",
+      "package": "omp-host-1880",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "1d602069d738330f8caa93a06b59e11abb5d1cd105311746baa9f92efe633862",
+        "darwin": "f3d6f0b0580a5f2505de1e8d9462d14427bb197707c5a3139ed37f35b0cd626f",
+        "linux": "581b0be670ce28bf94c7b2744e7f6f0ae6c12d9dc6e685a303652257b9fc16b7"
+      }
+    },
+    {
+      "version": "18.8.4",
+      "package": "omp-host-1884",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "2be085551750526ba0b497d796439675eafd07ed0d0464c9c7c6dc7f9a91a3dd",
+        "darwin": "fc6a2fd6eb5f9f79296eda75f1c403a2e776d04ee761e2be811aec2f51c52b9e",
+        "linux": "9b2d104a92b8d441a784559bf3122426aa7600ca88e8fe78895b1c1efab97f8c"
+      }
+    }
+  ],
+  "installedEvidence": [
+    {
+      "version": "18.8.4",
+      "platform": "win32",
+      "arch": "x64",
+      "artifactHash": "db9fde892984febb8e56b3e2113a0743e25b7a44fa0d4c165016e8bd90336678",
+      "executableHash": "e1be1c0ee152f7d7e7728329d7799c3cba48510585baf295c2e220fd3ddaf710",
+      "receipt": ".tools/maintenance-evidence.installed-host.json",
+      "scope": "owned disposable profile; personal installed plugin unchanged",
+      "passed": true
+    }
+  ],
+  "unavailableInstalledRuns": [
+    "18.6.1-win32",
+    "18.8.0-win32",
+    "18.6.1-darwin",
+    "18.8.0-darwin",
+    "18.8.4-darwin",
+    "18.6.1-linux",
+    "18.8.0-linux",
+    "18.8.4-linux"
+  ]
+}

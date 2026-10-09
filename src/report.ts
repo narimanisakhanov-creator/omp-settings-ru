@@ -2,7 +2,8 @@
 import type { HostMetadata } from "./host-types";
 import { computeSourceHash, normalizeSource, type SourceMetadata } from "./source";
 import { descriptionTemplates } from "./source-templates";
-import type { LocalePack, OptionTranslation, SettingTranslationFields } from "./translations/types";
+import type { LocalePack, OptionTranslation } from "./translations/types";
+import { resolveVariant, type SourceHashCache } from "./translations/resolve";
 
 export interface OptionMismatch {
   readonly path: string;
@@ -22,16 +23,6 @@ export interface CoverageReport {
   readonly sourceHashMismatches: readonly string[];
 }
 
-/** Platform entries are complete overrides: the most specific reviewed entry replaces the base one. */
-export function resolveSettingTranslation(
-  locale: LocalePack,
-  path: string,
-  platform: string,
-): SettingTranslationFields | undefined {
-  const entry = locale.settings[path];
-  if (!entry) return undefined;
-  return entry.byPlatform?.[platform] ?? entry;
-}
 
 /** Baseline shape written by scripts/export-source.ts for a fixed host version and platform. */
 export interface BaselineSnapshot {
@@ -107,20 +98,23 @@ export function buildCoverageReport(host: HostMetadata, locale: LocalePack): Cov
   let translatedSettings = 0;
   let completeSettings = 0;
 
+  const hashes: SourceHashCache = new WeakMap();
   for (const path of Object.keys(host.schema).sort()) {
     const ui = host.schema[path]?.ui;
     if (!ui) continue;
     totalUiSettings += 1;
 
-    const translation = resolveSettingTranslation(locale, path, host.platform);
+    const entry = locale.settings[path];
+    const translation = entry ? resolveVariant(entry, ui, host.platform, hashes) : undefined;
     if (!translation) {
       untranslatedPaths.push(path);
+      if (entry?.variants.some(variant => variant.platforms.some(platform => platform === host.platform))) sourceHashMismatches.push(path);
       continue;
     }
     translatedSettings += 1;
 
     const reviewedTemplate = descriptionTemplates[path];
-    const source = normalizeSource(ui, reviewedTemplate);
+    const source = normalizeSource(ui, translation.descriptionSource);
     let complete = true;
 
     if (translation.sourceHash !== computeSourceHash(source)) {

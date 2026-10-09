@@ -1,0 +1,19 @@
+{
+  "feature": "automatic-maintenance",
+  "mode": "quick-spec",
+  "workflow": "requirements-first",
+  "language": "ru",
+  "phase": "tasks",
+  "approvals": {
+    "requirements": false,
+    "design": false,
+    "tasks": false
+  },
+  "approvalGates": "not-applicable-in-quick-spec",
+  "implementationAuthorized": true,
+  "publicationRequiresIndependentVerdict": true,
+  "automationEnabled": false,
+  "automationEnableRequiresDirectorAcceptance": true,
+  "created": "2026-10-08",
+  "updated": "2026-10-08"
+}

@@ -7,7 +7,7 @@ import { LanguageController } from "../src/language-controller";
 function fixture() {
   const ui = { tab: "interaction", label: "Mode", description: "Choose mode" };
   const host: HostMetadata = { version: "18.8.0", platform: "win32", schema: { mode: { type: "boolean", default: false, ui } } };
-  const pack: LocalePack = { locale: "ru", sourceOmpVersion: "18.8.0", settings: { mode: { sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим" } } };
+  const pack: LocalePack = { locale: "ru", settings: { mode: { variants: [{ sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим", platforms: ["win32"], observedIn: [] }] } } };
   return { ui, controller: new LanguageController(async () => host, pack) };
 }
 
@@ -32,8 +32,8 @@ test("queued language choices finish in user order, then restore on shutdown", a
 });
 
 test("incompatible hosts warn in Russian without exposing source exception details", async () => {
-  const host: HostMetadata = { version: "99.0.0", platform: "win32", schema: {} };
-    const pack: LocalePack = { locale: "ru", sourceOmpVersion: "18.8.0", settings: {} };
+  const host: HostMetadata = { version: "99.0.0", platform: "unsupported", schema: {} };
+  const pack: LocalePack = { locale: "ru", settings: {} };
   const controller = new LanguageController(async () => host, pack);
   expect(await controller.setLanguage("ru", "main")).toMatch(/[а-я]/i);
   expect(controller.language).toBe("en");
@@ -50,7 +50,7 @@ test("unfinished rollback remains pending until English or shutdown restores it"
       return Reflect.defineProperty(target, key, descriptor);
     } });
     const host: HostMetadata = { version: "18.8.0", platform: "win32", schema: { mode: { type: "boolean", default: false, ui: proxy } } };
-    const pack: LocalePack = { locale: "ru", sourceOmpVersion: "18.8.0", settings: { mode: { sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим" } } };
+    const pack: LocalePack = { locale: "ru", settings: { mode: { variants: [{ sourceHash: computeSourceHash(normalizeSource(ui)), label: "Режим", description: "Выберите режим", platforms: ["win32"], observedIn: [] }] } } };
     const controller = new LanguageController(async () => host, pack);
     expect(await controller.setLanguage("ru", "main")).toBeDefined();
     expect(ui.label).toBe("Режим");

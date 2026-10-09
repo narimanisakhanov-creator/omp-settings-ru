@@ -24,9 +24,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
       - id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,7 +58,7 @@ jobs:
             echo "$branch exists without a PR; will create a PR from its existing report without updating the branch"
             exit 0
           fi
-          pinned=$(jq -r '.peerDependencies["@oh-my-pi/pi-coding-agent"]' package.json)
+          pinned=$(jq -r '.devDependencies["@oh-my-pi/pi-coding-agent"]' package.json)
           if [ "$version" = "$pinned" ]; then
             printf 'mode=skip\n' >> "$GITHUB_OUTPUT"
             echo "Already pinned at $pinned"
@@ -66,21 +68,37 @@ jobs:
       - if: steps.version.outputs.mode == 'new'
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
           bun install --ignore-scripts
           bun scripts/upgrade-host.ts "$VERSION"
+          output_file=$(mktemp)
           set +e
-          bun run check > check-output.txt 2>&1
-          status=$?
+          GITHUB_OUTPUT="$output_file" bun scripts/ci/prepare-host.ts "$VERSION" linux > host-prepare-output.txt 2>&1
+          prepare_status=$?
           set -e
+          if [ "$prepare_status" -eq 0 ]; then
+            executable=$(cut -d= -f2- "$output_file")
+            set +e
+            OMP_UPDATER_EXECUTABLE="$executable" OMP_UPDATER_HOST_VERSION="$VERSION" bun run check > check-output.txt 2>&1
+            status=$?
+            set -e
+          else
+            cat host-prepare-output.txt > check-output.txt
+            printf '\nNative updater host bootstrap failed (exit %s); full check was not run.\n' "$prepare_status" >> check-output.txt
+            status=$prepare_status
+          fi
+          rm -f "$output_file"
           echo "check exit status: $status" >> check-output.txt
-          if [ "$status" -ne 0 ]; then echo "::warning::bun run check exited $status; review attached check-output.txt; this report does not claim check success"; fi
+          if [ "$status" -ne 0 ]; then echo "::warning::candidate check exited $status; review attached check-output.txt; this report does not claim native/full check success"; fi
       - if: steps.version.outputs.mode == 'new'
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
           name: upgrade-prepared
           path: |
+            host-prepare-output.txt
             package.json
             bun.lock
             baseline/${{ steps.version.outputs.version }}-linux.json
@@ -103,7 +121,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: upgrade-prepared
@@ -112,7 +130,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
         shell: bash
-        run: bun run source:export "baseline/$VERSION-$PLATFORM.json"
+        run: bun scripts/export-source.ts "$VERSION" "$PLATFORM" --native --output "baseline/$VERSION-$PLATFORM.json"
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
           name: baseline-${{ matrix.platform }}

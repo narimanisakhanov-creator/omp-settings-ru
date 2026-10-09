@@ -3,7 +3,8 @@
 import type { HostMetadata, HostUiMetadata, HostOption } from "./host-types";
 import type { LocalePack, SettingTranslationFields, OptionTranslation } from "./translations/types";
 import { checkHostCompatibility } from "./compatibility";
-import { captureHints, computeSourceHash, normalizeSource } from "./source";
+import { captureHints } from "./source";
+import { resolveVariant, type SourceHashCache } from "./translations/resolve";
 
 export type ApplyTranslationsResult =
   | { status: "applied"; mutationCount: number; restore: () => readonly string[] }
@@ -75,13 +76,15 @@ function queueText(mutations: Mutation[], target: object, fields: SettingTransla
 
 function buildPlan(host: HostMetadata, pack: LocalePack): Mutation[] {
   const targets = new Map<HostUiMetadata, SettingTranslationFields>();
+  const hashes: SourceHashCache = new WeakMap();
   for (const [path, base] of Object.entries(pack.settings)) {
-    const entry = base.byPlatform?.[host.platform] ?? base;
     const ui = host.schema[path]?.ui;
-    if (!ui || computeSourceHash(normalizeSource(ui, entry.descriptionSource)) !== entry.sourceHash) continue;
+    if (!ui) continue;
+    const entry = resolveVariant(base, ui, host.platform, hashes);
+    if (!entry) continue;
     const existing = targets.get(ui);
     if (!existing) {
-      targets.set(ui, { ...entry, options: entry.options ? { ...entry.options } : undefined });
+      targets.set(ui, entry);
       continue;
     }
     const merged = { ...existing };
@@ -166,14 +169,14 @@ function restoreMutations(mutations: readonly Mutation[], lastIndex: number, own
 export function applyTranslations(host: HostMetadata, pack: LocalePack): ApplyTranslationsResult {
   const compatibility = checkHostCompatibility(host);
   if (!compatibility.compatible) return { status: "skipped", reason: compatibility.reason };
-  if (pack.locale !== "ru" || pack.sourceOmpVersion !== "18.8.0") return { status: "skipped", reason: "unsupported-locale-pack" };
+  if (pack.locale !== "ru") return { status: "skipped", reason: "unsupported-locale-pack" };
   const previous = active.get(host.schema);
   if (previous) return previous.pack === pack ? previous.result : { status: "skipped", reason: "translation-already-active" };
   let mutations: Mutation[];
   try {
     mutations = buildPlan(host, pack);
   } catch (error) {
-    const code = error instanceof Error && (error.message === "unsafe-property" || error.message === "conflicting-translations")
+    const code = error instanceof Error && (error.message === "unsafe-property" || error.message === "conflicting-translations" || error.message === "ambiguous-source-variant")
       ? error.message : "plan-failed";
     return { status: "skipped", reason: code };
   }

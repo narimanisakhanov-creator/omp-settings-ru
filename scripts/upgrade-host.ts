@@ -36,25 +36,28 @@ if (requested === "latest") {
   version = latest;
 } else version = requested;
 if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.test(version)) throw new Error(`Invalid version: ${version}`);
-const current = packageJson.peerDependencies["@oh-my-pi/pi-coding-agent"];
+const current = packageJson.devDependencies["@oh-my-pi/pi-coding-agent"];
 for (const name of pinned) {
   const metadata = await fetchJson(`https://registry.npmjs.org/${name.replace("/", "%2F")}`);
   if (!metadata.versions?.[version]) throw new Error(`${name}@${version} does not exist`);
 }
-console.log(`Upgrade plan: ${current} -> ${version}`);
+const devPinned = pinned.filter(name => Object.hasOwn(packageJson.devDependencies,name));
 console.log(`Packages: ${pinned.join(", ")}`);
-console.log(`Pins to rewrite: ${pinned.map((name) => `${name}: ${current} -> ${version}`).join(", ")}`);
+console.log(`Direct development pins to rewrite: ${devPinned.map((name) => `${name}: ${current} -> ${version}`).join(", ")}`);
+console.log(`Candidate registry alias: omp-host-${version.replaceAll(".", "")} -> @oh-my-pi/pi-coding-agent@${version}`);
 const hostPlatform = process.platform;
 console.log(`Baseline file: baseline/${version}-${hostPlatform}.json`);
 if (dryRun) { console.log("Dry run: no files changed."); process.exit(0); }
 
-let updated = packageText;
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-for (const name of pinned) {
-  const key = escapeRegExp(JSON.stringify(name));
-  updated = updated.replace(new RegExp(`(${key}\\s*:\\s*")[^"]+(" )`.replace('" )', '")'), "g"), `$1${version}$2`);
-}
-await writeFile("package.json", updated);
+// Candidate pins are not support approval: retain reviewed peers and historical bundles.
+const updatedPackage = structuredClone(packageJson);
+for(const name of pinned)if(Object.hasOwn(packageJson.devDependencies,name))updatedPackage.devDependencies[name]=version;
+const candidateAlias = `omp-host-${version.replaceAll(".", "")}`;
+const candidateSpec = `npm:@oh-my-pi/pi-coding-agent@${version}`;
+const existingAlias=updatedPackage.devDependencies[candidateAlias];
+if(existingAlias!==undefined&&existingAlias!==candidateSpec)throw new Error("candidate-alias-conflict");
+updatedPackage.devDependencies[candidateAlias]=candidateSpec;
+await writeFile("package.json", JSON.stringify(updatedPackage, null, 2) + "\n");
 try {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("bun", ["install", "--ignore-scripts"], { stdio: "inherit", shell: process.platform === "win32" });
@@ -81,6 +84,6 @@ if (old) {
 }
 const coverage = buildCoverageReport(host, ru);
 report += `## Translation coverage\n- totalUiSettings: ${coverage.totalUiSettings}\n- translatedSettings: ${coverage.translatedSettings}\n- completeSettings: ${coverage.completeSettings}\n- partialSettings: ${coverage.partialSettings}\n- untranslatedPaths: ${coverage.untranslatedPaths.length}\n- partialPaths: ${coverage.partialPaths.length}\n- stalePaths: ${coverage.stalePaths.length}\n- optionMismatches: ${coverage.optionMismatches.length}\n- sourceHashMismatches: ${coverage.sourceHashMismatches.length}\n\n`;
-report += "## Next steps\n- Translate new strings\n- Update source hashes after review\n- Manually exercise the installed panel\n- Bump compatibility.ts\n- Bump plugin version\n";
+report += "## Next steps\n- Review each changed/new source variant semantically\n- Retain old source hashes and translations\n- Exercise fixed native host panel\n- Record finite support evidence and exact package peers after independent review\n- Bump plugin version\n";
 await writeFile("upgrade-report.md", report);
 console.log(report);

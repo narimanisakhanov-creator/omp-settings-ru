@@ -6,8 +6,7 @@ export type CompatibilityResult = { compatible: true } | { compatible: false; re
 /** Structure validation is not a claim of support beyond the reviewed baseline. */
 export function checkHostCompatibility(host: HostMetadata): CompatibilityResult {
   try {
-    if (host.version !== "18.8.0") return { compatible: false, reason: "unsupported-host-version" };
-    if (typeof host.platform !== "string" || !host.platform) return { compatible: false, reason: "invalid-host-platform" };
+    if (host.platform !== "win32" && host.platform !== "darwin" && host.platform !== "linux") return { compatible: false, reason: "invalid-host-platform" };
     if (typeof host.schema !== "object" || host.schema === null || Array.isArray(host.schema)) {
       return { compatible: false, reason: "invalid-host-schema" };
     }

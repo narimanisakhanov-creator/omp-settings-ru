@@ -1,6 +1,6 @@
-import type { SettingTranslation } from "./types";
+import type { SettingTranslationFields } from "./types";
 
-export const ruPart1: Readonly<Record<string, SettingTranslation>> = {
+export const ruPart1: Readonly<Record<string, SettingTranslationFields>> = {
   modelRoleStorage: {
     sourceHash: "559e85e5e98b03b3e4cea23294f68541afc94696dc64bf6325e9eed7b147b38b",
     label: "Хранилище ролей моделей",

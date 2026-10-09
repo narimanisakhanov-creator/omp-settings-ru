@@ -1,6 +1,6 @@
-import type { SettingTranslation } from "./types";
+import type { SettingTranslationFields } from "./types";
 
-export const ruPart3: Readonly<Record<string, SettingTranslation>> = {
+export const ruPart3: Readonly<Record<string, SettingTranslationFields>> = {
   "ratchet.enabled": {
     sourceHash: "1379f22f005a4b32982187246a60be28feff0466870b97897124dedae0a92450",
     label: "Ratchet",

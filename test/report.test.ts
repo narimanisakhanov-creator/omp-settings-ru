@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { HostMetadata, HostSettingDefinition, HostUiMetadata } from "../src/host-types";
-import { buildCoverageReport, buildDriftReport, buildSourceSnapshot, resolveSettingTranslation } from "../src/report";
+import { buildCoverageReport, buildDriftReport, buildSourceSnapshot } from "../src/report";
 import { computeSourceHash, normalizeSource } from "../src/source";
 import { descriptionTemplates } from "../src/source-templates";
-import type { LocalePack, SettingTranslation } from "../src/translations/types";
+import type { LocalePack, SettingTranslation, SettingTranslationFields, SourceVariant } from "../src/translations/types";
 
 // Reviewed template path; the literal wording stays owned by src/source-templates.ts.
 const TEMPLATED_PATH = "spelling.autocomplete";
@@ -22,12 +22,12 @@ function hostOf(schema: Record<string, HostSettingDefinition>, platform = "win32
   return { version: "18.8.0", platform, schema };
 }
 
-function entry(ui: HostUiMetadata, template: string | undefined, fields: Omit<SettingTranslation, "sourceHash"> & { sourceHash?: string }): SettingTranslation {
-  return { ...fields, sourceHash: fields.sourceHash ?? computeSourceHash(normalizeSource(ui, template)) };
+function entry(ui: HostUiMetadata, template: string | undefined, fields: Omit<SettingTranslationFields, "sourceHash"> & { sourceHash?: string }): SettingTranslation {
+  return { variants: [{ ...fields, sourceHash: fields.sourceHash ?? computeSourceHash(normalizeSource(ui, template)), platforms: ["win32", "darwin", "linux"], observedIn: [] }] };
 }
 
 function pack(settings: Record<string, SettingTranslation>): LocalePack {
-  return { locale: "ru", sourceOmpVersion: "18.8.0", settings };
+  return { locale: "ru", settings };
 }
 
 describe("coverage report", () => {
@@ -50,7 +50,7 @@ describe("coverage report", () => {
         options: { off: { label: "Выкл", description: "Без режима" } },
       }),
       "b.partial": entry(partialUi, undefined, { label: "Лимит" }),
-      "d.noUi": { sourceHash: "0".repeat(64), label: "Устарело" },
+      "d.noUi": entry(completeUi, undefined, { sourceHash: "0".repeat(64), label: "Устарело" }),
     });
 
     const report = buildCoverageReport(host, locale);
@@ -120,10 +120,10 @@ describe("coverage report", () => {
     const locale = pack({ mode: entry(ui, undefined, { sourceHash: "0".repeat(64), label: "Режим", description: "Выберите режим" }) });
 
     const report = buildCoverageReport(hostOf({ mode: setting(ui) }), locale);
-    expect(report.translatedSettings).toBe(1);
+    expect(report.translatedSettings).toBe(0);
     expect(report.sourceHashMismatches).toEqual(["mode"]);
     expect(report.completeSettings).toBe(0);
-    expect(report.partialPaths).toEqual(["mode"]);
+    expect(report.untranslatedPaths).toEqual(["mode"]);
   });
 });
 
@@ -142,7 +142,7 @@ describe("reviewed templates", () => {
 
     const reworded = buildCoverageReport(withKeybindings("Completions are shown while typing"), locale);
     expect(reworded.sourceHashMismatches).toEqual([TEMPLATED_PATH]);
-    expect(reworded.partialPaths).toEqual([TEMPLATED_PATH]);
+    expect(reworded.untranslatedPaths).toEqual([TEMPLATED_PATH]);
   });
 
   test("a translation cannot claim a template the source does not have", () => {
@@ -158,31 +158,33 @@ describe("reviewed templates", () => {
     const platformHost = hostOf({ [TEMPLATED_PATH]: setting(templatedUi) }, "darwin");
     const base = entry(templatedUi, TEMPLATE, { label: "Автодополнение", description: "Показывает подсказки", descriptionSource: TEMPLATE });
     const darwin = entry(templatedUi, TEMPLATE, { label: "Автодополнение", description: "Показывает подсказки" });
-    const locale = pack({ [TEMPLATED_PATH]: { ...base, byPlatform: { darwin } } });
+    const locale = pack({ [TEMPLATED_PATH]: { variants: [
+      { ...base.variants[0]!, platforms: ["win32", "linux"] },
+      { ...darwin.variants[0]!, platforms: ["darwin"] },
+    ] } });
 
     const report = buildCoverageReport(platformHost, locale);
-    expect(report.sourceHashMismatches).toEqual([]);
-    expect(report.partialPaths).toEqual([TEMPLATED_PATH]);
+    expect(report.sourceHashMismatches).toEqual([TEMPLATED_PATH]);
+    expect(report.untranslatedPaths).toEqual([TEMPLATED_PATH]);
   });
 });
 
 describe("platform resolution", () => {
-  const base: SettingTranslation = { sourceHash: "base", label: "База", description: "Базовое описание" };
-  const platformPack = pack({ mode: { ...base, byPlatform: { win32: { sourceHash: "win", label: "Windows" } } } });
-
-  test("platform entries replace the whole entry, not single fields", () => {
-    expect(resolveSettingTranslation(platformPack, "mode", "win32")).toEqual({ sourceHash: "win", label: "Windows" });
-    expect(resolveSettingTranslation(platformPack, "mode", "linux")).toMatchObject({ sourceHash: "base", label: "База", description: "Базовое описание" });
-    expect(resolveSettingTranslation(platformPack, "absent", "win32")).toBeUndefined();
+  test("unmatched platform variants are never credited as translated", () => {
+    const ui: HostUiMetadata = { tab: "general", label: "Mode", description: "Choose mode" };
+    const variant: SourceVariant = { ...entry(ui, undefined, {label: "Режим", description: "Выберите режим"}).variants[0]!, platforms: ["win32"] };
+    const report = buildCoverageReport(hostOf({mode: setting(ui)}, "darwin"), pack({mode: {variants: [variant]}}));
+    expect(report.translatedSettings).toBe(0);
+    expect(report.untranslatedPaths).toEqual(["mode"]);
   });
 
   test("coverage uses the override for the host platform", () => {
     const ui: HostUiMetadata = { tab: "general", label: "Mode", description: "Choose mode" };
     const locale = pack({
-      mode: {
-        ...entry(ui, undefined, { label: "Режим" }),
-        byPlatform: { win32: entry(ui, undefined, { label: "Режим", description: "Выберите режим" }) },
-      },
+      mode: { variants: [
+        { ...entry(ui, undefined, { label: "Режим" }).variants[0]!, platforms: ["linux", "darwin"] },
+        { ...entry(ui, undefined, { label: "Режим", description: "Выберите режим" }).variants[0]!, platforms: ["win32"] },
+      ] },
     });
 
     const onWindows = buildCoverageReport(hostOf({ mode: setting(ui) }, "win32"), locale);

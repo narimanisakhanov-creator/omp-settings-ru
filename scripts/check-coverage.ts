@@ -1,28 +1,14 @@
-// Coverage CLI: prints a deterministic report of the fixed host registry against the ru catalog.
-// Reads only host metadata through the host adapter; never touches user configuration or credentials.
-import { getHostMetadata } from "../src/host-adapter";
 import { buildCoverageReport } from "../src/report";
 import { ru } from "../src/translations/ru";
+import { loadMatrixHost, requestedPairs } from "./matrix-host";
 
-const host = await getHostMetadata();
-const report = buildCoverageReport(host, ru);
-const versionMismatch = host.version !== ru.sourceOmpVersion;
-const incomplete =
-  versionMismatch ||
-  report.untranslatedPaths.length > 0 ||
-  report.partialPaths.length > 0 ||
-  report.stalePaths.length > 0 ||
-  report.optionMismatches.length > 0 ||
-  report.sourceHashMismatches.length > 0;
-
-const output = {
-  locale: ru.locale,
-  sourceOmpVersion: ru.sourceOmpVersion,
-  hostVersion: host.version,
-  platform: host.platform,
-  versionMismatch,
-  ok: !incomplete,
-  report,
-};
-console.log(JSON.stringify(output, null, 2));
-if (incomplete) process.exit(1);
+const pairs = [];
+for (const pair of requestedPairs(process.argv.slice(2))) {
+  const {host, evidence} = await loadMatrixHost(pair.version, pair.platform);
+  const report = buildCoverageReport(host, ru);
+  const ok = report.completeSettings === report.totalUiSettings && !report.sourceHashMismatches.length && !report.optionMismatches.length;
+  pairs.push({hostVersion: host.version, platform: host.platform, evidence, installedPanel: false, ok, report});
+}
+const ok = pairs.length > 0 && pairs.every(pair => pair.ok);
+console.log(JSON.stringify({locale: ru.locale, ok, pairs}, null, 2));
+if (!ok) process.exit(1);
