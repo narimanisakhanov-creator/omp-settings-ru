@@ -69,12 +69,21 @@
       "receipt": ".tools/maintenance-evidence.installed-host.json",
       "scope": "owned disposable profile; personal installed plugin unchanged",
       "passed": true
+    },
+    {
+      "version": "18.8.7",
+      "platform": "win32",
+      "arch": "x64",
+      "artifactHash": "f15626aaedde39a844bc91ddd91a7bde7053d011fecd0eff13a01422e4bc13c4",
+      "executableHash": "3fee68733791b3d0b2816e8c7b5987813afd103762f8cfd7239d57ed213286dc",
+      "receipt": ".tools/maintenance-evidence.installed-host-1887.json",
+      "scope": "owned disposable profile; personal installed plugin unchanged",
+      "passed": true
     }
   ],
   "unavailableInstalledRuns": [
     "18.6.1-win32",
     "18.8.0-win32",
-    "18.8.7-win32",
     "18.6.1-darwin",
     "18.8.0-darwin",
     "18.8.4-darwin",

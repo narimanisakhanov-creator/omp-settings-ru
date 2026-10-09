@@ -14,7 +14,7 @@
 
 ## установка
 
-установка выпуска `v0.3.1` — [опубликован и помечен как latest](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.1):
+установка выпуска `v0.3.1` — [тег и выпуск](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.1):
 архив и `SHA256SUMS` лежат в [выпуске](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases); перед установкой сверь SHA-256 архива со списком.
 
 ```text
