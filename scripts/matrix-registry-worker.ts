@@ -17,7 +17,8 @@ if (!alias || !/^omp-host-[0-9]+$/.test(alias) || !version || !platform || !["wi
 const nativePlatform = process.platform;
 // Load the real native module while its actual OS identity still applies; source branches only are derived below.
 const registryPath = import.meta.resolve(`${alias}/config/all-settings`);
-const nativePath = Bun.resolveSync("@oh-my-pi/pi-natives", dirname(registryPath.startsWith("file:") ? fileURLToPath(registryPath) : registryPath));
+const registryDir = dirname(registryPath.startsWith("file:") ? fileURLToPath(registryPath) : registryPath);
+const nativePath = Bun.resolveSync("@oh-my-pi/pi-natives", registryDir);
 await import(nativePath);
 // Source-derived export deliberately evaluates the package's platform source branch; never native-panel evidence.
 // Registry resolution selects a version at runtime; its module graph must initialize under the requested source platform.
