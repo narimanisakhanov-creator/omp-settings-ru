@@ -14,8 +14,8 @@
 
 ## установка
 
-последний опубликованный выпуск — `v0.2.0`; он не содержит изменения из `v0.3.0`.
-после завершения exact-SHA CI и публикации тега установи проверенный `v0.3.0` в текущий профиль:
+установка выпуска `v0.3.0` — [опубликован и помечен как latest](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.0):
+архив и `SHA256SUMS` лежат в [выпуске](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases); перед установкой сверь SHA-256 архива со списком.
 
 ```text
 omp plugin install github:narimanisakhanov-creator/omp-settings-ru@v0.3.0
