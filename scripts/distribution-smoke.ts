@@ -86,7 +86,12 @@ function sessionChild(mode: "ru" | "en" | "boot") {
 async function panel(mode: "ru" | "en"): Promise<string> {
   const child = sessionChild(mode);
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  if (code !== 0) throw new Error(`${failureKind(stderr)}:distribution-session-failed:${stderr.trim().slice(-1200)}`);
+  if (code !== 0) {
+    // The session reports the failed step in the head of its JSON report and the failure reason in the tail.
+    const report = stdout.trim();
+    const excerpt = report.length > 2400 ? `${report.slice(0, 1200)}…${report.slice(-1200)}` : report;
+    throw new Error(`${failureKind(stderr)}:distribution-session-failed:exit=${code}:${stderr.trim().slice(-600)}:${excerpt}`);
+  }
   const result = JSON.parse(stdout) as {ok: boolean; steps: {step: string; status: string}[]; observations?: {kind: string; output: string}[]};
   if (!result.ok) throw new Error(`distribution-panel-incomplete:${stdout.slice(-1200)}`);
   const failed = result.steps.filter(entry => entry.status !== "ok");

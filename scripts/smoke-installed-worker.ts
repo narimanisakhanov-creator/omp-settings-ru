@@ -1,6 +1,7 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { RU_SEARCH_OFF, RU_SEARCH_ON, RU_SEARCH_QUERY } from "./panel-search";
 
 const [executable, profile, pluginPath, home] = process.argv.slice(2) as [string, string, string, string];
 const observations: {kind: string; output: string}[] = [];
@@ -54,11 +55,11 @@ try {
   }
   const russian=await session.send("/settings\r",/Тёмная тема/);
   observations.push({kind:"ru-panel",output:russian.split("\n").filter(line=>/Тёмная тема|Светлая тема|Набор символов/.test(line)).join("\n")});
-  const search=await session.send("Скорость генерации",/Скорость генерации.*false/);
+  const search=await session.send(RU_SEARCH_QUERY,RU_SEARCH_OFF);
   observations.push({kind:"ru-search",output:search.split("\n").filter(line=>/скорость|Скорость генерации/.test(line)).join("\n")});
-  const on=await session.send("\r",/Скорость генерации.*true/);
+  const on=await session.send("\r",RU_SEARCH_ON);
   observations.push({kind:"bool-change",output:on.split("\n").find(line=>/Скорость генерации/.test(line))!});
-  const off=await session.send("\r",/Скорость генерации.*false/);
+  const off=await session.send("\r",RU_SEARCH_OFF);
   observations.push({kind:"bool-restored",output:off.split("\n").find(line=>/Скорость генерации/.test(line))!});
   await session.escape();
   await session.send("набор символов",/Набор символов/);

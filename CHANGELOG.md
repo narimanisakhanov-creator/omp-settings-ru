@@ -1,5 +1,10 @@
 # изменения
 
+## не выпущено
+
+- `scripts/panel-search.ts` + `scripts/distribution-session.ts` / `scripts/smoke-installed-worker.ts`: ожидание строки поиска настроек привязано к выбранной строке (`❯`), а не к любому отрисованному совпадению — список ранжируется на каждый символ, поэтому Enter мог изменить другую настройку и провалить native smoke; инвариант закреплён проверкой с реальным переключением в `scripts/smoke-panel-worker.ts`.
+- `scripts/distribution-smoke.ts`: отчёт native-сессии больше не теряется — сообщение о сбое дочернего процесса включает код выхода, stderr и stdout (голова с провалившимся шагом + хвост с причиной).
+
 ## [0.4.0] — 2026-10-10
 
 - второй канал того же `omp.extensions` — нативный marketplace OMP рядом с npm-managed GitHub; одновременно загружается одна копия, `private:true` сохранён, npm registry publication отсутствует.
