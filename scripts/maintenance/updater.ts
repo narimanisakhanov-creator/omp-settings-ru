@@ -144,16 +144,70 @@ export async function prepareActivation(options: UpdateOptions): Promise<void> {
   await immutableFile(join(options.stateDirectory, "installed.json"), JSON.stringify({ profile, pluginPath: root, previousPackageHash, hostVersion: host.version, platform: host.platform, timestamp: new Date().toISOString(), enabled: previous.enabled, enabledFeatures: previous.enabledFeatures }));
 }
 
-async function profileIdle(profile: string): Promise<boolean> {
-  if (!/^[A-Za-z0-9._-]+$/.test(profile)) return false;
-  if (process.platform !== "win32") return false;
-  // Accepted launcher contract requires explicit --profile for named targets.
-  // Unreadable process argv is unknown, not absence; default hosts are unrelated.
+export interface LivenessQuery { readonly exit: number; readonly stdout: string; readonly stderr: string }
+export interface LivenessRow { readonly pid: number; readonly line: string }
+export type LivenessVerdict = { readonly status: "idle" | "busy" | "failed"; readonly refusal?: string };
+
+const LIVENESS_UNVERIFIABLE = "liveness-query-unverifiable";
+
+function isLivenessRow(row: unknown): row is LivenessRow {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+  const candidate = row as { pid?: unknown; line?: unknown };
+  return Number.isInteger(candidate.pid) && typeof candidate.line === "string";
+}
+
+export function selectLiveOmpRows(livePids: readonly number[], cimRows: readonly LivenessRow[]): LivenessRow[] {
+  const argv = new Map(cimRows.map(row => [row.pid, row.line]));
+  // Only live pids are sessions: a CIM row for an already-exited process is not.
+  // A live pid the CIM snapshot did not cover may have started during sampling,
+  // so its argv is unknown (empty) rather than absent.
+  return livePids.map(pid => ({ pid, line: argv.get(pid) ?? "" }));
+}
+
+export function classifyLiveness(profile: string, rows: readonly LivenessRow[]): LivenessVerdict {
   const literalProfile = profile.replaceAll(".", "\\.");
-  const script = `$ErrorActionPreference = 'Stop'; $p = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'omp.exe' }); $busy = @($p | Where-Object { -not $_.CommandLine -or $_.CommandLine -match '--profile[= ]+["\\x27]?${literalProfile}(?:["\\x27]| |$)' }); Write-Output $busy.Count`;
+  const pattern = new RegExp(`--profile[= ]+["']?${literalProfile}(?:["']| |$)`);
+  // An unreadable argv on a live process is unknown, not absence, so it stays busy.
+  return rows.some(row => row.line === "" || pattern.test(row.line))
+    ? { status: "busy", refusal: "active-session-or-liveness-unverifiable" }
+    : { status: "idle" };
+}
+
+/** Strict: a failed query or any malformed sample is unverifiable, never "idle". */
+export function parseLivenessSample(profile: string, query: LivenessQuery): LivenessVerdict {
+  const failed = { status: "failed", refusal: LIVENESS_UNVERIFIABLE } as const;
+  if (query.exit !== 0) return failed;
+  const text = query.stdout.trim();
+  if (!text) return failed;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return failed; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return failed;
+  const { live, cim } = parsed as { live?: unknown; cim?: unknown };
+  if (!Array.isArray(live) || !Array.isArray(cim)) return failed;
+  // A dropped invalid row could turn a busy snapshot into an idle verdict.
+  if (!live.every((pid): pid is number => Number.isInteger(pid))) return failed;
+  if (!cim.every(isLivenessRow)) return failed;
+  return classifyLiveness(profile, selectLiveOmpRows(live, cim));
+}
+
+async function livenessQuery(profile: string): Promise<LivenessQuery> {
+  // Accepted launcher contract requires explicit --profile for named targets.
+  // The CIM argv snapshot is taken BEFORE the live-pid snapshot, so a process
+  // starting during sampling is live-without-argv (unknown, busy) rather than
+  // silently dropped. Liveness comes from live processes only, so a process that
+  // already exited (still listed by CIM) cannot masquerade as an active session.
+  // GetProcessesByName returns an empty array when nothing matches; only a real
+  // failure throws, so "no omp process" is a valid empty result, not an error.
+  const script = `$ErrorActionPreference = 'Stop'; $cim = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'omp.exe' } | ForEach-Object { $line = $_.CommandLine; if ($null -eq $line) { $line = '' }; '{"pid":' + [int]$_.ProcessId + ',"line":' + (ConvertTo-Json $line -Compress) + '}' }); $live = @([System.Diagnostics.Process]::GetProcessesByName('omp') | ForEach-Object { [int]$_.Id }); Write-Output ('{"live":[' + (($live | ForEach-Object { $_.ToString() }) -join ',') + '],"cim":[' + ($cim -join ',') + ']}')`;
   const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
-  const output = (await new Response(child.stdout).text()).trim();
-  return await child.exited === 0 && output === "0";
+  const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  return { exit, stdout, stderr };
+}
+
+async function profileLiveness(profile: string): Promise<LivenessVerdict> {
+  // Non-Windows and untrusted profile names cannot establish liveness: unknown stays fail-closed.
+  if (!/^[A-Za-z0-9._-]+$/.test(profile) || process.platform !== "win32") return { status: "busy", refusal: "active-session-or-liveness-unverifiable" };
+  return parseLivenessSample(profile, await livenessQuery(profile));
 }
 
 async function completedActivation(options:UpdateOptions,host:InstalledHost,entries:Map<string,Buffer>,profile:string,previousPackageHash:string):Promise<UpdateReceipt|undefined>{
@@ -197,7 +251,8 @@ async function activatePackage(options: UpdateOptions, host: InstalledHost, entr
   let previousEntries: Map<string, Buffer> | undefined;
   let previousVersion: string | undefined;
   try {
-    if (!await profileIdle(profile)) return result("safe-pending", "active-session-or-liveness-unverifiable");
+    const liveness = await profileLiveness(profile);
+    if (liveness.status !== "idle") return result("safe-pending", liveness.refusal!);
     const currentHost = await inspectHost(options.executable);
     if (JSON.stringify(currentHost) !== JSON.stringify(host)) return result("safe-pending", "host-changed-before-activation");
     const listed = await nativeCommand(options.executable, ["--profile", profile, "plugin", "list", "--json"]);

@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, readlink, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { runUpdate } from "../scripts/maintenance/updater.ts";
+import { parseLivenessSample, runUpdate, selectLiveOmpRows } from "../scripts/maintenance/updater.ts";
 import type { ReleasePin } from "../scripts/maintenance/contracts.ts";
 import { runControllerUpdate } from "../scripts/maintenance.ts";
 import { updaterTestExecutable } from "../scripts/ci/prepare-host.ts";
@@ -63,6 +63,47 @@ const ownedEnvironment = () => {
   for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key]!;
   return env;
 };
+
+// The activation liveness gate: only live pids are sessions, and any unverifiable sample is fail-closed.
+const livenessSample = (stdout: string, exit = 0) => ({ exit, stdout, stderr: "" });
+test("activation liveness ignores an exited CIM row for a just-finished native helper", () => {
+  const profile = "omp-updater-target-abc";
+  // The helper is gone: no live pid, yet CIM still lists its row.
+  expect(selectLiveOmpRows([], [{ pid: 4242, line: `omp.exe --profile ${profile} plugin list --json` }])).toEqual([]);
+  expect(parseLivenessSample(profile, livenessSample(`{"live":[],"cim":[{"pid":4242,"line":"omp.exe --profile ${profile} plugin list --json"}]}`))).toEqual({ status: "idle" });
+});
+test("activation liveness defers for a live process on the target profile", () => {
+  const profile = "omp-updater-target-abc";
+  const live = `{"live":[7],"cim":[{"pid":7,"line":"omp.exe --profile ${profile} --mode rpc"}]}`;
+  expect(parseLivenessSample(profile, livenessSample(live))).toEqual({ status: "busy", refusal: "active-session-or-liveness-unverifiable" });
+  expect(parseLivenessSample("other-profile", livenessSample(live))).toEqual({ status: "idle" });
+});
+test("activation liveness keeps a live process with unknown argv busy", () => {
+  const profile = "omp-updater-target-abc";
+  // Unreadable argv on a live process is unknown, not absence.
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":7,"line":""}]}'))).toEqual({ status: "busy", refusal: "active-session-or-liveness-unverifiable" });
+  // A live pid absent from the CIM snapshot may have started during sampling.
+  expect(parseLivenessSample(profile, livenessSample('{"live":[9],"cim":[]}'))).toEqual({ status: "busy", refusal: "active-session-or-liveness-unverifiable" });
+});
+test("activation liveness treats a successful no-process sample as idle", () => {
+  expect(parseLivenessSample("omp-updater-target-abc", livenessSample('{"live":[],"cim":[]}'))).toEqual({ status: "idle" });
+});
+test("activation liveness is fail-closed for every unverifiable sample", () => {
+  const profile = "omp-updater-target-abc";
+  const failed = { status: "failed", refusal: "liveness-query-unverifiable" } as const;
+  expect(parseLivenessSample(profile, livenessSample("", 1))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample("", 0))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample("   "))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample("{ malformed"))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('["live","cim"]'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":"7","cim":[]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":"none"}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":["7"],"cim":[]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":"7","line":""}]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":7}]}'))).toEqual(failed);
+  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[null]}'))).toEqual(failed);
+});
 
 test("owned readonly fixture teardown unlinks both junctions without touching external target", async () => {
   const external = await mkdtemp(join(tmpdir(), "omp-updater-external-test-"));
@@ -415,6 +456,7 @@ test("failed real activation rolls back exact registry and previous package", ()
   // Exclusive registry replacement fails after the real native link switch.
   await writeFile(`${old.registry}.new`, "existing replacement must not be overwritten");
   const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  console.log("rollback activation receipt: " + JSON.stringify(receipt) + " root=" + root + " profile=" + old.profile);
   if (process.platform !== "win32") {
     expect(receipt.phase).toBe("safe-pending");
     expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
