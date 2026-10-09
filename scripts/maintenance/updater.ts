@@ -303,6 +303,7 @@ async function activatePackage(options: UpdateOptions, host: InstalledHost, entr
     const rollbackSmoke = previousTarget ? await startupSmoke(options, previousTarget, `omp-settings-ru-proof-${randomUUID()}`, options.stateDirectory) : true;
     const restoredOk = rollback.code === 0 && restored.code === 0 && bytesRestored && packageRestored && rollbackSmoke && (previousTarget ? old?.version === previousVersion : !old);
     await writeFile(join(options.stateDirectory, "activation-rollback.json"), JSON.stringify({ registryRestored: bytesRestored, packageRestored, restoredVersion: old?.version, rollbackSmoke, restoredOk }), { flag: "wx" });
+    if (!restoredOk) await writeFile(join(options.stateDirectory, "activation-rollback-failure.json"), JSON.stringify({ rollbackDetail: [rollback.code !== 0 ? "native-restore-failed" : "", restored.code !== 0 ? "list-unverifiable" : "", !bytesRestored ? "registry-bytes" : "", !packageRestored ? "package-bytes" : "", !rollbackSmoke ? "rollback-smoke" : "", previousTarget ? (old?.version === previousVersion ? "" : "previous-version") : (old ? "unexpected-install" : "")].filter(Boolean).join(","), rollbackCode: rollback.code, restoredCode: restored.code, bytesRestored, packageRestored, rollbackSmoke, restoredVersion: old?.version }), { flag: "wx" });
     return result(restoredOk ? "rolled-back" : "blocked", restoredOk ? (error instanceof Error ? error.message : "activation-failed") : "activation-rollback-failed");
   } finally { await rm(lock, { force: true }); await rm(lease, { force: true }); }
 }
