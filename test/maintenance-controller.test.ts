@@ -214,12 +214,13 @@ test("resume fence recognizes exact saved push head after transition crash and r
   expect(resumeFence(state,"d".repeat(40),1)).toBe("stale-head");
 });
 
-test("trusted scanner ZIP pin refuses wrong bytes before extraction",async()=> {
+test("pinned scanner rejects unsupported platforms and wrong bytes before extraction",async()=> {
   const dir=await mkdtemp(join(tmpdir(),"controller-scanner-"));
   try {
     const archive=join(dir,"gitleaks.zip");await writeFile(archive,"wrong archive bytes");
     const scanner={version:"8.30.1",platform:"win32" as const,asset:"gitleaks_8.30.1_windows_x64.zip",url:"https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip",archiveSha256:"d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e",executableSha256:"17157e2ee8b76fc8b1d8bee607a250e34b8a8023c8bc81822d4b5ee4d78fcb7c"};
-    await expect(prepareScanner(scanner,dir,archive)).rejects.toThrow("scanner-archive-hash-mismatch");
+    if(process.platform!==scanner.platform)await expect(prepareScanner(scanner,dir,archive)).rejects.toThrow("scanner-platform-unavailable");
+    else await expect(prepareScanner(scanner,dir,archive)).rejects.toThrow("scanner-archive-hash-mismatch");
   } finally {await rm(dir,{recursive:true,force:true});}
 });
 
