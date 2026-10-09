@@ -43,6 +43,20 @@
         "darwin": "fc6a2fd6eb5f9f79296eda75f1c403a2e776d04ee761e2be811aec2f51c52b9e",
         "linux": "9b2d104a92b8d441a784559bf3122426aa7600ca88e8fe78895b1c1efab97f8c"
       }
+    },
+    {
+      "version": "18.8.7",
+      "package": "omp-host-1887",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "718ef648a35f6b676440185eb2d5eb900588296ffe9cc6c88a00351d0d1bde5c",
+        "darwin": "e816e3bd859d20e9b1dc7aeb6fda36aa759320e3426231b0ff8045782f2184ab",
+        "linux": "068caa6b6cf8f771ed6f0400780d90da5b670355514f90a02cc32e37773f6097"
+      }
     }
   ],
   "installedEvidence": [
@@ -60,11 +74,14 @@
   "unavailableInstalledRuns": [
     "18.6.1-win32",
     "18.8.0-win32",
+    "18.8.7-win32",
     "18.6.1-darwin",
     "18.8.0-darwin",
     "18.8.4-darwin",
+    "18.8.7-darwin",
     "18.6.1-linux",
     "18.8.0-linux",
-    "18.8.4-linux"
+    "18.8.4-linux",
+    "18.8.7-linux"
   ]
 }

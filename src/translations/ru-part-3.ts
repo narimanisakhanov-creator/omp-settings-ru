@@ -236,6 +236,12 @@ export const ruPart3: Readonly<Record<string, SettingTranslationFields>> = {
     label: "Bash",
     description: "Включает инструмент bash для выполнения команд оболочки",
   },
+  "bash.gitGuard": {
+    sourceHash: "86f367253f6c8a95b715f6acaf02da583814e69861937abfad1af129aa1f2c6b",
+    label: "Защита Git",
+    description:
+      "Запрещать в инструменте bash команды git, отбрасывающие или переносящие общую работу: stash, reset --hard или сброс на другой коммит, а также checkout/switch/restore вне конфликта слияния или rebase",
+  },
   "bash.allowCompoundCommands": {
     sourceHash: "1fde7f22fa33d2b89f13823aeb39413637be5d60710e95e7adb3846cb99f147a",
     label: "Разрешить составные команды",
@@ -384,6 +390,30 @@ export const ruPart3: Readonly<Record<string, SettingTranslationFields>> = {
     label: "Клонировать рабочую копию в рабочие деревья",
     description:
       "Новые рабочие деревья из `github pr_checkout` и `git worktree add` в bash создаются как клон текущей рабочей копии с копированием при записи, чтобы игнорируемые артефакты сборки (node_modules, target) переносились; если файловая система не поддерживает клонирование, используется обычная рабочая копия",
+  },
+  "worktree.onStart": {
+    sourceHash: "eb75fe3d4c29d8239f30e8668bdb130bb3d03544ba2b63b8db5580dfbdcec3e6",
+    label: "Worktree при запуске",
+    description: "Начинать ли новые интерактивные сессии в новом связанном worktree",
+    options: {
+      off: { label: "Выключено", description: "Начинать в текущем checkout" },
+      ask: { label: "Спросить", description: "Спрашивать при старте сессии" },
+      create: { label: "Создавать", description: "Всегда начинать в новом worktree в ветке `wt/*`" },
+    },
+  },
+  "worktree.onExit": {
+    sourceHash: "adddacc716cb093ee9054d9cb2076e702a585ce88ea9ab140e4b96ee461e8462",
+    label: "Worktree при выходе",
+    description: "Что делать при выходе с worktree, созданными с момента запуска omp (при старте или через `/wt`)",
+    options: {
+      keep: { label: "Оставить", description: "Оставить worktree на месте" },
+      ask: { label: "Спросить", description: "Спрашивать при выходе" },
+      remove: {
+        label: "Удалять",
+        description:
+          "Удалять чистые worktree; спрашивать, если есть незакоммиченные изменения или новые коммиты. Игнорируемые Git файлы (например, `.env`) тоже удаляются",
+      },
+    },
   },
   "worktree.cleanSource": {
     sourceHash: "4d35f684560894da43ae06091cb785ce2eabf253f82d0ebd7457653fdbb05f69",

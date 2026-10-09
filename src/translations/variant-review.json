@@ -459,6 +459,128 @@
       "reviewTask": "task_280171564bc3",
       "evidence": ".tools/maintenance-evidence.title-delta-review.md",
       "comparison": "18.8.0 terminal title icon and code; 18.8.4 icon/code at beginning of newly generated titles, not specifically terminal title. Options byte-identical, no option retranslation."
+    },
+    {
+      "path": "title.icons",
+      "sourceHash": "02f941604096c7628fcd21e408f7655bd019d7411de67c23c330b9412a393e93",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "c3257c83c29f114f22cdfcdb77ce40107fd290d43d7699c7eb080c7edf30a46c",
+      "review": "independently-confirmed",
+      "reviewTask": "Verify the installed plugin against the actual OMP host and complete a safe working installation",
+      "evidence": ".tools/host-1887-delta.json",
+      "comparison": "18.8.7 English is 'Icon and short code that head new generated or /rename session titles' — the sentence now covers /rename titles as well as generated ones. Options byte-identical, no option retranslation; the 18.8.0 and 18.8.4 variants are retained. The Director assistant authored the Russian wording after comparing the captured English metadata, and reviewed the source-hash and translation fields; this is not a review by the repository owner and not a second model review."
+    },
+    {
+      "path": "tools.xdev",
+      "sourceHash": "aef279287594846271d548c41381f6c9a662df6427ebfe27ebde5790c1b921c7",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "a040e1d6ed4ba9db3bca42e16372121a173ca4ee198bb4e8b177f9e7b0e891a4",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 narrows the trailing clause from 'filesystem writes stay rejected' to a device-only write transport that keeps local:// scratch writable besides devices. The 18.6.1/18.8.0/18.8.4 wording stays as its own variant; no options or warning."
+    },
+    {
+      "path": "bash.gitGuard",
+      "sourceHash": "86f367253f6c8a95b715f6acaf02da583814e69861937abfad1af129aa1f2c6b",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "f1bb2c284d9010f894442b31ae322a402f69364b364346003337b5fc9dcecc51",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 new setting: the bash tool refuses git commands that discard or move shared work — stash, reset --hard or reset to another commit, and checkout/switch/restore outside a merge or rebase conflict. No options, no warning."
+    },
+    {
+      "path": "terminal.programStatus",
+      "sourceHash": "02efeda1a333fb278c8af8068e2b342ea9d6c0063e435027217abc47c5f79b49",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "9785a26d7060b684d7ca0c8387edd53e709bdb95cd39a79da630401045aea56e",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 new setting: reports over OSC 7501 whether the agent is working, waiting on the user, done, or failed, for terminal tab indicators and agent inboxes. No options, no warning."
+    },
+    {
+      "path": "speech.speed",
+      "sourceHash": "298796cf6aaf3647aaeaed789859e3a594753e7228a565ca28055c7bd34245ba",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "880de16f743cdc1dc6e8d3f75f81c6a25dda9fb62f389643cd057b90307f6044",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 new setting: speaking rate for reading the assistant's output aloud, clamped 0.5–2.5. Eight numeric option values are kept verbatim; labels stay numeric multipliers and only 1 is '(обычный)'; the source carries no option descriptions."
+    },
+    {
+      "path": "tts.localSpeed",
+      "sourceHash": "573ddc72a5a07effd82556de3c2f7bacc5310bf39d49d392e6d07df41e5b1df8",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "08d9576af1d92a73b780d3fea9b5e43948196940b739dd432fb242e623eaa18e",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 new setting: speaking rate of the local TTS backend (tts tool, omp say), clamped 0.5–2.5. Same eight numeric values and option shape as speech.speed; no option descriptions in the source."
+    },
+    {
+      "path": "worktree.onStart",
+      "sourceHash": "eb75fe3d4c29d8239f30e8668bdb130bb3d03544ba2b63b8db5580dfbdcec3e6",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "71120568f6bb37fa98933574a2aa838f001065cde8847769663e5ec702fe6b10",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 new setting: whether fresh interactive sessions start in a new linked worktree. Values off/ask/create kept verbatim, with the `wt/*` branch backticks preserved in the create description."
+    },
+    {
+      "path": "worktree.onExit",
+      "sourceHash": "adddacc716cb093ee9054d9cb2076e702a585ce88ea9ab140e4b96ee461e8462",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "observedIn": [
+        "18.8.7"
+      ],
+      "translationHash": "aa5b3f65fd5e63d4ab84ec4ac107d584cd9ac094c1718eadb4f657b15bde2d66",
+      "review": "implementation-semantic-review",
+      "comparison": "18.8.7 new setting: exit policy for worktrees created since omp started (on start or via /wt). keep/ask/remove kept verbatim; the remove warning about clean worktrees, uncommitted changes, new commits and deleted gitignored files (e.g. `.env`) is preserved in full."
     }
   ],
   "pending": []

@@ -16,7 +16,7 @@ function exportDerived(alias: string, version: string, platform: string) {
   return JSON.parse(result.stdout.toString()) as BaselineSnapshot;
 }
 
-for (const [version, alias] of [["18.6.1", "omp-host-1861"], ["18.8.0", "omp-host-1880"], ["18.8.4", "omp-host-1884"]]) {
+for (const [version, alias] of [["18.6.1", "omp-host-1861"], ["18.8.0", "omp-host-1880"], ["18.8.4", "omp-host-1884"], ["18.8.7", "omp-host-1887"]]) {
   for (const platform of derived) {
     test(`source registry export derives the reviewed ${version} ${platform} baseline`, async () => {
       const snapshot = exportDerived(alias!, version!, platform);

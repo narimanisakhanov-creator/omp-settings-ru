@@ -232,6 +232,12 @@ export const ruPart1: Readonly<Record<string, SettingTranslationFields>> = {
     description:
       "Передавать неопределённый прогресс OSC 9;4, пока работает агент или обслуживание контекста (в Tern всегда включено)",
   },
+  "terminal.programStatus": {
+    sourceHash: "02efeda1a333fb278c8af8068e2b342ea9d6c0063e435027217abc47c5f79b49",
+    label: "Статус программы (OSC 7501)",
+    description:
+      "Сообщать через OSC 7501, работает ли агент, ждёт ответа пользователя, завершил работу или завершился с ошибкой — для индикаторов вкладок терминала и входящих сообщений агента",
+  },
   "tui.textSizing": {
     sourceHash: "cfe538cd9220b87286e586f3b1296a39a81525cee9ea21c58a4dccba9f18b803",
     label: "Крупные заголовки (Kitty)",

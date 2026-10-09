@@ -54,7 +54,7 @@ try {
   }
   const russian=await session.send("/settings\r",/Тёмная тема/);
   observations.push({kind:"ru-panel",output:russian.split("\n").filter(line=>/Тёмная тема|Светлая тема|Набор символов/.test(line)).join("\n")});
-  const search=await session.send("скорость",/Скорость генерации.*false/);
+  const search=await session.send("Скорость генерации",/Скорость генерации.*false/);
   observations.push({kind:"ru-search",output:search.split("\n").filter(line=>/скорость|Скорость генерации/.test(line)).join("\n")});
   const on=await session.send("\r",/Скорость генерации.*true/);
   observations.push({kind:"bool-change",output:on.split("\n").find(line=>/Скорость генерации/.test(line))!});

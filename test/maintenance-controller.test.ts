@@ -88,17 +88,20 @@ test("real host lock closure accepts native and transitive rows only against tru
   const actual = await readFile("bun.lock", "utf8");
   const after = Bun.JSON5.parse(actual) as { packages: Record<string, [string,string,Record<string,unknown>,string]>; workspaces: Record<string,{devDependencies:Record<string,string>}> };
   const before = structuredClone(after);
+  // Derive the direct host pin from the committed lockfile so the closure proof follows each version bump.
+  const candidate = after.workspaces[""]!.devDependencies["@oh-my-pi/pi-coding-agent"]!;
+  const previous = ["18.6.1", "18.8.0", "18.8.4"].filter(version => version !== candidate).at(-1)!;
   for (const [name, row] of Object.entries(before.packages)) {
-    if (name.startsWith("@oh-my-pi/")) row[0] = String(row[0]).replace("@18.8.4", "@18.8.0");
+    if (name.startsWith("@oh-my-pi/")) row[0] = String(row[0]).replace(`@${candidate}`, `@${previous}`);
   }
-  for (const name of ["pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"]) before.workspaces[""]!.devDependencies[`@oh-my-pi/${name}`] = "18.8.0";
-  expect(verifyLockChange(JSON.stringify(before), actual, sha, "18.8.4", actual).refusal).toBeUndefined();
+  for (const name of ["pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"]) before.workspaces[""]!.devDependencies[`@oh-my-pi/${name}`] = previous;
+  expect(verifyLockChange(JSON.stringify(before), actual, sha, candidate, actual).refusal).toBeUndefined();
   const evil = structuredClone(after);
   evil.packages.typescript![0] = "typescript@999.0.0";
-  expect(verifyLockChange(JSON.stringify(before), JSON.stringify(evil), sha, "18.8.4", actual).refusal).toBe("lockfile-unexpected-package-change");
+  expect(verifyLockChange(JSON.stringify(before), JSON.stringify(evil), sha, candidate, actual).refusal).toBe("lockfile-unexpected-package-change");
   const lifecycle = structuredClone(after);
   lifecycle.packages["@oh-my-pi/pi-ai"]![2].scripts = { postinstall: "evil" };
-  expect(verifyLockChange(JSON.stringify(before), JSON.stringify(lifecycle), sha, "18.8.4", actual).refusal).toBe("lockfile-host-metadata-change");
+  expect(verifyLockChange(JSON.stringify(before), JSON.stringify(lifecycle), sha, candidate, actual).refusal).toBe("lockfile-host-metadata-change");
 });
 
 test("captured CLI worker-start ready receipt preserves actual child identity", async () => {

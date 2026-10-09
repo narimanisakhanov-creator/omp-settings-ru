@@ -14,11 +14,11 @@
 
 ## установка
 
-установка выпуска `v0.3.0` — [опубликован и помечен как latest](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.0):
+установка выпуска `v0.3.1` — [опубликован и помечен как latest](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.3.1):
 архив и `SHA256SUMS` лежат в [выпуске](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases); перед установкой сверь SHA-256 архива со списком.
 
 ```text
-omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.3.0
+omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.3.1
 ```
 
 после установки открой новую сессию. Перед использованием проверь [совместимость](#проверенная-совместимость-checkout) и [процедуру проверки](CONTRIBUTING.md#проверка-установленного-хоста).
@@ -51,6 +51,7 @@ omp plugin uninstall omp-settings-ru
 | 18.6.1 / Windows x64 | настоящий реестр пакета, 398/398 настроек; установленная панель не запускалась |
 | 18.8.0 / Windows x64 | настоящий реестр пакета, 404/404 настроек; установленная панель не запускалась |
 | 18.8.4 / Windows x64 | реестр 404/404; установленная панель, русский поиск, bool/enum, ru/en/ru и новая сессия без расширения |
+| 18.8.7 / Windows x64 | реестр 410/410; установленная панель, русский поиск, bool/enum, ru/en/ru и новая сессия без расширения |
 
 это не таблица поддержки опубликованного тега.
 Linux/macOS проверены по извлечённым исходникам, не по установленной панели.
