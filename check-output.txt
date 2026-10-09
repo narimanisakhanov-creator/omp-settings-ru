@@ -1,0 +1,315 @@
+$ bun run typecheck && bun test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check
+$ tsc --noEmit
+bun test v1.4.2 (744846f84)
+
+::group::test/installed-startup.test.ts:
+(pass) startup-only driver observes real settings without claiming translation roundtrip [5234.50ms]
+
+::endgroup::
+
+::group::test/artifact-binding.test.ts:
+(pass) accepts differing archive and canonical content hashes proven against one committed tree [41.21ms]
+(pass) refuses mismatched archive binding [25.06ms]
+(pass) refuses mismatched content binding [26.20ms]
+(pass) refuses mismatched head binding [16.13ms]
+(pass) refuses mismatched tree binding [17.15ms]
+(pass) extraction refuses a pre-existing target and a linked target instead of writing through it [24.86ms]
+(pass) extraction validates the package allowlist before writing any file [7.77ms]
+(pass) refuses duplicate file entries whose extraction would be ambiguous [22.63ms]
+(pass) refuses raw archive names with dot segments or links before any extraction [38.50ms]
+(pass) extraction proves on-disk bytes equal the verified archive identity [32.91ms]
+(pass) extraction refuses a mismatched expected identity [19.67ms]
+(pass) extraction refuses unsafe archives without writing any file [20.46ms]
+(pass) executable identity hashes the actual executable bytes [0.54ms]
+(pass) validates a receipt whose binding carries the expected exact source and artifact identity [0.32ms]
+(pass) refuses a receipt whose source, archive or content binding was tampered with or missing [0.20ms]
+(pass) refuses receipts with unverified extraction, weak run identity or unmatched smoke evidence [0.26ms]
+(pass) refuses a wrapper that claims success over a failed, non-panel or foreign inner smoke [0.17ms]
+(pass) refuses receipts whose run or check identity does not match the trusted GitHub source [0.19ms]
+
+::endgroup::
+
+::group::test/multi-version.test.ts:
+(pass) real 18.6.1 registry selects its reviewed variant and restores [11.72ms]
+(pass) real 18.8.0 registry selects its reviewed variant and restores [8.47ms]
+(pass) future compatible registry translates known source but never changed or unknown source [5.21ms]
+(pass) malformed real registry refuses all mutation [1.98ms]
+(pass) 18.8.4 selects its distinct title variant and restores actual original descriptors [5.77ms]
+
+::endgroup::
+
+::group::test/host-matrix.test.ts:
+(pass) pinned 18.6.1 actual host registry has native baseline identity and complete coverage [432.79ms]
+(pass) pinned 18.8.0 actual host registry has native baseline identity and complete coverage [330.75ms]
+(pass) pinned 18.8.4 actual host registry has native baseline identity and complete coverage [280.35ms]
+
+::endgroup::
+
+::group::test/ci-prepare-host.test.ts:
+(pass) fixed releases map native OS and architecture to exact binary names [3.18ms]
+(pass) release authority refuses foreign tags, duplicate assets and missing SHA256 [0.31ms]
+(pass) binary integrity refuses changed bytes and truncated downloads before execution [0.12ms]
+(pass) CI refuses ambient omp and explicit executable wins without PATH lookup [0.12ms]
+
+::endgroup::
+
+::group::test/smoke-ci-host.test.ts:
+(pass) parses npm pack listings from array and keyed envelopes [0.16ms]
+(pass) refuses to produce a receipt without the exact reviewed source head [16.00ms]
+(pass) selects the running check run that matches this workflow run, head and job [0.24ms]
+(pass) selects by the workflow commit, not the reviewed source head, when they differ [0.08ms]
+(pass) refuses to guess a check id from unrelated, ambiguous, truncated or foreign listings [0.21ms]
+
+::endgroup::
+
+::group::test/maintenance-updater.test.ts:
+(pass) activation liveness ignores an exited CIM row for a just-finished native helper [0.38ms]
+(pass) activation liveness defers for a live process on the target profile [0.17ms]
+(pass) activation liveness keeps a live process with unknown argv busy [0.04ms]
+(pass) activation liveness treats a successful no-process sample as idle [0.02ms]
+(pass) activation liveness is fail-closed for every unverifiable sample [0.17ms]
+(pass) owned readonly fixture teardown unlinks both junctions without touching external target [3.72ms]
+(pass) unavailable host returns safe-pending without changing previous install [3.10ms]
+(pass) mismatched actual host returns safe-pending without changing previous install [429.21ms]
+(pass) wrong fixed package hash blocks verification and preserves previous install [413.70ms]
+(pass) fixed tag discrepancy blocks staging [411.67ms]
+(pass) fixed commitSha discrepancy blocks staging [413.13ms]
+(pass) fixed assetId discrepancy blocks staging [441.95ms]
+(pass) fixed sha256 discrepancy blocks staging [414.79ms]
+(pass) malformed fixed release identifiers block staging [420.28ms]
+(pass) stage verifies native manager in disposable profile without activation [7947.67ms]
+(pass) identical owned stage resumes and refuses changed staged bytes [8401.31ms]
+(pass) activation requires both flags {"activate":true,"accepted":false} [6762.64ms]
+(pass) activation requires both flags {"activate":false,"accepted":true} [6842.06ms]
+activation boundary: safe-pending; non-Windows liveness unsupported; native target unchanged
+(pass) accepted activation installs durable version in disposable profile [7109.90ms]
+(pass) archive traversal refuses before extraction [421.23ms]
+(pass) lifecycle scripts refuse before native manager execution [426.77ms]
+(pass) backup and native disposable rollback restore previous bytes and metadata [7624.30ms]
+(pass) ordinary packaged scripts do not prevent safe staging [6904.19ms]
+controller activation receipt: {"phase":"safe-pending","pin":{"tag":"v0.2.1","commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assetId":42,"sha256":"82883231d60d113ce55348acdf616aa7cb9831a2884ab234a1086585d6fe9c6d","packageVersion":"0.2.1","supportedPairs":[{"hostVersion":"18.8.6","platform":"linux"}]},"previousPackageHash":"6fb44d95190048fded7ec0338178f9cd49037dc117d4e3e5c0a7ea449ceb1543","smokePassed":false,"refusal":"active-session-or-liveness-unverifiable"} root=/tmp/omp-updater-test-glFbPf profile=omp-updater-test-99c1f7b9-6aed-456c-adaa-05854df7a536
+(pass) controller trusted target captures actual previous install and activates [9310.49ms]
+replay activation first receipt: {"phase":"safe-pending","pin":{"tag":"v0.2.1","commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assetId":42,"sha256":"8ecd39d7a80bed674ccdd0565b3361cf65e5e0e84a86fbd9985046c04f290bdf","packageVersion":"0.2.1","supportedPairs":[{"hostVersion":"18.8.6","platform":"linux"}]},"previousPackageHash":"5056d0dbfcf86283bcb958a26c48adb73421d148d20c5902b15c944e0f4eba55","smokePassed":false,"refusal":"active-session-or-liveness-unverifiable"} root=/tmp/omp-updater-test-A3gcC1 profile=omp-updater-test-4ed010a2-6ef4-4960-9019-4e8437dd74c9
+(pass) completed activation replay ignores a held lock and lease and refuses drift [8913.43ms]
+registry activation receipt: {"phase":"safe-pending","pin":{"tag":"v0.2.1","commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assetId":42,"sha256":"2b289d9b563cd6357a7878a0140ed0cf7a00c5b3c49376ba2970735e5b63a86d","packageVersion":"0.2.1","supportedPairs":[{"hostVersion":"18.8.6","platform":"linux"}]},"previousPackageHash":"b0608e4d9207dcf9e597fc41d5e9b4124ad4da1db8ef8a43966d1eb8815a32b8","smokePassed":false,"refusal":"active-session-or-liveness-unverifiable"}
+(pass) activation preserves disabled feature metadata and sibling registry [8303.61ms]
+rollback activation receipt: {"phase":"safe-pending","pin":{"tag":"v0.2.1","commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assetId":42,"sha256":"96a0b635488092b4f9aa84d04aa45f452a84b070844e965384b29f3b336c97a8","packageVersion":"0.2.1","supportedPairs":[{"hostVersion":"18.8.6","platform":"linux"}]},"previousPackageHash":"46aa61359755e0a72a65417e8760ae43f6da587830700cf51c7912a492c635c2","smokePassed":false,"refusal":"active-session-or-liveness-unverifiable"} root=/tmp/omp-updater-test-dgXjvf profile=omp-updater-test-26a0461e-b56f-4f32-97d5-698906736ab3
+(pass) failed real activation rolls back exact registry and previous package [8206.35ms]
+(pass) accepted activation refuses missing trusted target instead of inventing profile [822.23ms]
+(pass) held before-session lease defers activation without touching registry [8236.66ms]
+(pass) matching active target process defers with unchanged previous registry [9842.10ms]
+
+::endgroup::
+
+::group::test/matrix-source-worker.test.ts:
+(pass) source registry export derives the reviewed 18.6.1 win32 baseline [453.16ms]
+(pass) source registry export derives the reviewed 18.6.1 darwin baseline [461.69ms]
+(pass) source registry export derives the reviewed 18.8.0 win32 baseline [464.38ms]
+(pass) source registry export derives the reviewed 18.8.0 darwin baseline [463.49ms]
+(pass) source registry export derives the reviewed 18.8.4 win32 baseline [459.05ms]
+(pass) source registry export derives the reviewed 18.8.4 darwin baseline [463.65ms]
+(pass) derived source export keeps the darwin-only Apple completion option [467.83ms]
+
+::endgroup::
+
+::group::test/report.test.ts:
+(pass) coverage report > separates complete, partial, untranslated and stale entries [0.32ms]
+(pass) coverage report > does not credit a translation that invents a warning [0.08ms]
+(pass) coverage report > reports missing and stale option values separately [0.10ms]
+(pass) coverage report > requires an option description only where the source option has one [0.08ms]
+(pass) coverage report > static catalog options for dynamic or absent sources are stale, never missing [0.13ms]
+(pass) coverage report > flags a source hash mismatch even when every text is translated [0.15ms]
+(pass) reviewed templates > tolerate live keybinding changes but not changed wording [0.19ms]
+(pass) reviewed templates > a translation cannot claim a template the source does not have [0.08ms]
+(pass) reviewed templates > a platform entry that drops the reviewed template stays partial [0.21ms]
+(pass) platform resolution > unmatched platform variants are never credited as translated [0.09ms]
+(pass) platform resolution > coverage uses the override for the host platform [0.14ms]
+(pass) upstream drift > reports added, removed and changed paths explicitly [0.08ms]
+(pass) upstream drift > an unchanged registry and a different platform label are not drift [0.15ms]
+(pass) upstream drift > snapshot hashes normalized metadata and skips settings without ui [0.09ms]
+
+::endgroup::
+
+::group::test/source.test.ts:
+(pass) source identity > keybinding changes preserve identity only inside a reviewed template [0.13ms]
+(pass) source identity > changed option values and warnings invalidate translation identity [0.09ms]
+
+::endgroup::
+
+::group::test/translation-lifecycle.test.ts:
+(pass) translation lifecycle > round trip keeps enum values and the shared option source unchanged [0.47ms]
+(pass) translation lifecycle > unwritable fields refuse atomically before any label changes [0.58ms]
+(pass) translation lifecycle > later foreign labels survive English restoration [0.18ms]
+(pass) translation lifecycle > changed known sources and unknown settings stay English [0.11ms]
+(pass) translation lifecycle > structurally compatible unreviewed versions preserve round-trip ownership [0.69ms]
+(pass) translation lifecycle > reapplication shares restoration ownership instead of nesting translations [0.29ms]
+(pass) translation lifecycle > foreign descriptor edits survive even with the localized value unchanged [0.14ms]
+(pass) translation lifecycle > foreign option fields and array descriptors keep the display copy alive [0.20ms]
+(pass) translation lifecycle > live description getters retain key hints and fall back after wording drift [0.57ms]
+(pass) translation lifecycle > unsafe setter and inherited fields refuse without invoking writes [0.37ms]
+(pass) translation lifecycle > identical shared targets deduplicate while conflicting translations refuse atomically [0.38ms]
+(pass) translation lifecycle > proxy rejection rolls back earlier writes with sanitized diagnostics [0.22ms]
+(pass) translation lifecycle > failed restoration can be retried without losing ownership [0.27ms]
+(pass) translation lifecycle > foreign replacement getters remain intact on restoration [0.15ms]
+(pass) translation lifecycle > deleted fields and replaced options are not recreated on restoration [0.14ms]
+(pass) translation lifecycle > a proxy that mutates before throwing still restores exact descriptors [0.14ms]
+(pass) translation lifecycle > platform overrides are complete rather than inherited base fields [0.11ms]
+(pass) translation lifecycle > restoring a stale handle cannot orphan a newer application [0.11ms]
+(pass) translation lifecycle > invalid metadata and throwing reads refuse before mutation [0.08ms]
+(pass) translation lifecycle > added warnings restore absence rather than creating undefined fields [0.14ms]
+(pass) translation lifecycle > nonconfigurable live getters refuse atomically [0.13ms]
+(pass) translation lifecycle > distinct UIs sharing completion options localize independently [0.21ms]
+(pass) translation lifecycle > write verification catches a proxy falsely claiming success [0.14ms]
+(pass) translation lifecycle > rollback failures are stable codes rather than thrown local data [0.14ms]
+(pass) translation lifecycle > shared option translation conflicts refuse before any mutation [0.10ms]
+
+::endgroup::
+
+::group::test/ci-matrix.test.ts:
+(pass) CI candidate support is derived without a workflow version-list edit [6.13ms]
+
+::endgroup::
+
+::group::test/variant-review.test.ts:
+(pass) rejects appended source variant retaining stale translation bytes [92.32ms]
+(pass) rejects hidden translation edit under unchanged historical source identity [66.15ms]
+(pass) accepts shipped historical identities and independently reviewed title delta [45.82ms]
+(pass) rejects exact source review with tampered translation hash [44.96ms]
+(pass) verifies historical catalog digest against immutable prior bytes [43.63ms]
+(pass) requires independent title delta approval even when hash matches [45.21ms]
+(pass) requires independent title review even if candidate removes observed host versions [40.45ms]
+
+::endgroup::
+
+::group::test/maintenance-controller.test.ts:
+(pass) precheck trusted [0.40ms]
+(pass) precheck untrusted [0.01ms]
+(pass) precheck foreign
+(pass) precheck wrong branch
+(pass) precheck unsafe paths [0.03ms]
+(pass) precheck symlink
+(pass) precheck missing SHA
+(pass) precheck pin mismatch
+(pass) deadline never grants launch [0.02ms]
+(pass) candidate host registry alias is allowed only for the exact candidate version [7.27ms]
+(pass) generation key is PR plus original head [0.06ms]
+(pass) exclusive repo lock refuses concurrent tasks and foreign cleanup [4.52ms]
+(pass) atomic revision refuses lost writer update [3.26ms]
+(pass) intent after crash refuses unknown mutation evidence [0.08ms]
+(pass) stale working SHA and expired deadline block resume [0.07ms]
+(pass) publication refuses missing-checks [0.68ms]
+(pass) publication refuses failed-check [0.12ms]
+(pass) publication refuses stale-check [0.09ms]
+(pass) publication refuses review-missing [0.10ms]
+(pass) publication refuses review-rejected [0.13ms]
+(pass) publication refuses same-reviewer [0.06ms]
+(pass) publication refuses smoke-missing [0.10ms]
+(pass) publication refuses smoke-stale [0.11ms]
+(pass) publication refuses wrong-tree [0.10ms]
+(pass) publication refuses wrong-artifact [0.06ms]
+(pass) publication refuses privacy-missing [0.21ms]
+(pass) publication refuses head-changed [0.05ms]
+(pass) publication refuses base-changed [0.04ms]
+(pass) complete autonomous evidence pins verified head without per run human flag [0.22ms]
+(pass) candidate extends finite matrix and unexpected version blocks [0.18ms]
+(pass) release reconciliation pins tag asset workflow and stable [0.11ms]
+(pass) publication plan never recreates matching tag release [0.32ms]
+(pass) unknown worker failure and question never imply settled success [0.06ms]
+(pass) disabled schedule refuses enabled or drifted duplicate [0.11ms]
+(pass) CLI fixture grants eligible only and cannot launch unsafe [68.79ms]
+(pass) sanitized stderr retains cause without user paths or credential [6.92ms]
+(pass) real previous mode and deletion have exact refusals [0.11ms]
+(pass) lock verification binds actual bytes and rejects new dependency [1.09ms]
+(pass) filesystem restart reconciles tag and release with zero mutation [6.84ms]
+(pass) REST bot identity matches only configured app and real Bot type [0.06ms]
+(pass) accepted finite manifest drives candidate check union [0.07ms]
+(pass) worker supplied smoke flags cannot authorize publication without receipt provenance [0.17ms]
+(pass) support manifest refuses duplicate versions and arbitrary policy fields [0.09ms]
+(pass) host lock update cannot introduce lifecycle or new dependency metadata [0.14ms]
+(pass) support manifest rejects claimed support with missing finite platform [0.12ms]
+(pass) executor metadata permits finite peers but refuses script dependency and support removal [0.45ms]
+(pass) artifact and scanner provenance verifies actual bytes not report flags [1.18ms]
+(pass) stale base invalidates review and advances bounded review generation [0.22ms]
+90 |   const before = structuredClone(after);
+91 |   for (const [name, row] of Object.entries(before.packages)) {
+92 |     if (name.startsWith("@oh-my-pi/")) row[0] = String(row[0]).replace("@18.8.4", "@18.8.0");
+93 |   }
+94 |   for (const name of ["pi-coding-agent", "pi-natives", "pi-tui", "pi-utils"]) before.workspaces[""]!.devDependencies[`@oh-my-pi/${name}`] = "18.8.0";
+95 |   expect(verifyLockChange(JSON.stringify(before), actual, sha, "18.8.4", actual).refusal).toBeUndefined();
+                                                                                               ^
+error: expect(received).toBeUndefined()
+
+Received: "lockfile-workspace-change"
+
+      at <anonymous> (/home/runner/work/omp-settings-ru/omp-settings-ru/test/maintenance-controller.test.ts:95:91)
+
+::error file=test/maintenance-controller.test.ts,line=95,col=91,title=error: expect(received).toBeUndefined()::Received: "lockfile-workspace-change"%0A%0A      at <anonymous> (/home/runner/work/omp-settings-ru/omp-settings-ru/test/maintenance-controller.test.ts:95:91)
+(fail) real host lock closure accepts native and transitive rows only against trusted resolution [5.04ms]
+(pass) captured CLI worker-start ready receipt preserves actual child identity [12.52ms]
+(pass) partial child launch refusal persists ids and residual resources before rethrow [4.17ms]
+(pass) recorded inbox batch replies and settles before ack with durable replay [5.87ms]
+(pass) publication accepts verified distinct archive and content identities and rejects content mismatch [0.36ms]
+(pass) binding alone cannot authorize worker supplied native evidence [0.22ms]
+(pass) incoming forbidden-source rename is rejected rather than trusted by destination [0.07ms]
+(pass) lock root injection is refused even for unchanged package rows [5.26ms]
+(pass) executor cannot fabricate installed support evidence [0.13ms]
+(pass) resume fence recognizes exact saved push head after transition crash and rejects foreign head [0.12ms]
+(pass) pinned scanner rejects unsupported platforms and wrong bytes before extraction [0.90ms]
+(pass) changed host lock integrity requires independent trusted resolution [0.19ms]
+(pass) publication binds source artifact separately from verified synthetic workflow commit [0.36ms]
+(pass) release pair authority rejects arbitrary executor pair and derives finite supported union [0.18ms]
+(pass) final executor precommit validates the exact candidate registry alias and refuses unrelated lock mutations [28.86ms]
+(pass) verifying resume regenerates independent review before reading advanced-base synthetic evidence [9.19ms]
+
+::endgroup::
+
+::group::test/language-controller.test.ts:
+(pass) child transitions and shutdown cannot undo main-session language [0.47ms]
+(pass) queued language choices finish in user order, then restore on shutdown [0.15ms]
+(pass) incompatible hosts warn in Russian without exposing source exception details [0.22ms]
+(pass) unfinished rollback remains pending until English or shutdown restores it [0.49ms]
+
+::endgroup::
+
+::group::test/installed-smoke-cli.test.ts:
+(pass) installed host preflight identifies actual executable and isolated native installation [1677.39ms]
+(pass) actual installed host exercises panel search edits recovery and clean fresh session [11364.52ms]
+
+::endgroup::
+
+::group::test/candidate-refresh.test.ts:
+14 |   expect(result.exitCode).toBe(0);
+15 |   const after=JSON.parse(await readFile(join(directory,"package.json"),"utf8"));
+16 |   expect(after.peerDependencies).toEqual(before.peerDependencies);
+17 |   expect(after.devDependencies["@oh-my-pi/pi-coding-agent"]).toBe("18.8.4");
+18 |   expect(after.devDependencies["omp-host-1884"]).toBe("npm:@oh-my-pi/pi-coding-agent@18.8.4");
+19 |   expect((await readFile(join(directory,"upgrade-report.md"),"utf8"))).toContain("18.8.4 → 18.8.4");
+                                                                            ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "18.8.4 → 18.8.4"
+Received: "# OMP 18.8.6 → 18.8.4\n\n## Drift (added 0, removed 2, changed 0)\n### Added\n- None\n### Removed\n- `worktree.onExit`\n- `worktree.onStart`\n### Changed\n- None\n\n## Translation coverage\n- totalUiSettings: 404\n- translatedSettings: 404\n- completeSettings: 404\n- partialSettings: 0\n- untranslatedPaths: 0\n- partialPaths: 0\n- stalePaths: 0\n- optionMismatches: 0\n- sourceHashMismatches: 0\n\n## Next steps\n- Review each changed/new source variant semantically\n- Retain old source hashes and translations\n- Exercise fixed native host panel\n- Record finite support evidence and exact package peers after independent review\n- Bump plugin version\n"
+
+      at <anonymous> (/home/runner/work/omp-settings-ru/omp-settings-ru/test/candidate-refresh.test.ts:19:72)
+
+::error file=test/candidate-refresh.test.ts,line=19,col=72,title=error: expect(received).toContain(expected)::Expected to contain: "18.8.4 → 18.8.4"%0AReceived: "# OMP 18.8.6 → 18.8.4\n\n## Drift (added 0, removed 2, changed 0)\n### Added\n- None\n### Removed\n- `worktree.onExit`\n- `worktree.onStart`\n### Changed\n- None\n\n## Translation coverage\n- totalUiSettings: 404\n- translatedSettings: 404\n- completeSettings: 404\n- partialSettings: 0\n- untranslatedPaths: 0\n- partialPaths: 0\n- stalePaths: 0\n- optionMismatches: 0\n- sourceHashMismatches: 0\n\n## Next steps\n- Review each changed/new source variant semantically\n- Retain old source hashes and translations\n- Exercise fixed native host panel\n- Record finite support evidence and exact package peers after independent review\n- Bump plugin version\n"%0A%0A      at <anonymous> (/home/runner/work/omp-settings-ru/omp-settings-ru/test/candidate-refresh.test.ts:19:72)
+(fail) candidate refresh preserves tested peer range and historical baseline lineage [1376.75ms]
+
+::endgroup::
+
+::group::test/matrix-cli.test.ts:
+(pass) scripts/check-coverage.ts reports all retained version platform pairs without conflating native evidence [3885.23ms]
+(pass) scripts/diff-upstream.ts reports all retained version platform pairs without conflating native evidence [3799.25ms]
+
+::endgroup::
+
+2 tests failed:
+(fail) real host lock closure accepts native and transitive rows only against trusted resolution [5.04ms]
+(fail) candidate refresh preserves tested peer range and historical baseline lineage [1376.75ms]
+
+ 193 pass
+ 2 fail
+ 1538 expect() calls
+Ran 195 tests across 18 files. [142.35s]
+error: script "check" exited with code 1
+check exit status: 1
