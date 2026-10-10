@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    # The repository keeps exactly one public branch, so Dependabot must not create
+    # `dependabot/*` branches. Update the pinned action SHAs by hand instead.
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "ci"

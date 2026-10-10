@@ -4,6 +4,7 @@
   "workspaces": {
     "": {
       "name": "omp-settings-ru",
+      "version": "0.5.0",
       "devDependencies": {
         "@oh-my-pi/pi-coding-agent": "18.8.7",
         "@oh-my-pi/pi-natives": "18.8.7",

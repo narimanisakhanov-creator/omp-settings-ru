@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { parseLivenessSample, runUpdate, selectLiveOmpRows } from "../scripts/maintenance/updater.ts";
 import type { ReleasePin } from "../scripts/maintenance/contracts.ts";
-import { runControllerUpdate } from "../scripts/maintenance.ts";
+import { runManualUpdate } from "../scripts/maintenance.ts";
 import { updaterTestExecutable } from "../scripts/ci/prepare-host.ts";
 
 const executable = updaterTestExecutable(process.env, () => Bun.which("omp"));
@@ -331,7 +331,7 @@ test("controller trusted target captures actual previous install and activates",
   await rm(join(root, "installed.json"));
   await rm(join(root, "previous.tgz"));
   await rm(join(root, "activation-target.json"));
-  const receipt = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const receipt = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("controller activation receipt: " + JSON.stringify(receipt) + " root=" + root + " profile=" + old.profile);
   if (process.platform !== "win32") {
     expect(receipt.phase).toBe("safe-pending");
@@ -348,7 +348,7 @@ test("controller trusted target captures actual previous install and activates",
   expect(await readFile(join(root, "backup", "registry.json"))).toEqual(old.snapshot);
   expect(JSON.parse(await readFile(old.registry, "utf8"))).toEqual({ ...old.config, plugins: { ...old.config.plugins, "omp-settings-ru": { ...old.config.plugins["omp-settings-ru"], version: "0.2.1" } } });
   await writeFile(join(root, "before-session.lease"), JSON.stringify({pid:process.pid,profile:old.profile}));
-  const repeated = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const repeated = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   expect(repeated.phase).toBe("activated");
   expect(repeated.refusal).toBeUndefined();
   expect(await readFile(join(root, "backup", "registry.json"))).toEqual(old.snapshot);
@@ -360,7 +360,7 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   await rm(join(root, "installed.json"));
   await rm(join(root, "previous.tgz"));
   await rm(join(root, "activation-target.json"));
-  const first = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const first = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation first receipt: " + JSON.stringify(first) + " root=" + root + " profile=" + old.profile);
   if (process.platform !== "win32") {
     expect(first.phase).toBe("safe-pending");
@@ -375,7 +375,7 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   const lock = join(dirname(old.registry), "updater-activation.lock");
   await writeFile(lock, JSON.stringify({ pid: process.pid }));
   await writeFile(join(root, "before-session.lease"), JSON.stringify({ pid: process.pid, profile: old.profile }));
-  const repeated = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const repeated = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation repeat receipt: " + JSON.stringify(repeated));
   expect(repeated.phase).toBe("activated");
   expect(repeated.refusal).toBeUndefined();
@@ -395,7 +395,7 @@ test("completed activation replay ignores a held lock and lease and refuses drif
     }
     reader.releaseLock();
     const activeRegistry = await readFile(old.registry);
-    const activeSession = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+    const activeSession = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
     console.log("replay activation active-session receipt: " + JSON.stringify(activeSession));
     expect(activeSession.phase).toBe("activated");
     expect(activeSession.refusal).toBeUndefined();
@@ -403,7 +403,7 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   } finally { child.kill(); await child.exited; }
   // Drift in the activated profile registry is a package conflict, never a fresh activation.
   await writeFile(old.registry, registryBytes.toString().replace('"omp-settings-ru"', '"omp-settings-ru-drifted"'));
-  const drifted = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const drifted = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation drifted-registry receipt: " + JSON.stringify(drifted));
   expect(drifted.phase).toBe("blocked");
   expect(drifted.refusal).toBe("activated-package-conflict");
@@ -415,7 +415,7 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   try {
     await chmod(installedPath, 0o644);
     await writeFile(installedPath, "foreign bytes");
-    const tampered = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+    const tampered = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
     console.log("replay activation tampered-bytes receipt: " + JSON.stringify(tampered));
     expect(tampered.phase).toBe("blocked");
     expect(tampered.refusal).toBe("activated-package-conflict");
@@ -426,12 +426,12 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   expect(await readFile(installedPath)).toEqual(installedBytes);
   // A receipt bound to another pin, and a malformed receipt, are refused without re-activating.
   await writeFile(receiptPath, JSON.stringify({ ...activated, pin: { ...fixed, sha256: "c".repeat(64) } }));
-  const wrongPin = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const wrongPin = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation wrong-pin receipt: " + JSON.stringify(wrongPin));
   expect(wrongPin.phase).toBe("blocked");
   expect(wrongPin.refusal).toBe("activation-receipt-conflict");
   await writeFile(receiptPath, "{ malformed");
-  const malformed = await runControllerUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  const malformed = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation malformed-receipt receipt: " + JSON.stringify(malformed));
   expect(malformed.phase).toBe("blocked");
   expect(malformed.refusal).toBe("activation-receipt-conflict");

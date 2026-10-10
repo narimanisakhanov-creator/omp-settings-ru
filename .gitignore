@@ -12,3 +12,8 @@ dist/
 .firecrawl/
 upgrade-report.md
 check-output.txt
+# приватные планы, agent-инструкции и backups канала — не часть публичного плагина
+.kiro/
+.agents/
+/*_PLAN.md
+/*private-backup*.json

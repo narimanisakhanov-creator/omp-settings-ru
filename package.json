@@ -1,6 +1,6 @@
 {
   "name": "omp-settings-ru",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Русский перевод панели /settings в Oh My Pi — расширение OMP с двумя каналами установки",
   "type": "module",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "url": "https://github.com/narimanisakhanov-creator/omp-settings-ru/issues"
   },
   "keywords": ["oh-my-pi", "omp", "omp-plugin", "marketplace", "settings", "russian", "localization", "typescript"],
-  "files": ["src", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md", "CODE_OF_CONDUCT.md"],
+  "files": ["src", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md"],
   "omp": {
     "extensions": ["./src/index.ts"]
   },
@@ -31,7 +31,7 @@
     "smoke:distribution": "bun scripts/distribution-smoke.ts",
     "smoke:source": "bun scripts/distribution-smoke.ts --source",
     "marketplace:catalog": "bun scripts/marketplace-catalog.ts",
-    "marketplace:index": "bun scripts/marketplace-index.ts",
+    "marketplace:promote": "bun scripts/marketplace-index.ts",
     "matrix:check": "bun scripts/check-matrix.ts",
     "maintenance": "bun scripts/maintenance.ts",
     "release:check": "bun scripts/check-release.ts",

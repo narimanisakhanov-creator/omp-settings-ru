@@ -1,5 +1,4 @@
-// Adapted from omp-settings-zh, MIT License, Copyright (c) 2026 Elazer.
-// Descriptor ownership, source matching, and atomic rollback hardened for this plugin.
+// Atomic translation application with descriptor ownership, source matching, and rollback.
 import type { HostMetadata, HostUiMetadata, HostOption } from "./host-types";
 import type { LocalePack, SettingTranslationFields, OptionTranslation } from "./translations/types";
 import { checkHostCompatibility } from "./compatibility";

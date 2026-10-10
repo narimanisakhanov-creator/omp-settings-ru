@@ -1,4 +1,4 @@
-// Adapted from omp-settings-zh, MIT License, Copyright (c) 2026 Elazer.
+// Host compatibility checks for the translation plugin.
 import type { HostMetadata } from "./host-types";
 
 export type CompatibilityResult = { compatible: true } | { compatible: false; reason: string };

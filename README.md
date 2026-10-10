@@ -17,20 +17,32 @@
 
 выбери **один** канал; не добавляй вторую копию через `-e`, `--plugin-dir` или settings extensions. после установки нужна новая сессия.
 
-**npm-managed GitHub** — фиксированный тег [v0.4.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.4.0), не npm registry:
+**npm-managed GitHub** — фиксированный тег [v0.5.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.5.0), не npm registry:
 
 ```text
-omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.4.0
+omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.5.0
 ```
 
-**marketplace** — каталог в ветке `marketplace`:
+**marketplace** — каталог лежит в выпуске отдельным ассетом `marketplace.json`:
 
 ```text
-omp plugin marketplace add https://raw.githubusercontent.com/narimanisakhanov-creator/omp-settings-ru/marketplace/.omp-plugin/marketplace.json
+omp plugin marketplace add https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest/download/marketplace.json
 omp plugin install omp-settings-ru@omp-settings-ru
 ```
 
-каталог в ветке `marketplace` закрепляет release commit полным `source.sha` и тегом `source.ref`. архив и `SHA256SUMS` лежат в выпуске.
+каталог закрепляет release commit полным `source.sha` и тегом `source.ref`; архив и `SHA256SUMS` лежат в том же выпуске. отдельной ветки каталога нет.
+
+### переход со старого каталога
+
+старый URL каталога (`raw.githubusercontent.com/.../marketplace/...`) больше не обслуживается. повторное `marketplace add` того же имени с новым URL отклоняется — сначала убери старое имя, затем добавь новое; состояние плагина сохраняется:
+
+```text
+omp plugin marketplace remove omp-settings-ru
+omp plugin marketplace add https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest/download/marketplace.json
+omp plugin marketplace update omp-settings-ru
+```
+
+не удаляй плагин ради перехода: `uninstall` стирает собственные plugin settings/features, а `remove` каталога их сохраняет.
 
 ## язык и удаление
 
@@ -100,5 +112,5 @@ omp plugin upgrade omp-settings-ru@omp-settings-ru
 
 [FAQ](docs/faq.md) · [глоссарий](docs/glossary.md) · [архитектура](docs/architecture.md) · [сопровождение](CONTRIBUTING.md) · [изменения](CHANGELOG.md) · [безопасность](SECURITY.md).
 
-[MIT](LICENSE). механизм адаптирован из `omp-settings-zh`, Copyright (c) 2026 Elazer; [атрибуция](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE).
 [ошибки и предложения](https://github.com/narimanisakhanov-creator/omp-settings-ru/issues) · [нормы поведения](CODE_OF_CONDUCT.md).

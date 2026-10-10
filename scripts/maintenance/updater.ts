@@ -53,7 +53,7 @@ function unpackEntries(bytes: Buffer): Map<string, Buffer> {
     if (!path.startsWith("package/") || path.includes("\\") || path.includes(":") || path.split("/").some(segment => segment === ".." || segment === ".") || path.startsWith("/") || entries.has(path)) throw new Error("package-unsafe-path");
     if (type !== 0 && type !== 48 && type !== 53) throw new Error("package-unsafe-entry");
     if (type !== 53) {
-      if (!/^package\/(?:package\.json|(?:README|CONTRIBUTING|CHANGELOG|THIRD_PARTY_NOTICES|SECURITY|CODE_OF_CONDUCT)\.md|LICENSE|src\/[a-zA-Z0-9_./-]+\.(?:ts|json))$/.test(path)) throw new Error("package-unexpected-file");
+      if (!/^package\/(?:package\.json|(?:README|CONTRIBUTING|CHANGELOG|SECURITY|CODE_OF_CONDUCT)\.md|LICENSE|src\/[a-zA-Z0-9_./-]+\.(?:ts|json))$/.test(path)) throw new Error("package-unexpected-file");
       entries.set(path, tar.subarray(offset + 512, offset + 512 + size));
     }
     offset += 512 + Math.ceil(size / 512) * 512;
@@ -132,7 +132,7 @@ export async function prepareActivation(options: UpdateOptions): Promise<void> {
     }
   };
   await visit("src");
-  for (const name of ["package.json", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "LICENSE"]) {
+  for (const name of ["package.json", "README.md", "CONTRIBUTING.md", "CHANGELOG.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "LICENSE"]) {
     try { files[`package/${name}`] = await readFile(join(root, name)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT" || name === "package.json") throw error; }
   }
   const bytes = await new Bun.Archive(files).bytes();

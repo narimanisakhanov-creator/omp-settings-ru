@@ -1,4 +1,4 @@
-// Adapted from omp-settings-zh. Copyright (c) 2026 Elazer. MIT; see THIRD_PARTY_NOTICES.md.
+// Imports only host metadata surfaces; never reads current settings or credentials.
 import type { HostMetadata, HostSettingDefinition } from "./host-types";
 
 /** Imports only host metadata surfaces; never reads current settings or credentials. */

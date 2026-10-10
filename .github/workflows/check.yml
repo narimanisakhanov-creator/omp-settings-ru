@@ -97,7 +97,7 @@ jobs:
         with:
           node-version: '22'
       - name: check markdown links
-        run: npx --yes markdown-link-check@3.13.7 --config .github/markdown-link-check.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/faq.md docs/glossary.md docs/architecture.md docs/screenshots.md THIRD_PARTY_NOTICES.md docs/maintenance.md
+        run: npx --yes markdown-link-check@3.13.7 --config .github/markdown-link-check.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/faq.md docs/glossary.md docs/architecture.md docs/screenshots.md docs/maintenance.md
       - name: scan for secrets
         uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2.13.2
         env:

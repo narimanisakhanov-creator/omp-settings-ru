@@ -5,8 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { canonicalContentHash, executableIdentity, extractPackageArchive, validateArtifactReceipt, verifyArtifactBinding } from "../scripts/installed-smoke";
-import { buildMarketplaceCatalog, decideMarketplaceIndexPublish, validateMarketplaceCatalog, type MarketplaceCatalog, type ReleaseAssetEvidence, type ReleaseEvidence } from "../scripts/marketplace-catalog";
-import { publishMarketplaceIndex } from "../scripts/marketplace-index";
+import { buildMarketplaceCatalog, catalogIdentity, checkRunOutcome, decideMarketplaceIndexPublish, validateMarketplaceCatalog, validatePrepublicationCatalog, type MarketplaceCatalog, type PrepublicationEvidence, type ReleaseAssetEvidence, type ReleaseEvidence } from "../scripts/marketplace-catalog";
 import type { ArtifactReceiptExpectation } from "../scripts/installed-smoke";
 
 interface ArtifactFixture {directory: string; archivePath: string; headSha: string; treeHash: string; archiveSha256: string}
@@ -364,50 +363,62 @@ test("marketplace release gate rejects each unproven release dimension with its 
   expect(validateMarketplaceCatalog({...catalog, plugins: []}, evidence)).toEqual(["marketplace-plugin-count-invalid"]);
 });
 
-test("index publication is monotonic, idempotent and conflict-refusing", () => {
+test("tag-commit check run is waited for, never accepted from a single completed query", () => {
+  const sha = "a".repeat(40);
+  const row = (patch: Record<string, unknown>): Record<string, unknown> => ({id: 7, path: ".github/workflows/check.yml", head_sha: sha, status: "completed", conclusion: "success", ...patch});
+  // The observed v0.4.0 race: the release finished while the tag run was still in progress.
+  expect(checkRunOutcome([row({status: "in_progress", conclusion: null})], sha)).toEqual({kind: "pending"});
+  expect(checkRunOutcome([], sha)).toEqual({kind: "pending"});
+  expect(checkRunOutcome(undefined, sha)).toEqual({kind: "pending"});
+  // A finished but unsuccessful run is a refusal, not something to wait out.
+  expect(checkRunOutcome([row({conclusion: "failure"})], sha)).toEqual({kind: "failed", conclusion: "failure"});
+  expect(checkRunOutcome([row({conclusion: "cancelled"})], sha)).toEqual({kind: "failed", conclusion: "cancelled"});
+  // Only the exact workflow at the exact commit is evidence; a green run elsewhere is not.
+  expect(checkRunOutcome([row({path: ".github/workflows/release.yml"})], sha)).toEqual({kind: "pending"});
+  expect(checkRunOutcome([row({head_sha: "b".repeat(40)})], sha)).toEqual({kind: "pending"});
+  expect(checkRunOutcome([row({path: ".github/workflows/release.yml"}), row({id: 9})], sha)).toEqual({kind: "succeeded", id: "9"});
+  expect(() => checkRunOutcome([row({id: "not-a-number"})], sha)).toThrow("marketplace-check-run-id-invalid");
+});
+
+test("marketplace promotion is monotonic, idempotent and conflict-refusing", () => {
   const catalog = (version: string, sha: string): MarketplaceCatalog => buildMarketplaceCatalog({version, commitSha: sha, repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
   const older = catalog("0.3.1", "a".repeat(40));
   const newer = catalog("0.3.2", "b".repeat(40));
   expect(decideMarketplaceIndexPublish(null, older)).toBe("publish");
-  expect(decideMarketplaceIndexPublish(older, older)).toBe("identical");
-  expect(decideMarketplaceIndexPublish(older, newer)).toBe("publish");
-  expect(() => decideMarketplaceIndexPublish(newer, older)).toThrow("marketplace-index-downgrade");
-  expect(() => decideMarketplaceIndexPublish(older, catalog("0.3.1", "c".repeat(40)))).toThrow("marketplace-index-conflict");
-  expect(() => decideMarketplaceIndexPublish({name: "omp-settings-ru"}, older)).toThrow("marketplace-current-index-plugin-count-invalid");
+  expect(decideMarketplaceIndexPublish(catalogIdentity(older, "served"), older)).toBe("identical");
+  expect(decideMarketplaceIndexPublish(catalogIdentity(older, "served"), newer)).toBe("publish");
+  expect(() => decideMarketplaceIndexPublish(catalogIdentity(newer, "served"), older)).toThrow("marketplace-index-downgrade");
+  expect(() => decideMarketplaceIndexPublish(catalogIdentity(older, "served"), catalog("0.3.1", "c".repeat(40)))).toThrow("marketplace-index-conflict");
+  expect(() => catalogIdentity({name: "omp-settings-ru"}, "marketplace-served")).toThrow("marketplace-served-index-plugin-count-invalid");
+  expect(catalogIdentity(older, "served")).toEqual({version: "0.3.1", sha: "a".repeat(40)});
 });
 
-test("publishes the index branch through a real owned Git remote and never rewrites a release", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "omp-index-publish-"));
-  const origin = join(directory, "origin.git");
-  const work = join(directory, "work");
-  const git = (repo: string, args: string[]): string => {
-    const result = Bun.spawnSync(["git", "-C", repo, ...args], {stdout: "pipe", stderr: "pipe"});
-    if (result.exitCode !== 0) throw new Error(`fixture-git-failed:${args.join(" ")}:${result.stderr.toString()}`);
-    return result.stdout.toString().trim();
+test("draft catalog is bound to the uploaded asset bytes and cannot be served as published", () => {
+  const sha = "a".repeat(40);
+  const hash = "b".repeat(64);
+  const catalog = buildMarketplaceCatalog({version: "0.3.1", commitSha: sha, repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
+  const bytes = new TextEncoder().encode(JSON.stringify(catalog, null, 2));
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const asset = (name: string, value: string): ReleaseAssetEvidence => ({name, digest: `sha256:${value}`, browserDownloadUrl: `https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/download/v0.3.1/${name}`});
+  const archive = asset("omp-settings-ru-0.3.1.tgz", hash);
+  const sums = asset("SHA256SUMS", hash);
+  const catalogAsset = asset("marketplace.json", digest);
+  const evidence: PrepublicationEvidence = {
+    tag: "v0.3.1", version: "0.3.1", targetCommitSha: sha, draft: true, prerelease: false, published: false,
+    checksPassed: true, checksHeadSha: sha, archiveSha256: hash, sumsSha256: hash, sumsArchiveSha256: hash,
+    catalogSha256: digest, assets: [archive, sums, catalogAsset],
   };
-  try {
-    expect(Bun.spawnSync(["git", "init", "--bare", "--quiet", origin], {stdout: "pipe", stderr: "pipe"}).exitCode).toBe(0);
-    expect(Bun.spawnSync(["git", "init", "--quiet", work], {stdout: "pipe", stderr: "pipe"}).exitCode).toBe(0);
-    git(work, ["remote", "add", "origin", origin]);
-    git(work, ["config", "user.name", "Proof"]);
-    git(work, ["config", "user.email", "proof@example.invalid"]);
-    const catalog = (version: string, sha: string): MarketplaceCatalog => buildMarketplaceCatalog({version, commitSha: sha, repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
-    const first = await publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.1", "a".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.1"});
-    expect(first.decision).toBe("publish");
-    const firstCommit = first.commit!;
-    expect(git(origin, ["rev-parse", "refs/heads/marketplace"])).toBe(firstCommit);
-    expect(git(origin, ["show", "refs/heads/marketplace:.omp-plugin/marketplace.json"])).toBe(JSON.stringify(catalog("0.3.1", "a".repeat(40)), null, 2));
-    const repeat = await publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.1", "a".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.1"});
-    expect(repeat).toEqual({decision: "identical"});
-    expect(git(origin, ["rev-parse", "refs/heads/marketplace"])).toBe(firstCommit);
-    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.0", "a".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.0"})).rejects.toThrow("marketplace-index-downgrade");
-    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.1", "c".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.1"})).rejects.toThrow("marketplace-index-conflict");
-    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "bad branch", catalog: catalog("0.3.2", "b".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.2"})).rejects.toThrow("marketplace-index-branch-invalid");
-    await expect(publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.2", "b".repeat(40)), indexPath: "../escape.json", message: "marketplace: v0.3.2"})).rejects.toThrow("marketplace-index-path-invalid");
-    expect(git(origin, ["rev-parse", "refs/heads/marketplace"])).toBe(firstCommit);
-    const second = await publishMarketplaceIndex({repo: work, remote: "origin", branch: "marketplace", catalog: catalog("0.3.2", "b".repeat(40)), indexPath: ".omp-plugin/marketplace.json", message: "marketplace: v0.3.2"});
-    expect(second.decision).toBe("publish");
-    expect(git(origin, ["rev-list", "--count", "refs/heads/marketplace"])).toBe("2");
-    expect(git(origin, ["show", "refs/heads/marketplace:.omp-plugin/marketplace.json"])).toBe(JSON.stringify(catalog("0.3.2", "b".repeat(40)), null, 2));
-  } finally {await rm(directory, {recursive: true, force: true});}
-}, 30000);
+  expect(validatePrepublicationCatalog(catalog, evidence)).toEqual([]);
+  // The catalog is accepted only as the exact bytes that were downloaded: a digest that does not
+  // match the uploaded asset is refused even when the JSON content satisfies every other binding.
+  expect(validatePrepublicationCatalog(catalog, {...evidence, catalogSha256: "c".repeat(64)}).length).toBeGreaterThan(0);
+  expect(validatePrepublicationCatalog(catalog, {...evidence, catalogSha256: "not-a-hash"}).length).toBeGreaterThan(0);
+  // A missing or duplicated catalog asset is ambiguous, never resolved by picking one.
+  expect(validatePrepublicationCatalog(catalog, {...evidence, assets: [archive, sums]}).length).toBeGreaterThan(0);
+  expect(validatePrepublicationCatalog(catalog, {...evidence, assets: [archive, sums, catalogAsset, catalogAsset]}).length).toBeGreaterThan(0);
+  // The two release states never accept each other's evidence, in either direction.
+  expect(validatePrepublicationCatalog(catalog, {...evidence, draft: false}).length).toBeGreaterThan(0);
+  expect(validatePrepublicationCatalog(catalog, {...evidence, published: true}).length).toBeGreaterThan(0);
+  expect(validateMarketplaceCatalog(catalog, {...evidence, draft: false, published: true})).toEqual([]);
+  expect(validateMarketplaceCatalog(catalog, evidence).length).toBeGreaterThan(0);
+});

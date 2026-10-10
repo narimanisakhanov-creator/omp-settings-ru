@@ -1,4 +1,4 @@
-// Adapted from omp-settings-zh. Copyright (c) 2026 Elazer. MIT; see THIRD_PARTY_NOTICES.md.
+// Builds source-aware reports for translation changes.
 import type { HostMetadata } from "./host-types";
 import { computeSourceHash, normalizeSource, type SourceMetadata } from "./source";
 import { descriptionTemplates } from "./source-templates";

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: OMP version to upgrade to
+        description: OMP version to inspect
         required: false
         type: string
 permissions:
@@ -14,13 +14,7 @@ concurrency:
   group: upstream-watch
   cancel-in-progress: false
 jobs:
-  prepare:
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      mode: ${{ steps.version.outputs.mode }}
-      version: ${{ steps.version.outputs.version }}
+  inspect:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -31,7 +25,6 @@ jobs:
           bun-version: 1.4.2
       - id: version
         env:
-          GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
@@ -45,26 +38,18 @@ jobs:
             echo "Invalid upstream version: $version" >&2
             exit 1
           fi
-          branch="upgrade/omp-$version"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          existing_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length > 0')
-          if [ "$existing_pr" = true ]; then
-            printf 'mode=skip\n' >> "$GITHUB_OUTPUT"
-            echo "$branch already has a PR; leaving its branch and body untouched"
-            exit 0
-          fi
-          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
-            printf 'mode=recover\n' >> "$GITHUB_OUTPUT"
-            echo "$branch exists without a PR; will create a PR from its existing report without updating the branch"
-            exit 0
-          fi
           pinned=$(jq -r '.devDependencies["@oh-my-pi/pi-coding-agent"]' package.json)
           if [ "$version" = "$pinned" ]; then
             printf 'mode=skip\n' >> "$GITHUB_OUTPUT"
+            printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
             echo "Already pinned at $pinned"
             exit 0
           fi
           printf 'mode=new\n' >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      # Inspection only. This workflow deliberately creates no branch and opens no pull
+      # request: the repository keeps exactly one public branch, so an upgrade candidate is
+      # reported as a run artifact that a maintainer applies by hand.
       - if: steps.version.outputs.mode == 'new'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -80,7 +65,7 @@ jobs:
           prepare_status=$?
           set -e
           if [ "$prepare_status" -eq 0 ]; then
-            executable=$(cut -d= -f2- "$output_file")
+            executable=$(sed -n 's/^executable=//p' "$output_file")
             set +e
             OMP_UPDATER_EXECUTABLE="$executable" OMP_UPDATER_HOST_VERSION="$VERSION" bun run check > check-output.txt 2>&1
             status=$?
@@ -92,11 +77,11 @@ jobs:
           fi
           rm -f "$output_file"
           echo "check exit status: $status" >> check-output.txt
-          if [ "$status" -ne 0 ]; then echo "::warning::candidate check exited $status; review attached check-output.txt; this report does not claim native/full check success"; fi
+          if [ "$status" -ne 0 ]; then echo "::warning::candidate check exited $status; review the attached artifacts; this report does not claim native/full check success"; fi
       - if: steps.version.outputs.mode == 'new'
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
-          name: upgrade-prepared
+          name: upgrade-candidate-${{ steps.version.outputs.version }}
           path: |
             host-prepare-output.txt
             package.json
@@ -104,97 +89,23 @@ jobs:
             baseline/${{ steps.version.outputs.version }}-linux.json
             upgrade-report.md
             check-output.txt
-  baseline:
-    needs: prepare
-    if: needs.prepare.outputs.mode == 'new'
-    permissions:
-      contents: read
-    strategy:
-      matrix:
-        include:
-          - os: windows-2025
-            platform: win32
-          - os: macos-14
-            platform: darwin
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.2
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: upgrade-prepared
-      - run: bun install --ignore-scripts
-      - env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          PLATFORM: ${{ matrix.platform }}
-        shell: bash
-        run: bun scripts/export-source.ts "$VERSION" "$PLATFORM" --native --output "baseline/$VERSION-$PLATFORM.json"
-      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
-        with:
-          name: baseline-${{ matrix.platform }}
-          path: baseline/${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.json
-  publish:
-    needs: [prepare, baseline]
-    if: always() && needs.prepare.result == 'success' && (needs.prepare.outputs.mode == 'recover' || (needs.prepare.outputs.mode == 'new' && needs.baseline.result == 'success'))
-    permissions:
-      contents: write
-      pull-requests: write
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - if: needs.prepare.outputs.mode == 'new'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: upgrade-prepared
-      - if: needs.prepare.outputs.mode == 'new'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: baseline-*
-          merge-multiple: true
-          path: baseline
-      - id: publish-branch
+      - if: steps.version.outputs.mode == 'new'
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          MODE: ${{ needs.prepare.outputs.mode }}
+          VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
-          set -euo pipefail
-          branch="upgrade/omp-$VERSION"
-          existing_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length > 0')
-          if [ "$existing_pr" = true ]; then
-            echo "$branch already has a PR; leaving its branch and body untouched"
-            exit 0
-          fi
-          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
-            echo "$branch already exists; preserving it without a push"
-          elif [ "$MODE" = recover ]; then
-            echo "$branch disappeared before PR recovery" >&2
-            exit 1
-          else
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git checkout -b "$branch"
-            git add package.json bun.lock baseline
-            git add -f upgrade-report.md check-output.txt
-            git commit -m "upgrade: OMP $VERSION"
-            git push origin "HEAD:refs/heads/$branch"
-          fi
-      - if: steps.publish-branch.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          branch="upgrade/omp-$VERSION"
-          existing_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length > 0')
-          if [ "$existing_pr" = true ]; then
-            echo "$branch acquired a PR; leaving it untouched"
-            exit 0
-          fi
-          git fetch --no-tags origin "refs/heads/$branch"
-          notes="$(git show FETCH_HEAD:upgrade-report.md; printf '\n\n### Check output (tail)\n'; git show FETCH_HEAD:check-output.txt | tail -n 80)"
-          gh pr create --title "upgrade: OMP $VERSION" --body "$notes" --base main --head "$branch"
+          {
+            echo "## OMP $VERSION candidate"
+            echo
+            echo "This run only inspected the candidate; it created no branch and no pull request."
+            echo
+            echo "Apply by hand: \`bun scripts/upgrade-host.ts $VERSION\`, refresh the platform baselines, review the changed source variants, then commit on \`main\` and tag the next release."
+            echo
+            echo "### upgrade report"
+            echo
+            cat upgrade-report.md
+            echo
+            echo "### check output (tail)"
+            echo
+            tail -n 80 check-output.txt
+          } >> "$GITHUB_STEP_SUMMARY"

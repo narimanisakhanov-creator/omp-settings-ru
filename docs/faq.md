@@ -26,9 +26,27 @@
 
 нет: `marketplace.autoUpdate=auto` относится ко всем marketplace-плагинам пользователя и активного проекта; `notify` не устанавливает обновления, `off` не проверяет. это не SHA256SUMS/ReleasePin gate; настройка и немедленное обновление — в [README](../README.md#обновление).
 
-### каталог marketplace опубликован?
+### где лежит каталог marketplace?
 
-да: проверенный индекс опубликован в ветке `marketplace`; доступность raw-URL проверяется отдельно. он закрепляет release commit тегом `source.ref` и полным `source.sha`; не подменяй source движущимся `main`.
+каталог — ассет `marketplace.json` внутри GitHub-выпуска, а не ветка:
+
+```text
+https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest/download/marketplace.json
+```
+
+он закрепляет release commit тегом `source.ref` и полным `source.sha`; не подменяй source движущимся `main`.
+
+### я добавлял старый каталог из ветки `marketplace`.
+
+этот URL больше не обслуживается. убери старое имя и добавь новое — состояние плагина при этом сохраняется:
+
+```text
+omp plugin marketplace remove omp-settings-ru
+omp plugin marketplace add https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest/download/marketplace.json
+omp plugin marketplace update omp-settings-ru
+```
+
+повторный `add` того же имени с другим URL отклоняется, поэтому шаг `remove` обязателен. не используй `uninstall` ради перехода: он стирает собственные plugin settings/features.
 
 ## язык и поведение
 

@@ -46,22 +46,21 @@ jobs:
           archive=$(npm pack --silent)
           sha256sum "$archive" > SHA256SUMS
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
-      - name: Create GitHub Release
+      # The catalog pins the annotated tag's commit, so it is built from the dereferenced
+      # commit rather than from the moving ref name.
+      - name: Build the marketplace catalog for this exact commit
+        shell: bash
+        run: |
+          commit=$(git rev-parse "${GITHUB_REF_NAME}^{commit}")
+          bun scripts/marketplace-catalog.ts --build --version "${GITHUB_REF_NAME#v}" --commit "$commit" --output "$RUNNER_TEMP/marketplace.json"
+      # A draft release is not `latest`, so the catalog can never be observed missing. The
+      # draft is promoted by the marketplace-index workflow only after the tag-commit check
+      # run succeeds and every uploaded asset is re-downloaded and re-hashed.
+      - name: Create draft GitHub Release with archive, checksums and catalog
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#v}
           notes=$(bun -e 'const v=process.argv.at(-1); const s=await Bun.file("CHANGELOG.md").text(); const escaped=v.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&"); const re=new RegExp(`^##\\s+(?:\\[)?${escaped}(?:\\])?(?:\\([^\\n]*\\))?[^\\n]*\\n[\\s\\S]*?(?=\\n##\\s|(?![\\s\\S]))`,"m"); process.stdout.write(s.match(re)?.[0]?.trim() ?? "")' "$version")
-          gh release create "$GITHUB_REF_NAME" "${{ steps.pack.outputs.archive }}" SHA256SUMS --title "$GITHUB_REF_NAME" --notes "$notes"
-      - name: Move stable channel
-        shell: bash
-        run: |
-          git fetch origin refs/heads/stable
-          stable_sha=$(git rev-parse FETCH_HEAD)
-          release_sha=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
-          if ! git merge-base --is-ancestor "$stable_sha" "$release_sha"; then
-            echo "Refusing to move stable backwards or across unrelated history" >&2
-            exit 1
-          fi
-          git push origin "$release_sha":refs/heads/stable
+          gh release create "$GITHUB_REF_NAME" "${{ steps.pack.outputs.archive }}" SHA256SUMS "$RUNNER_TEMP/marketplace.json" --title "$GITHUB_REF_NAME" --draft --notes "$notes"

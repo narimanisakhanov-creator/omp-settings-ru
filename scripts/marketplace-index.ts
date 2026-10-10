@@ -1,80 +1,101 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { decideMarketplaceIndexPublish, loadVerifiedCatalog, type MarketplaceCatalog } from "./marketplace-catalog";
+import {
+  catalogIdentity,
+  decideMarketplaceIndexPublish,
+  draftCatalogEvidence,
+  loadVerifiedCatalog,
+  readField,
+  runGh,
+  servedChannelIdentity,
+  tagCommit,
+  validatePrepublicationCatalog,
+  waitForCheckRun,
+  type MarketplaceCatalog,
+} from "./marketplace-catalog";
 
 /**
- * Publish the marketplace index to its own branch with a real, boring Git push.
+ * Promote a release that already carries its marketplace catalog.
  *
- * The index branch holds exactly `.omp-plugin/marketplace.json`. Commits are built
- * with Git plumbing so the working tree is never mutated, the new commit's parent is
- * the fetched branch tip, and the push is a plain fast-forward (no `--force`).
- * `decideMarketplaceIndexPublish` owns monotonic/idempotent/conflict rules, so a
- * racing release can neither downgrade the channel nor rewrite an immutable SHA.
+ * The order is deliberate and is the whole point of this script:
+ *
+ * 1. `release.yml` creates a DRAFT release with archive, `SHA256SUMS` and `marketplace.json`.
+ *    A draft is not `latest`, so no user can observe a release without its catalog.
+ * 2. The exact tag-commit `check.yml` run is *waited for*, not queried once. A tag push starts
+ *    its own run and the release job finishes long before it; a single completed-only query is
+ *    the observed v0.4.0 race.
+ * 3. Every draft asset is re-downloaded through the authenticated asset API and re-hashed here,
+ *    so the receipt describes the bytes that were uploaded rather than the release metadata.
+ *    The catalog used for the decision is those downloaded bytes; no local file can be
+ *    substituted for them.
+ * 4. The served channel is read and the monotonic rule decides. A legacy release without a
+ *    catalog asset still has a well-defined identity (its tag commit), so the comparison stays
+ *    honest instead of silently accepting an unknown channel.
+ * 5. Only then is the draft promoted, and only then is the published release re-proved.
+ *
+ * A rerun after a successful promotion is idempotent: the already-published release is verified
+ * against its own live evidence and returns `identical` rather than being refused as "not draft".
+ *
+ * There is no branch here: the catalog is a release asset, and no ref is ever written.
  */
 
 export interface PublishOptions {
-  readonly repo: string;
-  readonly remote: string;
-  readonly branch: string;
-  readonly catalog: MarketplaceCatalog;
-  readonly indexPath: string;
-  readonly message: string;
-  readonly author?: {readonly name: string; readonly email: string};
+  readonly tag: string;
+  readonly repository: string;
+  readonly checkRunTimeoutMs: number;
 }
 
 export interface PublishResult {
   readonly decision: "publish" | "identical";
-  readonly commit?: string;
+  readonly checkRun?: string;
+  readonly catalog?: MarketplaceCatalog;
 }
 
-const DEFAULT_AUTHOR = {name: "github-actions[bot]", email: "41898282+github-actions[bot]@users.noreply.github.com"};
+interface ReleaseState { readonly id: number; readonly draft: boolean }
 
-function git(repo: string, args: string[], env?: Record<string, string>, input?: string): string {
-  const result = Bun.spawnSync(["git", "-C", repo, ...args], {stdout: "pipe", stderr: "pipe", env: {...process.env, ...env}, stdin: input === undefined ? "ignore" : new TextEncoder().encode(input), timeout: 60000});
-  if (result.exitCode !== 0) throw new Error(`marketplace-index-git-failed:git ${args.join(" ")}:${result.stderr.toString().trim()}`);
-  return result.stdout.toString();
+/** Read the release id and draft state. A draft is invisible to the public download path. */
+export function readReleaseState(tag: string, repository: string): ReleaseState {
+  const raw = JSON.parse(runGh([`repos/${repository}/releases/tags/${tag}`])) as unknown;
+  const id = readField(raw, "id");
+  if (!Number.isSafeInteger(id)) throw new Error("marketplace-release-id-invalid");
+  return {id: id as number, draft: readField(raw, "draft") === true};
 }
 
-/** Current tip of the index branch, or null when the branch does not exist yet. */
-function remoteBranchTip(repo: string, remote: string, branch: string): string | null {
-  const listed = Bun.spawnSync(["git", "-C", repo, "ls-remote", "--heads", remote, `refs/heads/${branch}`], {stdout: "pipe", stderr: "pipe", timeout: 60000});
-  if (listed.exitCode !== 0) throw new Error(`marketplace-index-remote-unreachable:${listed.stderr.toString().trim()}`);
-  if (listed.stdout.toString().trim() === "") return null;
-  git(repo, ["fetch", "--quiet", remote, branch]);
-  return git(repo, ["rev-parse", "FETCH_HEAD"]).trim();
+/**
+ * Promote a draft release. The update endpoint is `/releases/{id}`, not the tag route,
+ * and `draft` is a boolean field: a `-f` string would send the literal text "false".
+ */
+export function promoteRelease(tag: string, repository: string): void {
+  const state = readReleaseState(tag, repository);
+  if (!state.draft) throw new Error("marketplace-release-already-published");
+  runGh(["--method", "PATCH", `repos/${repository}/releases/${state.id}`, "-F", "draft=false"]);
 }
 
 export async function publishMarketplaceIndex(options: PublishOptions): Promise<PublishResult> {
-  if (Bun.spawnSync(["git", "check-ref-format", "--branch", options.branch], {stdout: "pipe", stderr: "pipe"}).exitCode !== 0) throw new Error(`marketplace-index-branch-invalid:${options.branch}`);
-  if (options.indexPath.startsWith("/") || options.indexPath.split("/").includes("..") || !/^[A-Za-z0-9_.\/-]+$/.test(options.indexPath)) throw new Error(`marketplace-index-path-invalid:${options.indexPath}`);
-  const tip = remoteBranchTip(options.repo, options.remote, options.branch);
-  let current: unknown = null;
-  if (tip) {
-    try {
-      current = JSON.parse(git(options.repo, ["show", `${tip}:${options.indexPath}`]));
-    } catch {
-      throw new Error("marketplace-index-unreadable");
-    }
+  const {tag, repository} = options;
+  const targetCommitSha = tagCommit(repository, tag);
+  const runId = await waitForCheckRun(repository, targetCommitSha, options.checkRunTimeoutMs);
+  const state = readReleaseState(tag, repository);
+  if (!state.draft) {
+    // Rerun after a successful promotion: prove the live release and the served channel again.
+    const published = await loadVerifiedCatalog(tag, runId, undefined, repository);
+    const identity = catalogIdentity(published.catalog, "marketplace-published");
+    if (identity.sha !== targetCommitSha) throw new Error("marketplace-published-sha-mismatch");
+    const served = await servedChannelIdentity(repository);
+    if (served === null || served.version !== identity.version || served.sha !== identity.sha) throw new Error("marketplace-served-identity-mismatch");
+    return {decision: "identical", checkRun: runId, catalog: published.catalog};
   }
-  const decision = decideMarketplaceIndexPublish(current, options.catalog);
-  if (decision === "identical") return {decision};
-
-  const directory = await mkdtemp(join(tmpdir(), "omp-marketplace-index-"));
-  try {
-    const indexFile = join(directory, "index");
-    const blob = git(options.repo, ["hash-object", "-w", "--stdin"], undefined, JSON.stringify(options.catalog, null, 2) + "\n").trim();
-    git(options.repo, ["read-tree", "--empty"], {GIT_INDEX_FILE: indexFile});
-    git(options.repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${options.indexPath}`], {GIT_INDEX_FILE: indexFile});
-    const tree = git(options.repo, ["write-tree"], {GIT_INDEX_FILE: indexFile}).trim();
-    const author = options.author ?? DEFAULT_AUTHOR;
-    const identity = {GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email, GIT_COMMITTER_NAME: author.name, GIT_COMMITTER_EMAIL: author.email};
-    const commit = git(options.repo, ["commit-tree", tree, ...(tip ? ["-p", tip] : []), "-m", options.message], identity).trim();
-    git(options.repo, ["push", options.remote, `${commit}:refs/heads/${options.branch}`]);
-    return {decision, commit};
-  } finally {
-    await rm(directory, {recursive: true, force: true});
-  }
+  const {evidence, catalogBytes} = await draftCatalogEvidence(tag, runId, repository);
+  const catalog = JSON.parse(new TextDecoder().decode(catalogBytes)) as unknown;
+  const errors = validatePrepublicationCatalog(catalog, evidence, repository);
+  if (errors.length > 0) throw new Error(`marketplace-prepublication-rejected:${errors.join(",")}`);
+  const next = catalog as MarketplaceCatalog;
+  const served = await servedChannelIdentity(repository);
+  if (decideMarketplaceIndexPublish(served, next) === "identical") return {decision: "identical", checkRun: runId, catalog: next};
+  promoteRelease(tag, repository);
+  const verified = await loadVerifiedCatalog(tag, runId, undefined, repository);
+  const identity = catalogIdentity(verified.catalog, "marketplace-published");
+  if (identity.sha !== targetCommitSha) throw new Error("marketplace-published-sha-mismatch");
+  if (identity.version !== catalogIdentity(next, "marketplace-promoted").version) throw new Error("marketplace-published-version-mismatch");
+  return {decision: "publish", checkRun: runId, catalog: verified.catalog};
 }
 
 async function main(): Promise<void> {
@@ -85,20 +106,13 @@ async function main(): Promise<void> {
     if (!found || found.startsWith("--")) throw new Error(`required:${name}`);
     return found;
   };
-  // The published index always carries a live, already-published release: the catalog is
-  // re-proved against GitHub tag/workflow/assets here, so a hand-written file cannot be
-  // pushed by this CLI. Owned-fixture publication goes through the library function.
-  const { catalog } = await loadVerifiedCatalog(value("--tag"), value("--check-run"), args.includes("--catalog") ? value("--catalog") : undefined);
-  const branch = args.includes("--branch") ? value("--branch") : "marketplace";
+  const repository = args.includes("--repo-name") ? value("--repo-name") : "narimanisakhanov-creator/omp-settings-ru";
   const result = await publishMarketplaceIndex({
-    repo: resolve(value("--repo")),
-    remote: args.includes("--remote") ? value("--remote") : "origin",
-    branch,
-    catalog,
-    indexPath: args.includes("--index-path") ? value("--index-path") : ".omp-plugin/marketplace.json",
-    message: args.includes("--message") ? value("--message") : `marketplace: v${catalog.plugins[0]!.version}`,
+    tag: value("--tag"),
+    repository,
+    checkRunTimeoutMs: args.includes("--timeout-ms") ? Number(value("--timeout-ms")) : 1_800_000,
   });
-  console.log(JSON.stringify(result));
+  console.log(JSON.stringify(result, null, 2));
 }
 
 if (import.meta.main) await main();
