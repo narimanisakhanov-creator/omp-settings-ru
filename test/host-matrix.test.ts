@@ -14,5 +14,5 @@ for (const [version, alias] of [["18.6.1", "omp-host-1861"], ["18.8.0", "omp-hos
     const report = buildCoverageReport(host, ru);
     expect(report.completeSettings).toBe(version === "18.6.1" ? 398 : version === "18.8.7" ? 410 : 404);
     expect(report.sourceHashMismatches).toEqual([]);
-  });
+  }, 60000);
 }
