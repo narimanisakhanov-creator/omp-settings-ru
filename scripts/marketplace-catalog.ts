@@ -239,6 +239,25 @@ export async function loadVerifiedCatalog(tag: string, runId: string, catalogPat
 }
 
 /**
+ * Pick the release row for a tag from a releases listing.
+ *
+ * `GET /releases/tags/{tag}` answers 404 for a DRAFT release even with push access, while the
+ * releases listing does include drafts for that token. Selecting the row is kept separate from
+ * the request so the draft-aware lookup is testable without network.
+ */
+export function selectRelease(rows: unknown, tag: string): unknown {
+  if (!Array.isArray(rows)) throw new Error("marketplace-releases-unreadable");
+  const found = rows.find(row => readField(row, "tag_name") === tag);
+  if (found === undefined) throw new Error("marketplace-release-not-found");
+  return found;
+}
+
+/** The release payload for a tag, drafts included. */
+export function findRelease(tag: string, repository = REPOSITORY): unknown {
+  return selectRelease(JSON.parse(runGh([`repos/${repository}/releases?per_page=100`])) as unknown, tag);
+}
+
+/**
  * Download a release asset through the authenticated API.
  *
  * A draft release has no public download path, so `browser_download_url` cannot be used
@@ -329,7 +348,7 @@ export async function waitForCheckRun(repository: string, sha: string, timeoutMs
  */
 export async function draftCatalogEvidence(tag: string, runId: string, repository = REPOSITORY): Promise<{evidence: PrepublicationEvidence; catalogBytes: Uint8Array}> {
   if (!/^v\d+\.\d+\.\d+$/.test(tag) || !/^\d+$/.test(runId)) throw new Error("marketplace-release-reference-invalid");
-  const release = readRelease(JSON.parse(runGh([`repos/${repository}/releases/tags/${tag}`])) as unknown, repository);
+  const release = readRelease(findRelease(tag, repository), repository);
   if (release.tag !== tag) throw new Error("marketplace-release-tag-mismatch");
   const version = tag.slice(1);
   const targetCommitSha = tagCommit(repository, tag);

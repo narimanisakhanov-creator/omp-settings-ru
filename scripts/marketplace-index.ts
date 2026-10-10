@@ -2,6 +2,7 @@ import {
   catalogIdentity,
   decideMarketplaceIndexPublish,
   draftCatalogEvidence,
+  findRelease,
   loadVerifiedCatalog,
   readField,
   runGh,
@@ -53,7 +54,7 @@ interface ReleaseState { readonly id: number; readonly draft: boolean }
 
 /** Read the release id and draft state. A draft is invisible to the public download path. */
 export function readReleaseState(tag: string, repository: string): ReleaseState {
-  const raw = JSON.parse(runGh([`repos/${repository}/releases/tags/${tag}`])) as unknown;
+  const raw = findRelease(tag, repository);
   const id = readField(raw, "id");
   if (!Number.isSafeInteger(id)) throw new Error("marketplace-release-id-invalid");
   return {id: id as number, draft: readField(raw, "draft") === true};

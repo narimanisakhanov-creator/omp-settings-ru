@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { canonicalContentHash, executableIdentity, extractPackageArchive, validateArtifactReceipt, verifyArtifactBinding } from "../scripts/installed-smoke";
-import { buildMarketplaceCatalog, catalogIdentity, checkRunOutcome, decideMarketplaceIndexPublish, validateMarketplaceCatalog, validatePrepublicationCatalog, type MarketplaceCatalog, type PrepublicationEvidence, type ReleaseAssetEvidence, type ReleaseEvidence } from "../scripts/marketplace-catalog";
+import { buildMarketplaceCatalog, catalogIdentity, checkRunOutcome, decideMarketplaceIndexPublish, selectRelease, validateMarketplaceCatalog, validatePrepublicationCatalog, type MarketplaceCatalog, type PrepublicationEvidence, type ReleaseAssetEvidence, type ReleaseEvidence } from "../scripts/marketplace-catalog";
 import type { ArtifactReceiptExpectation } from "../scripts/installed-smoke";
 
 interface ArtifactFixture {directory: string; archivePath: string; headSha: string; treeHash: string; archiveSha256: string}
@@ -378,6 +378,16 @@ test("tag-commit check run is waited for, never accepted from a single completed
   expect(checkRunOutcome([row({head_sha: "b".repeat(40)})], sha)).toEqual({kind: "pending"});
   expect(checkRunOutcome([row({path: ".github/workflows/release.yml"}), row({id: 9})], sha)).toEqual({kind: "succeeded", id: "9"});
   expect(() => checkRunOutcome([row({id: "not-a-number"})], sha)).toThrow("marketplace-check-run-id-invalid");
+});
+
+test("a draft release is found through the releases listing, not the tag route", () => {
+  const draft = {id: 409116347, tag_name: "v0.5.0", draft: true, published_at: null, assets: []};
+  const published = {id: 408404985, tag_name: "v0.4.0", draft: false, published_at: "2026-10-09T22:46:49Z", assets: []};
+  // The tag route answers 404 for drafts; the listing carries them, so the row is selected here.
+  expect(selectRelease([published, draft], "v0.5.0")).toBe(draft);
+  expect(selectRelease([draft, published], "v0.4.0")).toBe(published);
+  expect(() => selectRelease([published], "v0.5.0")).toThrow("marketplace-release-not-found");
+  expect(() => selectRelease({}, "v0.5.0")).toThrow("marketplace-releases-unreadable");
 });
 
 test("marketplace promotion is monotonic, idempotent and conflict-refusing", () => {
