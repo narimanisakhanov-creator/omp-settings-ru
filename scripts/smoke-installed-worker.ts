@@ -1,7 +1,7 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { RU_SEARCH_QUERY, RU_SEARCH_SETTLED, searchToggle } from "./panel-search";
+import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, glyphKeyAway, glyphPreset, glyphTarget, searchToggle } from "./panel-search";
 
 const [executable, profile, pluginPath, home] = process.argv.slice(2) as [string, string, string, string];
 const observations: {kind: string; output: string}[] = [];
@@ -63,13 +63,17 @@ try {
   const restored=await session.send("\r",toggle.restored);
   observations.push({kind:"bool-restored",output:restored.split("\n").find(line=>/Скорость генерации/.test(line))!});
   await session.escape();
-  await session.send("набор символов",/Набор символов/);
+  const enumSearched=await session.send(RU_ENUM_QUERY,RU_ENUM_SETTLED);
+  const enumBefore=glyphPreset(enumSearched);
+  if(!enumBefore)throw new Error("native-glyph-preset-unobserved:"+enumSearched.slice(-300));
   await session.send("\r",/Unicode|Юникод|ASCII/);
-  const enumChanged=await session.send("\x1b[B\r",/Набор символов\s+nerd/);
-  observations.push({kind:"enum-change",output:enumChanged.split("\n").find(line=>/Набор символов\s+nerd/.test(line))!});
+  const enumAway=glyphKeyAway(enumBefore);
+  const enumTarget=glyphTarget(enumBefore,enumAway);
+  const enumChanged=await session.send(`${enumAway}\r`,new RegExp(`Набор символов\\s+${enumTarget}\\b`));
+  observations.push({kind:"enum-change",output:enumChanged.split("\n").find(line=>/Набор символов/.test(line))!});
   await session.send("\r",/Unicode|Юникод|ASCII/);
-  const enumRestored=await session.send("\x1b[A\r",/Набор символов\s+unicode/);
-  observations.push({kind:"enum-restored",output:enumRestored.split("\n").find(line=>/Набор символов\s+unicode/.test(line))!});
+  const enumRestored=await session.send(`${enumAway==="\x1b[B"?"\x1b[A":"\x1b[B"}\r`,new RegExp(`Набор символов\\s+${enumBefore}\\b`));
+  observations.push({kind:"enum-restored",output:enumRestored.split("\n").find(line=>/Набор символов/.test(line))!});
   await session.escape();await session.escape();
   await session.send("/settings-language en\r",/Язык настроек: English/);
   const english=await session.send("/settings\r",/Dark Theme/);

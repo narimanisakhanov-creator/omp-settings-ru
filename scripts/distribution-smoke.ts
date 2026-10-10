@@ -87,10 +87,20 @@ async function panel(mode: "ru" | "en"): Promise<string> {
   const child = sessionChild(mode);
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (code !== 0) {
-    // The session reports the failed step in the head of its JSON report and the failure reason in the tail.
-    const report = stdout.trim();
-    const excerpt = report.length > 2400 ? `${report.slice(0, 1200)}…${report.slice(-1200)}` : report;
-    throw new Error(`${failureKind(stderr)}:distribution-session-failed:exit=${code}:${stderr.trim().slice(-600)}:${excerpt}`);
+    // The session reports its steps and error as JSON on stdout: keep a truncation-immune summary of the
+    // failed steps and the error, plus a compact screen excerpt for the TUI state, and never lose stderr.
+    let summary = stdout.trim();
+    try {
+      const report = JSON.parse(stdout) as {ok?: boolean; error?: string; steps?: {step: string; status: string; detail?: string}[]};
+      summary = JSON.stringify({
+        failedSteps: report.steps?.filter(entry => entry.status !== "ok").map(entry => ({step: entry.step, detail: entry.detail?.slice(0, 300)})),
+        error: report.error?.slice(0, 300),
+        screen: report.steps?.find(entry => entry.status !== "ok")?.detail?.slice(-1000),
+      });
+    } catch {
+      // A non-report failure (crashed child, missing file) keeps the raw stdout as the only evidence.
+    }
+    throw new Error(`${failureKind(stderr)}:distribution-session-failed:exit=${code}:${stderr.trim().slice(-400)}:${summary.slice(0, 2400)}`);
   }
   const result = JSON.parse(stdout) as {ok: boolean; steps: {step: string; status: string}[]; observations?: {kind: string; output: string}[]};
   if (!result.ok) throw new Error(`distribution-panel-incomplete:${stdout.slice(-1200)}`);

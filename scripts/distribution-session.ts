@@ -1,5 +1,5 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
-import { RU_SEARCH_QUERY, RU_SEARCH_SETTLED, searchToggle } from "./panel-search";
+import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, glyphKeyAway, glyphPreset, glyphTarget, searchToggle } from "./panel-search";
 
 /**
  * Drive a real installed OMP through `/settings` in one profile and report what was observed.
@@ -102,13 +102,17 @@ if (mode === "boot") {
     });
     await step("ru-enum", async session => {
       await session.send("/settings\r", /Тёмная тема/);
-      await session.send("набор символов", /Набор символов/);
+      const searched = await session.send(RU_ENUM_QUERY, RU_ENUM_SETTLED);
+      const before = glyphPreset(searched);
+      if (!before) throw new Error("native-glyph-preset-unobserved:" + line(searched, /Набор символов/));
       const opened = await session.send("\r", /Unicode|Юникод|ASCII/);
       observations.push({kind: "ru-enum-options", output: opened.split("\n").filter(candidate => /Unicode|Юникод|ASCII|Максимальная/.test(candidate)).join("\n")});
-      const changed = await session.send("\x1b[B\r", /Набор символов\s+nerd/);
+      const away = glyphKeyAway(before);
+      const target = glyphTarget(before, away);
+      const changed = await session.send(`${away}\r`, new RegExp(`Набор символов\\s+${target}\\b`));
       observations.push({kind: "ru-enum-changed", output: line(changed, /Набор символов/) });
       await session.send("\r", /Unicode|Юникод|ASCII/);
-      const restored = await session.send("\x1b[A\r", /Набор символов\s+unicode/);
+      const restored = await session.send(`${away === "\x1b[B" ? "\x1b[A" : "\x1b[B"}\r`, new RegExp(`Набор символов\\s+${before}\\b`));
       observations.push({kind: "ru-enum-restored", output: line(restored, /Набор символов/) });
       return observations.slice(-3).map(entry => entry.output).join("\n");
     });

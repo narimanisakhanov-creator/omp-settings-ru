@@ -7,7 +7,7 @@ import { initThemeSync } from "@oh-my-pi/pi-tui/theme/theme";
 import { getHostMetadata } from "../src/host-adapter";
 import { LanguageController } from "../src/language-controller";
 import { ru } from "../src/translations/ru";
-import { RU_SEARCH_QUERY, RU_SEARCH_SETTLED, searchToggle } from "./panel-search";
+import { GLYPH_PRESETS, RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, glyphKeyAway, glyphPreset, glyphTarget, searchToggle } from "./panel-search";
 
 await Settings.init({ inMemory: true, cwd: process.cwd(), configFiles: [] });
 initThemeSync();
@@ -71,24 +71,48 @@ for (const preset of ["unicode", "nerd", "ascii"] as const) {
 }
 initThemeSync("unicode");
 
-const enumPanel = panel();
-enumPanel.handleInput("Набор символов");
-enumPanel.handleInput("\r");
-surface = enumPanel.render(120).join("\n");
-assert.match(surface, /Стандартные символы/);
-assert.match(surface, /Максимальная совместимость/);
-// Use the real host submenu keyboard path; select next original enum value.
-enumPanel.handleInput("\x1b[B");
-enumPanel.handleInput("\r");
-assert.equal(await controller.setLanguage("en", "task"), "язык настроек управляется основной сессией");
-assert.equal(createSettingsHost().get("symbolPreset"), "nerd");
-assert.equal(controller.language, "ru");
+// The glyph-set step must work from ANY starting value and under ANY rendered preset: a session can start
+// upgraded (a confirmed Glyph Protocol handshake) or carry a persisted value, so it reads the row, moves one
+// deterministic step away and restores the original. Static option labels are asserted on the first pass.
+let enumPasses = 0;
+for (const start of GLYPH_PRESETS) {
+  for (const rendered of GLYPH_PRESETS) {
+    // CI's real shape is "setting unicode, rendered upgraded" — the setting/rendered pair must not matter.
+    if (rendered !== start && start !== "unicode") continue;
+    initThemeSync(rendered);
+    const host = createSettingsHost();
+    host.set("symbolPreset", start);
+    const enumPanel = panel();
+    enumPanel.handleInput(RU_ENUM_QUERY);
+    enumPanel.handleInput("\r");
+    let enumSurface = enumPanel.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(enumSurface, /Стандартные символы/);
+    assert.match(enumSurface, /Максимальная совместимость/);
+    const away = glyphKeyAway(start);
+    // Use the real host submenu keyboard path; select the exact next original enum value.
+    enumPanel.handleInput(away);
+    enumPanel.handleInput("\r");
+    assert.equal(await controller.setLanguage("en", "task"), "язык настроек управляется основной сессией");
+    enumSurface = enumPanel.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(enumSurface, new RegExp(`Набор символов\\s+${glyphTarget(start, away)}\\b`), `start=${start} rendered=${rendered} changed`);
+    assert.equal(controller.language, "ru");
+    enumPanel.handleInput("\r");
+    enumPanel.handleInput(away === "\x1b[B" ? "\x1b[A" : "\x1b[B");
+    enumPanel.handleInput("\r");
+    enumSurface = enumPanel.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.equal(glyphPreset(enumSurface), start, `start=${start} rendered=${rendered} restored`);
+    assert.equal(createSettingsHost().get("symbolPreset"), start, `start=${start} host value restored`);
+    enumPasses++;
+  }
+}
+assert.ok(enumPasses >= GLYPH_PRESETS.length, "the enum step was not exercised from every starting value");
+initThemeSync("unicode");
 assert.equal(await controller.setLanguage("en", "main"), undefined);
 const english = panel();
 english.handleInput("Color-Blind Mode");
 assert.match(english.render(120).join("\n"), /Color-Blind Mode/);
 assert.equal(createSettingsHost().get("colorBlindMode"), true);
-assert.equal(createSettingsHost().get("symbolPreset"), "nerd");
+assert.equal(createSettingsHost().get("symbolPreset"), GLYPH_PRESETS[GLYPH_PRESETS.length - 1]);
 assert.equal(await controller.setLanguage("ru", "main"), undefined);
 assert.equal(await controller.shutdown("main"), undefined);
 assert.equal(createSettingsHost().entries.find(entry => entry.path === "colorBlindMode")?.ui?.label, "Color-Blind Mode");
