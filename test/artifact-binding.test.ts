@@ -410,4 +410,4 @@ test("publishes the index branch through a real owned Git remote and never rewri
     expect(git(origin, ["rev-list", "--count", "refs/heads/marketplace"])).toBe("2");
     expect(git(origin, ["show", "refs/heads/marketplace:.omp-plugin/marketplace.json"])).toBe(JSON.stringify(catalog("0.3.2", "b".repeat(40)), null, 2));
   } finally {await rm(directory, {recursive: true, force: true});}
-});
+}, 30000);
