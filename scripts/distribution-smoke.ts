@@ -4,11 +4,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import { buildMarketplaceCatalog, type MarketplaceCatalog, type MarketplaceCatalogEntry } from "./marketplace-catalog";
+import type { MarketplaceCatalog, MarketplaceCatalogEntry } from "./marketplace-catalog";
 import { canonicalContentHash } from "./installed-smoke";
 
 /**
  * Prove both distribution channels of this package against a real installed OMP.
+ *
+ * The proven release is always named explicitly and never inferred: `--source` proves the
+ * checked-out working tree, `--catalog <path>` proves exactly the release in that catalog.
+ * Missing or conflicting targets are refused before any home, profile or process exists.
  *
  * Runs entirely inside one disposable home/profile: npm-managed GitHub install and
  * marketplace install of the same package, real `/settings` panel observations, a
@@ -27,6 +31,31 @@ const option = (name: string): string | undefined => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 };
+
+const REPOSITORY = "narimanisakhanov-creator/omp-settings-ru";
+const SHA = /^[a-f0-9]{40}$/;
+
+/**
+ * Catalog mode: read the caller's exact release target before any home or profile exists. A missing
+ * or malformed file ends with its own read/parse error, and a catalog whose first plugin is not this
+ * repository's pinned GitHub release is refused as smoke-target-invalid instead of being dereferenced
+ * — it is never replaced by another release.
+ */
+async function readReleaseCatalog(catalogPath: string): Promise<MarketplaceCatalog> {
+  const catalog = await Bun.file(catalogPath).json() as MarketplaceCatalog;
+  const own = catalog?.plugins?.[0];
+  const source = own?.source;
+  if (!own || own.name !== "omp-settings-ru" || source?.source !== "github" || source.repo !== REPOSITORY || !SHA.test(source.sha) || source.ref !== `v${own.version}`) throw new Error("smoke-target-invalid");
+  return catalog;
+}
+
+// Both modes are explicit and mutually exclusive: this script never guesses which release it proves,
+// so an unlabelled run cannot silently re-prove a stale release. Refusal precedes every side effect.
+const sourceMode = args.includes("--source");
+const catalogPath = option("--catalog");
+if (sourceMode && args.includes("--catalog")) throw new Error("smoke-target-conflict: use --source or --catalog <path>");
+if (!sourceMode && (catalogPath === undefined || catalogPath === "" || catalogPath.startsWith("--"))) throw new Error("smoke-target-required: use --source or --catalog <path>");
+const release = sourceMode ? undefined : await readReleaseCatalog(catalogPath!);
 const executable = option("--executable") ?? Bun.which("omp");
 if (!executable) throw new Error("native-executable-required");
 const home = resolve(option("--home") ?? await mkdtemp(join(tmpdir(), "omp-distribution-")));
@@ -246,12 +275,6 @@ async function fixturePlugin(): Promise<{directory: string; versions: {version: 
   return {directory, versions};
 }
 
-const catalogPath = option("--catalog");
-const target: MarketplaceCatalog = catalogPath ? await Bun.file(catalogPath).json() as MarketplaceCatalog : buildMarketplaceCatalog({version: "0.3.1", commitSha: "4665e6d72635751d03b784d1b02dc107f38071a4", repository: "narimanisakhanov-creator/omp-settings-ru", description: "Русский перевод /settings"});
-const own = target.plugins[0]!;
-if (own.name !== "omp-settings-ru" || own.source.source !== "github" || own.source.repo !== "narimanisakhanov-creator/omp-settings-ru" || !/^[a-f0-9]{40}$/.test(own.source.sha) || own.source.ref !== `v${own.version}`) throw new Error("smoke-target-invalid");
-const npmSpec = `github:${own.source.repo}#${own.source.ref}`;
-
 /**
  * Commit the current working tree (the exact package allowlist) into a real local Git
  * repository so the marketplace channel can clone and load THESE bytes natively, without
@@ -278,19 +301,22 @@ async function sourceRepo(): Promise<{directory: string; sha: string; version: s
   return {directory, sha: git(["rev-parse", "HEAD"]), version: metadata.version, contentHash: await canonicalContentHash(directory)};
 }
 
+// Built before the loopback server so the served catalog is always a real target: in source mode the
+// repository of the checked-out tree, otherwise the caller's release catalog plus the owned fixture.
+const source = sourceMode ? await sourceRepo() : undefined;
 const fixture = await fixturePlugin();
 const fixtureEntry = (index: number): MarketplaceCatalogEntry => ({name: "omp-fixture-plugin", description: "distribution smoke fixture", version: fixture.versions[index]!.version, source: {source: "url", url: pathToFileURL(fixture.directory).href, ref: `v${fixture.versions[index]!.version}`, sha: fixture.versions[index]!.sha}});
-let catalog: MarketplaceCatalog = {...target, plugins: [...target.plugins, fixtureEntry(0)]};
+let catalog: MarketplaceCatalog = source
+  ? {name: "omp-settings-ru", owner: {name: "narimanisakhanov-creator"}, plugins: [{name: "omp-settings-ru", description: "Русский перевод /settings", version: source.version, source: {source: "url", url: pathToFileURL(source.directory).href, ref: `v${source.version}`, sha: source.sha}}]}
+  : {...release!, plugins: [...release!.plugins, fixtureEntry(0)]};
 const server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch() {return Response.json(catalog);}});
 const catalogUrl = `http://127.0.0.1:${server.port}/marketplace.json`;
 
 try {
   await step("host-version", async () => (await must(["--version"])).trim());
-  if (args.includes("--source")) {
+  if (source) {
     // Prove the checked-out source itself: native marketplace clone of a real local Git
     // repository built from the working tree, byte-identical to the package allowlist.
-    const source = await sourceRepo();
-    catalog = {name: "omp-settings-ru", owner: {name: "narimanisakhanov-creator"}, plugins: [{name: "omp-settings-ru", description: "Русский перевод /settings", version: source.version, source: {source: "url", url: pathToFileURL(source.directory).href, ref: `v${source.version}`, sha: source.sha}}]};
     await step("source-marketplace-add", () => must(["plugin", "marketplace", "add", catalogUrl]));
     await step("source-marketplace-install", async () => {
       await must(["plugin", "install", "omp-settings-ru@omp-settings-ru"]);
@@ -308,6 +334,12 @@ try {
     server.stop(true);
     process.exit(0);
   }
+  // Release branch only: the source branch exited above, so the release catalog, its narrowed
+  // GitHub source and the derived npm spec exist exactly where they are used.
+  const releaseCatalog = release!;
+  const own = releaseCatalog.plugins[0]!;
+  if (own.source.source !== "github") throw new Error("smoke-target-invalid");
+  const npmSpec = `github:${own.source.repo}#${own.source.ref}`;
   const npmInstall = await step("npm-install", async () => {
     await must(["plugin", "install", npmSpec]);
     const installed = await identity({version: own.version});
@@ -327,11 +359,11 @@ try {
   });
   await step("invalid-sha-refused", async () => {
     // A source whose pinned commit does not exist must fail loudly, not install or overwrite state.
-    const broken = {...target, plugins: [{...own, source: {...own.source, sha: "0".repeat(40)}}]};
+    const broken = {...releaseCatalog, plugins: [{...own, source: {...own.source, sha: "0".repeat(40)}}]};
     catalog = broken;
     await must(["plugin", "marketplace", "update", "omp-settings-ru"]);
     const reason = await refuses(["plugin", "install", "omp-settings-ru@omp-settings-ru", "--force"]);
-    catalog = {...target, plugins: [...target.plugins, fixtureEntry(0)]};
+    catalog = {...releaseCatalog, plugins: [...releaseCatalog.plugins, fixtureEntry(0)]};
     await must(["plugin", "marketplace", "update", "omp-settings-ru"]);
     const installed = await identity({version: own.version});
     if (installed.source !== "npm" || installed.contentHash !== npmInstall.contentHash) throw new Error(`invalid-sha-destroyed-install:${JSON.stringify(installed)}`);
@@ -369,14 +401,14 @@ try {
   });
 
   // Auto-update proof: install the previous immutable release of both plugins, serve two newer releases, let real startup auto-update run.
-  catalog = {...target, plugins: [{...own, version: "0.3.0", source: {...own.source, ref: "v0.3.0", sha: "2b2bcd1e25b59128b4f5198c4dab46eadd1b3a4f"}}, fixtureEntry(0)]};
+  catalog = {...releaseCatalog, plugins: [{...own, version: "0.3.0", source: {...own.source, ref: "v0.3.0", sha: "2b2bcd1e25b59128b4f5198c4dab46eadd1b3a4f"}}, fixtureEntry(0)]};
   await step("marketplace-install-older", async () => {
     await must(["plugin", "marketplace", "update", "omp-settings-ru"]);
     await must(["plugin", "install", "omp-settings-ru@omp-settings-ru"]);
     await must(["plugin", "install", "omp-fixture-plugin@omp-settings-ru"]);
     return identity({version: "0.3.0"});
   });
-  catalog = {...target, plugins: [...target.plugins, fixtureEntry(1)]};
+  catalog = {...releaseCatalog, plugins: [...releaseCatalog.plugins, fixtureEntry(1)]};
   const beforeAuto = await readConfig();
   beforeAuto.plugins["omp-settings-ru"]!.enabled = false;
   beforeAuto.plugins["omp-settings-ru"]!.enabledFeatures = null;

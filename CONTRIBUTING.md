@@ -1,7 +1,8 @@
-# участие и сопровождение
+# участие
 
 граница проекта — отображаемые метаданные `/settings`, не значения, обработчики или пользовательские файлы.
 используй [глоссарий](docs/glossary.md), [архитектуру](docs/architecture.md) и [нормы поведения](CODE_OF_CONDUCT.md).
+сложное сопровождение — распространение, обновление источников, автоматизация и выпуск — вынесено в [docs/maintenance.md](docs/maintenance.md).
 
 ## окружение
 
@@ -14,51 +15,13 @@ bun install --frozen-lockfile --ignore-scripts
 runtime получает живой реестр запущенного OMP; локальные пакеты нужны для сопровождения.
 не загружай установленную и локальную копии плагина одновременно.
 
-## смена канала
-
-Закрой старые сессии и убери explicit `-e`/`--plugin-dir`/configured extension roots. `omp plugin list --json` должен показывать одну user install; project install сначала разбери отдельно. Uninstall удаляет собственные plugin settings/features, поэтому для state-preserving смены используй внешний скрипт checkout, не runtime:
-
-```text
-bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to marketplace --spec omp-settings-ru@omp-settings-ru --backup <new-private-backup.json> --apply
-bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to npm --spec github:narimanisakhanov-creator/omp-settings-ru#v0.4.0 --backup <another-private-backup.json> --apply
-```
-
-Скрипт требует explicit named profile, до удаления типизированно проверяет lock и сохраняет own state/settings с JSON types, `null`/`[]` features и disabled-state; чужие записи и неизвестные поля переносятся без изменений. Marketplace должен быть добавлен заранее. Backup приватный, не перезаписывается. При сбое install частично поставленный альтернативный канал сначала удаляется, затем восстанавливается исходный канал и его own запись; если и это невозможно, скрипт сообщает точный backup и не выдаёт сбой за успех — не копируй весь старый lockfile поверх текущего. Для личного профиля нужна отдельная разрешённая операция; local proof использует только disposable homes.
-
-## распространение и auto
-
-`private:true` остаётся: npm-managed использует GitHub release, npm registry publication отсутствует. `.omp-plugin/marketplace.json` публикуется отдельно в ветке `marketplace`, не внутри pin-имого release tree. `marketplace.autoUpdate` — штатный общий переключатель OMP; `auto` не проверяет project ReleasePin/наши receipts. Runtime перевода сети не получает.
-
-После опубликованного release и успешного exact-commit `check` workflow: `bun scripts/marketplace-catalog.ts --generate --tag v<version> --check-run <workflow-run-id> --output <catalog.json>`. Команда читает живые GitHub release/tag/workflow, dereferences annotated tag, скачивает archive/SHA256SUMS и сверяет hashes. Remote операция отдельно: dispatch `.github/workflows/marketplace-index.yml` с tag/check_run; он проверяет native channels перед обычным push только index branch. Публикующий CLI (`bun scripts/marketplace-index.ts`) повторно проверяет тот же живой release через `loadVerifiedCatalog`, поэтому рукописный файл каталога им не публикуется; monotonic/idempotent/conflict-решение покрыто доменным тестом на реальном owned Git.
-
-`bun run smoke:distribution --catalog <verified-catalog.json>` устанавливает настоящий npm-managed GitHub выпуск, добавляет owned каталог, прогоняет обе миграции канала, обычный native startup и `off/notify/auto` на stale каталоге с двумя настоящими выпусками и вторым fixture-плагином. `bun run smoke:source` проверяет именно текущий checkout: собирает package allowlist в реальный локальный Git-репозиторий, ставит его нативным marketplace-каналом и сверяет content hash, затем открывает русскую панель. Оба — channel proof, отдельный от старого link-based `smoke:installed`; сетевые ошибки git-транспорта сообщаются как `network-transport-failed` с сохранённым backup, а не как дефект канала.
-
-## обновление источников
-
-1. зафиксируй точную версию upstream и commit. начни с `bun scripts/upgrade-host.ts <version> --dry-run`; режим без `--dry-run` выполняй в отдельной рабочей ветке.
-2. просмотри пины разработки, lockfile, baseline и `upgrade-report.md`. скрипт использует сеть; peer-диапазон и исторические алиасы автоматически не расширяет.
-3. экспортируй точную пару версии/платформы из матрицы. `--output` записывает baseline без полей происхождения, поэтому отдельно сохрани stdout экспорта:
-
-```text
-bun run source:export 18.8.4 win32
-bun run source:export 18.8.4 win32 --output baseline/18.8.4-win32.json
-```
-
-4. сравни источник с предыдущим baseline до принятия экспорта: added/removed/changed требуют ревью. перезапись baseline не должна скрывать изменение английского текста.
-
-5. повтори проверку для каждой записи матрицы. `native-package-registry` означает реестр пакета на текущей ОС; `source-derived` — извлечённые платформенные ветки. оба статуса отличаются от установленной панели.
-
-### экспорт матрицы из исходников
-
-Перед переключением `process.platform` worker заранее загружает реальные экземпляры `@oh-my-pi/pi-utils`, разрешённые из каталога реестра и каталога worker: модуль `env` вычисляет каталог проекта при инициализации и на Windows может вызывать нативный helper длинных путей. Сохраняй статус `source-derived`; проверяй каждый экспорт версии/платформы полным сравнением с baseline, включая `sourceHash`. Это не доказательство работы установленной панели.
-
 ## перевод и ревью
 
 - каталог — `src/translations/`; ключ настройки — технический путь, ключ варианта — исходный `value`.
 - переводи названия, описания, предупреждения и статические подписи. сохраняй числа, команды, пути и технические имена; не добавляй обещаний к upstream-тексту.
 - сохраняй старый вариант для старого источника; новый `sourceHash` и перевод добавляй после проверки смысла, не массовой перезаписью хешей.
 - provenance варианта должен перечислять реально наблюдавшиеся версии и платформы, а не предполагаемые.
-- изменения источника отражай в `src/translations/variant-review.json` и получай независимое смысловое ревью; контроль: `bun scripts/verify-variant-reviews.ts`.
+- изменения источника отражай в `src/translations/variant-review.json` и получай независимое смысловое ревью; автоматический `bun run release:check` проверяет записи и исторические identity, но не заменяет смысловое human/agent review.
 - динамические описания согласуй с `src/source-templates.ts`, `descriptionSource` и русским текстом с теми же `{placeholder}`; клавиши предоставляет хост.
 - удаляя запись, проверь остальные версии матрицы. старый перевод под новым хешем требует повторного ревью.
 
@@ -68,7 +31,12 @@ bun run source:export 18.8.4 win32 --output baseline/18.8.4-win32.json
 ## матрица и peer-диапазон
 
 `baseline/supported-hosts.json` связывает версии, алиасы пакетов и платформы.
-`installedEvidence` и `unavailableInstalledRuns` отделяют живые прогоны от baseline.
+три уровня доказательств не заменяют друг друга:
+
+- baseline/source-derived и native-package-registry фиксируют метаданные реестра, не панель;
+- `installedEvidence` и `unavailableInstalledRuns` в существующем manifest — исторически зафиксированные локальные прогоны и пробелы, а не полный список текущих CI-прогонов;
+- per-commit native CI receipts относятся к точному SHA, пакету и бинарнику, доступны в artifacts конкретного workflow и не переопределяют старые локальные записи.
+
 обновляй запись вместе с исходниками и каталогом, сохраняя точное происхождение доказательств.
 
 peer-диапазон — контракт потребителя, dev-пины — среда проверки; изменение одного не доказывает другое.
@@ -80,11 +48,12 @@ peer-диапазон — контракт потребителя, dev-пины 
 ```text
 bun run check
 bun run matrix:check
-bun scripts/verify-variant-reviews.ts
+bun run release:check
 ```
 
 `check` запускает TypeScript, доменные тесты, покрытие, drift, smoke расширения, smoke компонента панели и release hygiene.
 `matrix:check` проверяет покрытие и drift по выбранной матрице; не подменяет installed smoke.
+`release:check` проверяет pack allowlist, поиск паттернов секретов и смысловое ревью вариантов перевода.
 сохраняй версии, платформу, SHA, вывод и код возврата; конфигурация CI не равна завершённому run.
 
 ## проверка установленного хоста
@@ -110,34 +79,17 @@ omp --profile omp-settings-ru-proof --no-extensions -e ./src/index.ts
 для публичного снимка нужен читаемый PNG настоящей панели; лог и перенабранный SVG его не заменяют.
 снимок относится к хешу загруженных при захвате файлов: поздний smoke других байтов не меняет его provenance.
 
-## автоматизация сопровождения
+## смена канала
 
-ежечасовая проверка upstream-кандидатов идёт через контроллер `scripts/maintenance.ts`; он не принимает текст PR как инструкции и не трогает рабочий checkout человека.
-
-регистрация автоматизации привязывает доверие к трём вещам: принятой политике из `origin/main`, селектору репозитория и абсолютному пути precheck-скрипта в каноническом checkout. их хеш печатает сама политика:
+Закрой старые сессии и убери explicit `-e`/`--plugin-dir`/configured extension roots. `omp plugin list --json` должен показывать одну user install; project install сначала разбери отдельно. Uninstall удаляет собственные plugin settings/features, поэтому для state-preserving смены используй внешний скрипт checkout, не runtime:
 
 ```text
-bun scripts/maintenance.ts --policy-digest --repo github:<owner>/<repo> --checkout "<канонический checkout>"
+bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to marketplace --spec omp-settings-ru@omp-settings-ru --backup <new-private-backup.json> --apply
+bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to npm --spec github:narimanisakhanov-creator/omp-settings-ru#v<version> --backup <another-private-backup.json> --apply
 ```
 
-команда читает только локальный Git (`origin/main`) и печатает hex-хеш одной строкой; сеть не используется.
-запускай её из свежего рабочего каталога: рецепт привязан к переданному `--checkout`, а не к текущему CWD.
-агент обязан отказаться от запуска, если напечатанный хеш не совпадает с зарегистрированным в prompt.
+Скрипт требует explicit named profile, до удаления типизированно проверяет lock и сохраняет own state/settings с JSON types, `null`/`[]` features и disabled-state; чужие записи и неизвестные поля переносятся без изменений. Marketplace должен быть добавлен заранее. Backup приватный, не перезаписывается. При сбое install частично поставленный альтернативный канал сначала удаляется, затем восстанавливается исходный канал и его own запись; если и это невозможно, скрипт сообщает точный backup и не выдаёт сбой за успех — не копируй весь старый lockfile поверх текущего. Для личного профиля нужна отдельная разрешённая операция; local proof использует только disposable homes.
 
-`--precheck` обязан уложиться в 30 секунд: независимые чтения GitHub идут одной параллельной группой, а холодный `bun install` при разрешении lockfile — отдельной зависимой. внешняя задержка GitHub завершает precheck отказом, а не обходом гейта.
+## сопровождение
 
-закрытие доверия для lockfile принимает только канонические алиасы хоста: имя обязано совпадать с `omp-host-<версия>` для версии из своего `npm:`-спецификатора, базовые алиасы берутся из принятого lockfile, алиас кандидата — только из дерева кандидата. произвольные `npm:`-алиасы остаются недоверенными.
-
-## выпуск
-
-1. Этот проект публикует minor-релизы вручную: текущий контроллер upgrade-веток принимает только patch-кандидаты OMP и не выпускает новую версию самого плагина.
-2. Перед фиксацией номера проверь, что версия `package.json`, соответствующий заголовок `CHANGELOG.md`, установочная команда и незанятый Git tag согласованы.
-3. Получи independent review; на финальном состоянии пройди `bun run check`, `npm pack --dry-run --json --ignore-scripts`, `bun run release:check` и полный exact-SHA GitHub CI.
-4. Проверь публичные тексты, release notes, reachable Git history, PNG и итоговый пакет pinned secret scanner-ом; ограниченный поиск паттернов не гарантирует обнаружение любого секрета.
-5. Убедись, что smoke проверил установку и удаление точного выпускаемого артефакта в одноразовом профиле; никогда не меняй произвольный личный профиль.
-6. Не переписывай существующие теги, не применяй force push и продвигай `stable` только после exact-SHA review/CI и проверки ancestry.
-7. После публикации проверь GitHub Release, assets, SHA-256 и доступность точной install-команды; сумма рядом с архивом подтверждает совпадение, не независимую подпись.
-
-внешние инструменты сопровождения используют сеть; runtime перевода — нет.
-не переносить в runtime Stats, PATH-установщики, autocomplete или чтение сессий.
-сохраняй MIT и атрибуцию Elazer; уязвимости — по [SECURITY.md](SECURITY.md).
+распространение и auto, обновление источников, автоматизация сопровождения и выпуск описаны в [docs/maintenance.md](docs/maintenance.md) — это действия сопровождающего, не runtime плагина.
