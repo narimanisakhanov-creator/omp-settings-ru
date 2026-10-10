@@ -7,7 +7,7 @@ import { initThemeSync } from "@oh-my-pi/pi-tui/theme/theme";
 import { getHostMetadata } from "../src/host-adapter";
 import { LanguageController } from "../src/language-controller";
 import { ru } from "../src/translations/ru";
-import { RU_SEARCH_OFF, RU_SEARCH_ON, RU_SEARCH_QUERY } from "./panel-search";
+import { RU_SEARCH_QUERY, RU_SEARCH_SETTLED, searchToggle } from "./panel-search";
 
 await Settings.init({ inMemory: true, cwd: process.cwd(), configFiles: [] });
 initThemeSync();
@@ -30,35 +30,46 @@ russian.handleInput("\r");
 assert.equal(createSettingsHost().get("colorBlindMode"), true);
 
 // The native PTY sessions (scripts/distribution-session.ts, scripts/smoke-installed-worker.ts) must not
-// press Enter until the pointer is on the row they are about to activate: the panel ranks its fuzzy corpus
-// on every keystroke and renders a matching label while the pointer still sits on another row. Prove the
-// anchor holds for every prefix of the query the sessions type, then toggle the setting for real.
-let anchoredPrefixes = 0;
-for (let length = 1; length <= RU_SEARCH_QUERY.length; length++) {
-  const probe = panel();
-  probe.handleInput(RU_SEARCH_QUERY.slice(0, length));
-  const probeSurface = probe.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-  if (!RU_SEARCH_OFF.test(probeSurface)) continue;
-  anchoredPrefixes++;
-  assert.match(probeSurface.split("\n").find(line => line.includes("❯")) ?? "", /❯\s*Скорость генерации/);
+// press Enter until the searched setting is the only row Enter can activate: the panel re-ranks its fuzzy
+// corpus on every keystroke, so the label is rendered long before the selection reaches it. Prove the
+// settled invariant for every prefix the sessions type, under each supported symbol preset, then toggle
+// the setting for real. The nerd preset matters because a confirmed Glyph Protocol handshake upgrades an
+// unconfigured session to it, where the pointer is U+F054 instead of U+276F.
+let settledPrefixes = 0;
+for (const preset of ["unicode", "nerd", "ascii"] as const) {
+  initThemeSync(preset);
+  for (let length = 1; length <= RU_SEARCH_QUERY.length; length++) {
+    const probe = panel();
+    probe.handleInput(RU_SEARCH_QUERY.slice(0, length));
+    const probeSurface = probe.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    if (!RU_SEARCH_SETTLED.test(probeSurface)) continue;
+    settledPrefixes++;
+    // The settled wait may only report one match: a partial prefix still lists other rows.
+    assert.equal(probeSurface.match(/(?<!\d)\d+ match(?:es)?/g)?.join(","), "1 match", `preset=${preset} length=${length}`);
+    assert.match(probeSurface, /Скорость генерации/);
+  }
 }
-assert.ok(anchoredPrefixes > 0, "the anchored search wait never matched a rendered panel");
+assert.ok(settledPrefixes > 0, "the settled search wait never matched a rendered panel");
+initThemeSync("unicode");
 
-const anchored = panel();
-anchored.handleInput(RU_SEARCH_QUERY);
-let anchoredSurface = anchored.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-assert.match(anchoredSurface, RU_SEARCH_OFF);
-assert.match(anchoredSurface.split("\n").find(line => line.includes("❯")) ?? "", /❯\s*Скорость генерации/);
-anchored.handleInput("\r");
-anchoredSurface = anchored.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-assert.match(anchoredSurface, RU_SEARCH_ON);
-assert.match(anchoredSurface.split("\n").find(line => line.includes("❯")) ?? "", /❯\s*Скорость генерации/);
-assert.equal(createSettingsHost().get("composer.tokenRate"), true);
-anchored.handleInput("\r");
-anchoredSurface = anchored.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-assert.match(anchoredSurface, RU_SEARCH_OFF);
-assert.match(anchoredSurface.split("\n").find(line => line.includes("❯")) ?? "", /❯\s*Скорость генерации/);
-assert.equal(createSettingsHost().get("composer.tokenRate"), false);
+for (const preset of ["unicode", "nerd", "ascii"] as const) {
+  initThemeSync(preset);
+  const settled = panel();
+  settled.handleInput(RU_SEARCH_QUERY);
+  let settledSurface = settled.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+  assert.match(settledSurface, RU_SEARCH_SETTLED, `preset=${preset}`);
+  const toggle = searchToggle(settledSurface);
+  assert.equal(createSettingsHost().get("composer.tokenRate"), toggle.current === "true");
+  settled.handleInput("\r");
+  settledSurface = settled.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+  assert.match(settledSurface, toggle.flipped, `preset=${preset} toggle`);
+  assert.equal(createSettingsHost().get("composer.tokenRate"), toggle.current !== "true");
+  settled.handleInput("\r");
+  settledSurface = settled.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+  assert.match(settledSurface, toggle.restored, `preset=${preset} restore`);
+  assert.equal(createSettingsHost().get("composer.tokenRate"), toggle.current === "true");
+}
+initThemeSync("unicode");
 
 const enumPanel = panel();
 enumPanel.handleInput("Набор символов");

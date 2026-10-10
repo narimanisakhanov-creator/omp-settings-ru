@@ -1,7 +1,7 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { RU_SEARCH_OFF, RU_SEARCH_ON, RU_SEARCH_QUERY } from "./panel-search";
+import { RU_SEARCH_QUERY, RU_SEARCH_SETTLED, searchToggle } from "./panel-search";
 
 const [executable, profile, pluginPath, home] = process.argv.slice(2) as [string, string, string, string];
 const observations: {kind: string; output: string}[] = [];
@@ -55,12 +55,13 @@ try {
   }
   const russian=await session.send("/settings\r",/Тёмная тема/);
   observations.push({kind:"ru-panel",output:russian.split("\n").filter(line=>/Тёмная тема|Светлая тема|Набор символов/.test(line)).join("\n")});
-  const search=await session.send(RU_SEARCH_QUERY,RU_SEARCH_OFF);
+  const search=await session.send(RU_SEARCH_QUERY,RU_SEARCH_SETTLED);
   observations.push({kind:"ru-search",output:search.split("\n").filter(line=>/скорость|Скорость генерации/.test(line)).join("\n")});
-  const on=await session.send("\r",RU_SEARCH_ON);
-  observations.push({kind:"bool-change",output:on.split("\n").find(line=>/Скорость генерации/.test(line))!});
-  const off=await session.send("\r",RU_SEARCH_OFF);
-  observations.push({kind:"bool-restored",output:off.split("\n").find(line=>/Скорость генерации/.test(line))!});
+  const toggle=searchToggle(search);
+  const toggled=await session.send("\r",toggle.flipped);
+  observations.push({kind:"bool-change",output:toggled.split("\n").find(line=>/Скорость генерации/.test(line))!});
+  const restored=await session.send("\r",toggle.restored);
+  observations.push({kind:"bool-restored",output:restored.split("\n").find(line=>/Скорость генерации/.test(line))!});
   await session.escape();
   await session.send("набор символов",/Набор символов/);
   await session.send("\r",/Unicode|Юникод|ASCII/);

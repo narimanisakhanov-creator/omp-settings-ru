@@ -1,5 +1,5 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
-import { RU_SEARCH_OFF, RU_SEARCH_ON, RU_SEARCH_QUERY } from "./panel-search";
+import { RU_SEARCH_QUERY, RU_SEARCH_SETTLED, searchToggle } from "./panel-search";
 
 /**
  * Drive a real installed OMP through `/settings` in one profile and report what was observed.
@@ -91,11 +91,12 @@ if (mode === "boot") {
   try {
     await step("ru-search-and-boolean", async session => {
       const panel = await session.send("/settings\r", /Тёмная тема/);
-      const search = await session.send(RU_SEARCH_QUERY, RU_SEARCH_OFF);
+      const search = await session.send(RU_SEARCH_QUERY, RU_SEARCH_SETTLED);
+      const toggle = searchToggle(search);
       observations.push({kind: "ru-search", output: line(search, /Скорость генерации/) });
-      const enabled = await session.send("\r", RU_SEARCH_ON);
-      observations.push({kind: "ru-boolean-on", output: line(enabled, /Скорость генерации/) });
-      const restored = await session.send("\r", RU_SEARCH_OFF);
+      const toggled = await session.send("\r", toggle.flipped);
+      observations.push({kind: "ru-boolean-toggled", output: line(toggled, /Скорость генерации/) });
+      const restored = await session.send("\r", toggle.restored);
       observations.push({kind: "ru-boolean-restored", output: line(restored, /Скорость генерации/) });
       return [line(panel, /Тёмная тема/), ...observations.slice(-3).map(entry => entry.output)].join("\n");
     });
