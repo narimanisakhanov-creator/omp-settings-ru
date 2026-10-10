@@ -24,14 +24,14 @@
 omp plugin install github:narimanisakhanov-creator/omp-settings-ru#v0.4.0
 ```
 
-**marketplace** — после публикации проверенного индекса сопровождающим:
+**marketplace** — каталог в ветке `marketplace`:
 
 ```text
 omp plugin marketplace add https://raw.githubusercontent.com/narimanisakhanov-creator/omp-settings-ru/marketplace/.omp-plugin/marketplace.json
 omp plugin install omp-settings-ru@omp-settings-ru
 ```
 
-индекс пока не опубликован этой локальной работой. Он закрепляет release commit полным `source.sha` и тегом `source.ref`; `main` не источник пакета. Архив и `SHA256SUMS` доступны в выпуске; сверка суммы не независимая подпись.
+индекс опубликован в ветке [`marketplace`](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/marketplace/.omp-plugin/marketplace.json); это не подтверждает доступность raw-URL при конкретном запросе. Он закрепляет release commit полным `source.sha` и тегом `source.ref`; `main` не источник пакета. Архив и `SHA256SUMS` доступны в выпуске; сверка суммы не независимая подпись.
 
 ## обновление
 

@@ -14,7 +14,7 @@
 
 **auto обновляет только перевод?** нет: `marketplace.autoUpdate=auto` относится ко всем marketplace plugins пользователя и активного проекта. `notify` не устанавливает обновления, `off` не проверяет. Это не SHA256SUMS/ReleasePin gate; для немедленного refresh используй native marketplace update и новую сессию.
 
-**почему каталог недоступен?** локальная реализация не публикует ветку `marketplace`. До разрешённого post-release dispatch используй фиксированный GitHub/npm-managed выпуск; не подменяй source движущимся `main`.
+**каталог marketplace опубликован?** да: проверенный индекс опубликован в ветке `marketplace`, установка — в [README](../README.md#установка); доступность raw-URL проверяется отдельно. Он закрепляет release commit тегом `source.ref` и полным `source.sha`; не подменяй source движущимся `main`.
 
 ## язык и поведение
 
