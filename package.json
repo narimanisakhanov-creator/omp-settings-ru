@@ -34,6 +34,8 @@
     "marketplace:promote": "bun scripts/marketplace-index.ts",
     "matrix:check": "bun scripts/check-matrix.ts",
     "maintenance": "bun scripts/maintenance.ts",
+    "maintenance:controller": "bun scripts/maintenance-controller.ts",
+    "maintenance:acceptance": "bun scripts/maintenance-acceptance-smoke.ts",
     "release:check": "bun scripts/check-release.ts",
     "check": "bun run typecheck && bun test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check"
   },
