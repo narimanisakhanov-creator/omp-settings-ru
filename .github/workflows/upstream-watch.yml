@@ -92,7 +92,7 @@ jobs:
           MAINTENANCE_BASE_URL: ${{ vars.MAINTENANCE_BASE_URL }}
           MAINTENANCE_MODEL: ${{ vars.MAINTENANCE_MODEL }}
           MAINTENANCE_BASE_SHA: ${{ needs.discover.outputs.base }}
-        run: bun scripts/maintenance-actions.ts translate --bundle "$RUNNER_TEMP/prepared"
+        run: set -o pipefail; bun scripts/maintenance-actions.ts translate --bundle "$RUNNER_TEMP/prepared" 2>&1 | tee "$RUNNER_TEMP/translate.log"
       - id: upload
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
