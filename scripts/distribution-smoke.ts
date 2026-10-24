@@ -8,22 +8,23 @@ import type { MarketplaceCatalog, MarketplaceCatalogEntry } from "./marketplace-
 import { canonicalContentHash } from "./installed-smoke";
 
 /**
- * Prove both distribution channels of this package against a real installed OMP.
+ * Prove the single supported marketplace install of this package against a real OMP.
  *
  * The proven release is always named explicitly and never inferred: `--source` proves the
  * checked-out working tree, `--catalog <path>` proves exactly the release in that catalog.
  * Missing or conflicting targets are refused before any home, profile or process exists.
  *
- * Runs entirely inside one disposable home/profile: npm-managed GitHub install and
- * marketplace install of the same package, real `/settings` panel observations, a
- * state-preserving channel switch in both directions, and a real startup
- * auto-update over an owned stale catalog holding two releases plus a second
- * plugin that proves the setting's global scope.
+ * Runs entirely inside one disposable home/profile: a clean marketplace install and real
+ * `/settings` panel observations, an invalid-SHA refusal that preserves the installed
+ * marketplace identity and state, a legacy npm-managed copy only as the precondition of
+ * collision refusal and the one-way npm→marketplace migration for both `null` and `[]`
+ * feature forms. A real startup auto-update runs over an owned stale catalog holding two
+ * releases plus a second plugin that proves the setting's global scope. The reverse
+ * migration is not supported.
  *
- * Network is used by both git-backed channels (npm-managed GitHub and the
- * marketplace GitHub source); the owned catalog itself is served over loopback.
- * A transport failure is reported as such, with the home and any backup retained,
- * instead of being confused with a channel or state defect.
+ * Network is used by the git-backed marketplace source; the owned catalog itself is served
+ * over loopback. A transport failure is reported as such, with the home and any backup
+ * retained, instead of being confused with a channel or state defect.
  */
 
 const args = process.argv.slice(2);
@@ -226,7 +227,7 @@ async function identity(expected: {version: string; sha?: string}): Promise<{sou
   return {source, installPath, contentHash: await canonicalContentHash(installPath)};
 }
 
-async function switchChannel(to: "npm" | "marketplace", suffix: string, spec: string): Promise<string> {
+async function switchChannel(to: "marketplace", suffix: string, spec: string): Promise<string> {
   const backupPath = join(home, `backup-${suffix}.json`);
   const child = Bun.spawn([process.execPath, resolve(import.meta.dir, "switch-channel.ts"), "--home", home, "--profile", profile, "--executable", executable!, "--to", to, "--spec", spec, "--backup", backupPath, "--apply"], {cwd: home, env: environment, stdout: "pipe", stderr: "pipe"});
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -335,68 +336,79 @@ try {
     process.exit(0);
   }
   // Release branch only: the source branch exited above, so the release catalog, its narrowed
-  // GitHub source and the derived npm spec exist exactly where they are used.
+  // GitHub source and the legacy npm spec exist exactly where they are used.
   const releaseCatalog = release!;
   const own = releaseCatalog.plugins[0]!;
   if (own.source.source !== "github") throw new Error("smoke-target-invalid");
-  const npmSpec = `github:${own.source.repo}#${own.source.ref}`;
-  const npmInstall = await step("npm-install", async () => {
-    await must(["plugin", "install", npmSpec]);
-    const installed = await identity({version: own.version});
-    if (installed.source !== "npm") throw new Error("npm-channel-expected");
+  // The legacy npm-managed GitHub install is a migration precondition only; it is never the
+  // supported install path and is removed after the one-way migration.
+  const legacyNpmSpec = `github:${own.source.repo}#${own.source.ref}`;
+  await step("marketplace-add", () => must(["plugin", "marketplace", "add", catalogUrl]));
+  const marketplaceInstall = await step("marketplace-install", async () => {
+    await must(["plugin", "install", "omp-settings-ru@omp-settings-ru"]);
+    const installed = await identity({version: own.version, sha: own.source.sha});
+    if (installed.source !== "marketplace") throw new Error("marketplace-channel-expected");
     return installed;
   });
-  await step("npm-panel-ru", () => panel("ru"));
-  await step("marketplace-add", () => must(["plugin", "marketplace", "add", catalogUrl]));
-  await step("collision-refused", async () => {
-    // Installing the marketplace copy while the npm-managed copy owns the runtime name must be
-    // refused, and the existing install must survive byte-for-byte.
-    const reason = await refuses(["plugin", "install", "omp-settings-ru@omp-settings-ru", "--force"]);
-    const installed = await identity({version: own.version});
-    if (installed.source !== "npm") throw new Error(`collision-destroyed-install:${installed.source}`);
-    if (installed.contentHash !== npmInstall.contentHash) throw new Error(`collision-changed-install:${installed.contentHash}`);
-    return reason;
-  });
+  await step("marketplace-panel-ru", () => panel("ru"));
+  const marketplaceState = await seedState({enabled: false, enabledFeatures: []});
   await step("invalid-sha-refused", async () => {
-    // A source whose pinned commit does not exist must fail loudly, not install or overwrite state.
+    // A source whose pinned commit does not exist must fail loudly and must not replace the
+    // installed marketplace copy or its own/foreign state.
     const broken = {...releaseCatalog, plugins: [{...own, source: {...own.source, sha: "0".repeat(40)}}]};
     catalog = broken;
     await must(["plugin", "marketplace", "update", "omp-settings-ru"]);
     const reason = await refuses(["plugin", "install", "omp-settings-ru@omp-settings-ru", "--force"]);
     catalog = {...releaseCatalog, plugins: [...releaseCatalog.plugins, fixtureEntry(0)]};
     await must(["plugin", "marketplace", "update", "omp-settings-ru"]);
-    const installed = await identity({version: own.version});
-    if (installed.source !== "npm" || installed.contentHash !== npmInstall.contentHash) throw new Error(`invalid-sha-destroyed-install:${JSON.stringify(installed)}`);
+    await assertState(marketplaceState);
+    const installed = await identity({version: own.version, sha: own.source.sha});
+    if (installed.source !== "marketplace" || installed.contentHash !== marketplaceInstall.contentHash) throw new Error(`invalid-sha-changed-install:${JSON.stringify(installed)}`);
     return reason;
   });
-  const disabledEmptyFeatures = await seedState({enabled: false, enabledFeatures: []});
-  const marketplaceInstall = await step("migration-npm-to-marketplace", async () => {
-    await switchChannel("marketplace", "npm", "omp-settings-ru@omp-settings-ru");
-    await assertState(disabledEmptyFeatures);
-    const installed = await identity({version: own.version, sha: own.source.sha});
-    if (installed.source !== "marketplace") throw new Error("marketplace-channel-expected");
-    if (installed.contentHash !== npmInstall.contentHash) throw new Error(`channel-content-mismatch:${installed.contentHash}!=${npmInstall.contentHash}`);
+  // Every install below this point is either the legacy precondition or the owned migration
+  // proof; neither is presented as a supported user path.
+  const ensureLegacyNpm = async () => {
+    await must(["plugin", "uninstall", "omp-settings-ru@omp-settings-ru"]);
+    await must(["plugin", "install", legacyNpmSpec]);
+    const installed = await identity({version: own.version});
+    if (installed.source !== "npm") throw new Error("npm-channel-expected");
+    if (installed.contentHash !== marketplaceInstall.contentHash) throw new Error(`legacy-content-mismatch:${installed.contentHash}!=${marketplaceInstall.contentHash}`);
     return installed;
+  };
+  let legacyNpmInstall = await step("legacy-npm-precondition-install", ensureLegacyNpm);
+  await step("collision-refused", async () => {
+    // Installing the marketplace copy while the legacy npm copy owns the runtime name must be
+    // refused, and the existing install must survive byte-for-byte.
+    const reason = await refuses(["plugin", "install", "omp-settings-ru@omp-settings-ru", "--force"]);
+    const installed = await identity({version: own.version});
+    if (installed.source !== "npm") throw new Error(`collision-destroyed-install:${installed.source}`);
+    if (installed.contentHash !== legacyNpmInstall.contentHash) throw new Error(`collision-changed-install:${installed.contentHash}`);
+    return reason;
   });
-  await step("marketplace-panel-ru", async () => {
+  // Both feature representations a legacy lock can hold must survive the one-way migration.
+  const migrationCases: {name: string; features: string[] | null}[] = [
+    {name: "features-empty", features: []},
+    {name: "features-null", features: null},
+  ];
+  for (const [index, migration] of migrationCases.entries()) {
+    if (index > 0) legacyNpmInstall = await step(`legacy-npm-precondition-${migration.name}`, ensureLegacyNpm);
+    const expected = await seedState({enabled: false, enabledFeatures: migration.features});
+    await step(`migration-npm-to-marketplace-${migration.name}`, async () => {
+      await switchChannel("marketplace", migration.name, "omp-settings-ru@omp-settings-ru");
+      await assertState(expected);
+      const installed = await identity({version: own.version, sha: own.source.sha});
+      if (installed.source !== "marketplace") throw new Error("marketplace-channel-expected");
+      if (installed.contentHash !== legacyNpmInstall.contentHash) throw new Error(`channel-content-mismatch:${installed.contentHash}!=${legacyNpmInstall.contentHash}`);
+      return installed;
+    });
+  }
+  await step("marketplace-panel-ru-after-migration", async () => {
     await must(["plugin", "enable", "omp-settings-ru@omp-settings-ru"]);
     return panel("ru");
   });
-  const disabledNullFeatures = await seedState({enabled: false, enabledFeatures: null});
-  await step("migration-marketplace-to-npm", async () => {
-    await switchChannel("npm", "marketplace", npmSpec);
-    await assertState(disabledNullFeatures);
-    const installed = await identity({version: own.version});
-    if (installed.source !== "npm") throw new Error("npm-channel-expected");
-    if (installed.contentHash !== marketplaceInstall.contentHash) throw new Error(`channel-content-mismatch:${installed.contentHash}!=${marketplaceInstall.contentHash}`);
-    return installed;
-  });
-  await step("npm-panel-ru-after-migration", async () => {
-    await must(["plugin", "enable", "omp-settings-ru"]);
-    return panel("ru");
-  });
   await step("uninstall-english", async () => {
-    await must(["plugin", "uninstall", "omp-settings-ru"]);
+    await must(["plugin", "uninstall", "omp-settings-ru@omp-settings-ru"]);
     return panel("en");
   });
 
@@ -412,7 +424,7 @@ try {
   const beforeAuto = await readConfig();
   beforeAuto.plugins["omp-settings-ru"]!.enabled = false;
   beforeAuto.plugins["omp-settings-ru"]!.enabledFeatures = null;
-  beforeAuto.settings["omp-settings-ru"] = disabledNullFeatures.settings["omp-settings-ru"];
+  beforeAuto.settings["omp-settings-ru"] = {opaque: {flag: true, count: 7, values: ["x", null]}};
   beforeAuto.plugins["omp-fixture-plugin"] = {version: "0.0.1", enabled: false, enabledFeatures: null};
   beforeAuto.plugins["foreign"] = {version: "1.0.0", enabled: false, enabledFeatures: null};
   beforeAuto.settings["foreign"] = {retain: true};

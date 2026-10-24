@@ -1,5 +1,0 @@
-{
-  "runId": "run_389309e7a8a5", "deliveryId": "delivery_7f4396e8251e",
-  "messages": [{ "id": "msg_41cb5b8ef396", "run_id": "run_389309e7a8a5", "delivery_contract": "current_delivery", "from_handle": "term_5516824d-8975-4ad5-989f-c2bb1002ca50", "to_handle": "run:run_389309e7a8a5", "subject": "Design: PTY confirmed, pixel capture contract", "body": "terminal show подтвердил connected writable PTY для текущего worker.", "type": "status", "payload": "{\"taskId\":\"task_2a3b5f1ddc04\",\"dispatchId\":\"ctx_7ee49d87af41\"}" }],
-  "count": 1, "replayed": false, "acknowledged": "delivery_4b2b9d2733dd", "timedOut": false, "cancelled": false, "connectionLost": false
-}

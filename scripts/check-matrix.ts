@@ -1,6 +1,7 @@
-import manifest from "../baseline/supported-hosts.json";
 import policy from "../maintenance.config.json";
+import { readSupportedHosts } from "./maintenance/paths";
 
+const manifest = readSupportedHosts();
 const args = process.argv.slice(2);
 const candidateFlag = args.indexOf("--candidate");
 const candidate = candidateFlag >= 0 ? args[candidateFlag + 1] : undefined;

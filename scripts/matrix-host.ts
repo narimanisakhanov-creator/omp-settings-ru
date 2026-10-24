@@ -1,6 +1,8 @@
 import type { HostMetadata, HostSettingDefinition, HostUiMetadata } from "../src/host-types";
 import type { BaselineSnapshot } from "../src/report";
-import manifest from "../baseline/supported-hosts.json";
+import { readSupportedHosts } from "./maintenance/paths";
+
+const manifest = readSupportedHosts();
 
 export function requestedPairs(args: readonly string[]) {
   const version = args.find(arg => /^\d+\.\d+\.\d+$/.test(arg));

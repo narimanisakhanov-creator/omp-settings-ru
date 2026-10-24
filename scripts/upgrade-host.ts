@@ -4,6 +4,7 @@ import { ru } from "../src/translations/ru";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { SNAPSHOT_DIR, snapshotPath } from "./maintenance/paths";
 
 type RegistryMetadata = { "dist-tags"?: { latest?: string }; versions?: Record<string, unknown> };
 const usage = "Usage: bun scripts/upgrade-host.ts <version|latest> [--dry-run]";
@@ -37,6 +38,7 @@ if (requested === "latest") {
 } else version = requested;
 if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.test(version)) throw new Error(`Invalid version: ${version}`);
 const current = packageJson.devDependencies["@oh-my-pi/pi-coding-agent"];
+if (!current) throw new Error("@oh-my-pi/pi-coding-agent dev pin missing");
 for (const name of pinned) {
   const metadata = await fetchJson(`https://registry.npmjs.org/${name.replace("/", "%2F")}`);
   if (!metadata.versions?.[version]) throw new Error(`${name}@${version} does not exist`);
@@ -46,7 +48,7 @@ console.log(`Packages: ${pinned.join(", ")}`);
 console.log(`Direct development pins to rewrite: ${devPinned.map((name) => `${name}: ${current} -> ${version}`).join(", ")}`);
 console.log(`Candidate registry alias: omp-host-${version.replaceAll(".", "")} -> @oh-my-pi/pi-coding-agent@${version}`);
 const hostPlatform = process.platform;
-console.log(`Baseline file: baseline/${version}-${hostPlatform}.json`);
+console.log(`Baseline file: ${snapshotPath(version, hostPlatform)}`);
 if (dryRun) { console.log("Dry run: no files changed."); process.exit(0); }
 
 // Candidate pins are not support approval: retain reviewed peers and historical bundles.
@@ -70,10 +72,10 @@ try {
 }
 const host = await getHostMetadata();
 const snapshot = buildSourceSnapshot(host);
-const output = `baseline/${version}-${host.platform}.json`;
-await mkdir("baseline", { recursive: true });
+const output = snapshotPath(version, host.platform);
+await mkdir(SNAPSHOT_DIR, { recursive: true });
 await writeFile(output, JSON.stringify(snapshot, null, 2) + "\n");
-const oldPath = `baseline/${current}-${host.platform}.json`;
+const oldPath = snapshotPath(current, host.platform);
 let old: BaselineSnapshot | undefined;
 try { old = JSON.parse(readFileSync(oldPath, "utf8")); } catch { }
 let report = `# OMP ${current} → ${version}\n\n`;

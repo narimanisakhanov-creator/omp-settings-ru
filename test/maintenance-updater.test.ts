@@ -3,9 +3,8 @@ import { expect, test } from "bun:test";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, readlink, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { parseLivenessSample, runUpdate, selectLiveOmpRows } from "../scripts/maintenance/updater.ts";
-import type { ReleasePin } from "../scripts/maintenance/contracts.ts";
-import { runManualUpdate } from "../scripts/maintenance.ts";
+import { parseLivenessSample, selectLiveOmpRows, type UpdateOptions } from "../scripts/maintenance/updater.ts";
+import type { ReleasePin, UpdateReceipt } from "../scripts/maintenance/contracts.ts";
 import { updaterTestExecutable } from "../scripts/ci/prepare-host.ts";
 
 const executable = updaterTestExecutable(process.env, () => Bun.which("omp"));
@@ -52,64 +51,101 @@ async function removeOwnedFixture(root: string): Promise<void> {
 async function fixture(run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "omp-updater-test-"));
   try {
+    await mkdir(join(root, "home"));
+    await mkdir(join(root, "temp"));
     await writeFile(join(root, "candidate.tgz"), "candidate bytes");
     await run(root);
+  } catch (error) {
+    for (const directory of [root, join(root, "stage")]) {
+      const names = await readdir(directory).catch(() => []);
+      for (const name of names) if (/^(?:verification|startup-failure-.*)\.json$/.test(name)) console.error(`${name}: ${await readFile(join(directory, name), "utf8")}`);
+    }
+    throw error;
   } finally { await removeOwnedFixture(root); }
 }
 const options = (root: string) => ({ pin, executable, stateDirectory: root, packagePath: join(root, "candidate.tgz"), activate: false, accepted: false });
-// No inherited credentials, overlays, provider configuration or profile selectors.
-const ownedEnvironment = () => {
+// Each updater invocation and native command uses this test's home, never a personal profile.
+const ownedEnvironment = (root: string) => {
   const env: Record<string, string> = {};
-  for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP"]) if (process.env[key]) env[key] = process.env[key]!;
-  return env;
+  for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"]) if (process.env[key]) env[key] = process.env[key]!;
+  return { ...env, HOME: join(root, "home"), USERPROFILE: join(root, "home"), APPDATA: join(root, "home", "appdata"), LOCALAPPDATA: join(root, "home", "localappdata"), TEMP: join(root, "temp"), TMP: join(root, "temp") };
 };
+async function updateInOwnedHome(method: "runUpdate" | "runManualUpdate", input: UpdateOptions): Promise<UpdateReceipt> {
+  const root = input.stateDirectory;
+  await mkdir(join(root, "home"), { recursive: true });
+  await mkdir(join(root, "temp"), { recursive: true });
+  const source = 'import {runUpdate} from "./scripts/maintenance/updater.ts"; import {runManualUpdate} from "./scripts/maintenance.ts"; const input = JSON.parse(process.argv[2]); console.log(JSON.stringify(await (process.argv[1] === "runUpdate" ? runUpdate : runManualUpdate)(input)));';
+  const child = Bun.spawn([process.execPath, "-e", source, method, JSON.stringify(input)], { env: ownedEnvironment(root), stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000 });
+  const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  if (exit !== 0) throw new Error(`owned updater ${method} failed (${exit}): ${stderr}\n${stdout}`);
+  return JSON.parse(stdout);
+}
+const runUpdate = (input: UpdateOptions) => updateInOwnedHome("runUpdate", input);
+const runManualUpdate = (input: UpdateOptions) => updateInOwnedHome("runManualUpdate", input);
 
-// The activation liveness gate: only live pids are sessions, and any unverifiable sample is fail-closed.
+// Creation time disambiguates reused pids across the native snapshots.
+const firstBirth = "20261024120000.000001";
+const secondBirth = "20261024120000.000002";
+const livenessProfile = "omp-updater-target-abc";
+const busy = { status: "busy", refusal: "active-session-or-liveness-unverifiable" } as const;
+const identity = (pid: number, startedAt = firstBirth) => ({ pid, startedAt });
+const argv = (pid: number, line: string, startedAt = firstBirth) => ({ pid, startedAt, line });
 const livenessSample = (stdout: string, exit = 0) => ({ exit, stdout, stderr: "" });
+const verdict = (live: unknown[], cim: unknown[], resolved: unknown[] = []) => parseLivenessSample(livenessProfile, livenessSample(JSON.stringify({ live, cim, resolved })));
 test("activation liveness ignores an exited CIM row for a just-finished native helper", () => {
-  const profile = "omp-updater-target-abc";
-  // The helper is gone: no live pid, yet CIM still lists its row.
-  expect(selectLiveOmpRows([], [{ pid: 4242, line: `omp.exe --profile ${profile} plugin list --json` }])).toEqual([]);
-  expect(parseLivenessSample(profile, livenessSample(`{"live":[],"cim":[{"pid":4242,"line":"omp.exe --profile ${profile} plugin list --json"}]}`))).toEqual({ status: "idle" });
+  const cim = [argv(4242, `omp.exe --profile ${livenessProfile} plugin list --json`)];
+  expect(selectLiveOmpRows([], cim, [])).toEqual([]);
+  expect(verdict([], cim)).toEqual({ status: "idle" });
 });
 test("activation liveness defers for a live process on the target profile", () => {
-  const profile = "omp-updater-target-abc";
-  const live = `{"live":[7],"cim":[{"pid":7,"line":"omp.exe --profile ${profile} --mode rpc"}]}`;
-  expect(parseLivenessSample(profile, livenessSample(live))).toEqual({ status: "busy", refusal: "active-session-or-liveness-unverifiable" });
-  expect(parseLivenessSample("other-profile", livenessSample(live))).toEqual({ status: "idle" });
+  expect(verdict([identity(7)], [argv(7, `omp.exe --profile ${livenessProfile} --mode rpc`)])).toEqual(busy);
+  expect(verdict([identity(7)], [argv(7, "omp.exe --profile other-profile --mode rpc")])).toEqual({ status: "idle" });
 });
-test("activation liveness keeps a live process with unknown argv busy", () => {
-  const profile = "omp-updater-target-abc";
-  // Unreadable argv on a live process is unknown, not absence.
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":7,"line":""}]}'))).toEqual({ status: "busy", refusal: "active-session-or-liveness-unverifiable" });
-  // A live pid absent from the CIM snapshot may have started during sampling.
-  expect(parseLivenessSample(profile, livenessSample('{"live":[9],"cim":[]}'))).toEqual({ status: "busy", refusal: "active-session-or-liveness-unverifiable" });
+test("activation liveness resolves an unrelated process born between snapshots without resampling", () => {
+  expect(verdict([identity(9)], [], [{ ...argv(9, "omp.exe --profile unrelated plugin list --json"), status: "live" }])).toEqual({ status: "idle" });
+});
+test("activation liveness resolves a helper exiting during its exact identity query", () => {
+  expect(verdict([identity(9)], [], [{ ...identity(9), status: "exited" }])).toEqual({ status: "idle" });
+});
+test("activation liveness preserves a target born while an unrelated helper exits", () => {
+  const live = [identity(8), identity(9)];
+  const cim = [argv(7, "omp.exe --profile unrelated plugin list --json")];
+  const resolved = [{ ...identity(8), status: "exited" }, { ...argv(9, `omp.exe --profile ${livenessProfile} --mode rpc`), status: "live" }];
+  expect(verdict(live, cim, resolved)).toEqual(busy);
+});
+test("activation liveness never borrows argv from an exited process with a reused pid", () => {
+  const stale = [argv(7, "omp.exe --profile unrelated plugin list --json")];
+  expect(verdict([identity(7, secondBirth)], stale)).toEqual(busy);
+  expect(verdict([identity(7, secondBirth)], stale, [{ ...argv(7, `omp.exe --profile ${livenessProfile} --mode rpc`, secondBirth), status: "live" }])).toEqual(busy);
+  // A resolution for the old incarnation cannot clear the replacement session.
+  expect(verdict([identity(7, secondBirth)], stale, [{ ...identity(7), status: "exited" }])).toEqual(busy);
+});
+test("activation liveness keeps a persistently live process with unknown argv busy", () => {
+  expect(verdict([identity(7)], [argv(7, "")], [{ ...argv(7, ""), status: "live" }])).toEqual(busy);
+  expect(verdict([identity(9)], [])).toEqual(busy);
+  expect(verdict([{ pid: 9, startedAt: "" }], [])).toEqual(busy);
+  expect(verdict([{ pid: 7, startedAt: "" }], [argv(7, "omp.exe --profile unrelated")], [{ ...argv(7, "omp.exe --profile unrelated", ""), status: "live" }])).toEqual(busy);
 });
 test("activation liveness treats a successful no-process sample as idle", () => {
-  expect(parseLivenessSample("omp-updater-target-abc", livenessSample('{"live":[],"cim":[]}'))).toEqual({ status: "idle" });
+  expect(verdict([], [])).toEqual({ status: "idle" });
 });
 test("activation liveness is fail-closed for every unverifiable sample", () => {
-  const profile = "omp-updater-target-abc";
   const failed = { status: "failed", refusal: "liveness-query-unverifiable" } as const;
-  expect(parseLivenessSample(profile, livenessSample("", 1))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample("", 0))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample("   "))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample("{ malformed"))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('["live","cim"]'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":"7","cim":[]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":"none"}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":["7"],"cim":[]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":"7","line":""}]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":7}]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[null]}'))).toEqual(failed);
-  // A pid must be a positive safe integer: 0, negatives and unsafe magnitudes are malformed.
-  expect(parseLivenessSample(profile, livenessSample('{"live":[0],"cim":[]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[-7],"cim":[]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[9007199254740993],"cim":[]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":0,"line":""}]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":-7,"line":""}]}'))).toEqual(failed);
-  expect(parseLivenessSample(profile, livenessSample('{"live":[7],"cim":[{"pid":9007199254740993,"line":""}]}'))).toEqual(failed);
+  for (const sample of ["", "   ", "{ malformed", '["live","cim"]', '{"live":[]}', '{"live":[],"cim":[]}', ...[
+    { live: "7", cim: [], resolved: [] },
+    { live: [identity(7)], cim: "none", resolved: [] },
+    { live: [identity(7)], cim: [], resolved: "none" },
+    ...[0, -7, 9007199254740993, "7"].map(pid => ({ live: [{ pid, startedAt: firstBirth }], cim: [], resolved: [] })),
+    ...[0, -7, 9007199254740993, "7"].map(pid => ({ live: [identity(7)], cim: [{ pid, startedAt: firstBirth, line: "" }], resolved: [] })),
+    { live: [identity(7)], cim: [{ pid: 7, line: "" }], resolved: [] },
+    { live: [identity(7)], cim: [null], resolved: [] },
+    { live: [identity(7)], cim: [], resolved: [{ ...identity(7), status: "missing" }] },
+    { live: [identity(7)], cim: [], resolved: [{ ...identity(7), status: "live" }] },
+    { live: [identity(7), identity(7, secondBirth)], cim: [], resolved: [] },
+    { live: [identity(7)], cim: [argv(7, ""), argv(7, "different")], resolved: [] },
+    { live: [identity(7)], cim: [], resolved: [{ ...argv(7, ""), status: "live" }, { ...identity(7), status: "exited" }] },
+  ].map(value => JSON.stringify(value))]) expect(parseLivenessSample(livenessProfile, livenessSample(sample))).toEqual(failed);
+  expect(parseLivenessSample(livenessProfile, livenessSample("", 1))).toEqual(failed);
 });
 
 test("owned readonly fixture teardown unlinks both junctions without touching external target", async () => {
@@ -188,7 +224,7 @@ async function packageFixture(root: string, entries?: Record<string, string>) {
 test("stage verifies native manager in disposable profile without activation", () => fixture(async root => {
   const fixed = await packageFixture(root);
   const receipt = await runUpdate({ ...options(root), pin: fixed });
-  expect(receipt.phase).toBe("staged");
+  expect(receipt.phase, JSON.stringify(receipt)).toBe("staged");
   expect(receipt.smokePassed).toBe(true);
   expect(JSON.parse(await readFile(join(root, "stage", "package", "package.json"), "utf8")).version).toBe("0.2.1");
 }), 60_000);
@@ -224,7 +260,7 @@ test("accepted activation installs durable version in disposable profile", () =>
     expect(receipt.phase).toBe("safe-pending");
     expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
     expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
-    const listed = Bun.spawnSync([executable, "--profile", targetProfile, "plugin", "list", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const listed = Bun.spawnSync([executable, "--profile", targetProfile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
     expect(listed.exitCode).toBe(0);
     expect(JSON.parse(listed.stdout.toString()).npm).toEqual([]);
     console.log("activation boundary: safe-pending; non-Windows liveness unsupported; native target unchanged");
@@ -233,14 +269,15 @@ test("accepted activation installs durable version in disposable profile", () =>
   expect(receipt.phase).toBe("activated");
   const activated = JSON.parse(await readFile(join(root, "activation.json"), "utf8"));
   expect(activated.profile).toBe(targetProfile);
-  const child = Bun.spawn([executable, "--profile", activated.profile, "plugin", "list", "--json"], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([executable, "--profile", activated.profile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
   const listing = JSON.parse(await new Response(child.stdout).text());
   expect(await child.exited).toBe(0);
   const plugin = listing.npm.find((entry: { name: string }) => entry.name === "omp-settings-ru");
   expect(plugin.version).toBe("0.2.1");
-  expect(activated.target.startsWith(tmpdir())).toBe(false);
+  expect(activated.target.startsWith(join(root, "home"))).toBe(true);
+  expect(activated.target.startsWith(join(root, "temp"))).toBe(false);
   expect(JSON.parse(await readFile(join(activated.target, "package.json"), "utf8")).version).toBe("0.2.1");
-  console.log("activation verdict: activated; native list version: " + plugin.version + "; durable target: outside temp");
+  console.log("activation verdict: activated; native list version: " + plugin.version + "; durable target: isolated home outside process temp");
 }), 120_000);
 
 test("archive traversal refuses before extraction", () => fixture(async root => {
@@ -298,16 +335,16 @@ async function installedFixture(root: string) {
   const target = join(root, "old-package");
   await mkdir(join(target, "src"), { recursive: true });
   for (const [file, text] of Object.entries(oldEntries)) await writeFile(join(target, file.slice(8)), text);
-  const child = Bun.spawn([executable, "--profile", profile, "plugin", "link", target, "--json"], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([executable, "--profile", profile, "plugin", "link", target, "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
   await new Response(child.stdout).text();
   expect(await child.exited).toBe(0);
   const sibling = join(root, "sibling");
   await mkdir(sibling);
   await writeFile(join(sibling, "package.json"), JSON.stringify({ name: "sibling-proof", version: "1.0.0", omp: {} }));
-  const siblingInstall = Bun.spawn([executable, "--profile", profile, "plugin", "link", sibling, "--json"], { stdout: "pipe", stderr: "pipe" });
+  const siblingInstall = Bun.spawn([executable, "--profile", profile, "plugin", "link", sibling, "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
   await new Response(siblingInstall.stdout).text();
   expect(await siblingInstall.exited).toBe(0);
-  const helper = Bun.spawn([process.execPath, "-e", 'import {getPluginsLockfile} from "@oh-my-pi/pi-utils/dirs"; console.log(getPluginsLockfile());'], { env: { ...process.env, OMP_PROFILE: profile, PI_CODING_AGENT_DIR: "" }, stdout: "pipe", stderr: "pipe" });
+  const helper = Bun.spawn([process.execPath, "-e", 'import {getPluginsLockfile} from "@oh-my-pi/pi-utils/dirs"; console.log(getPluginsLockfile());'], { env: { ...ownedEnvironment(root), OMP_PROFILE: profile }, stdout: "pipe", stderr: "pipe" });
   const registry = (await new Response(helper.stdout).text()).trim();
   expect(await helper.exited).toBe(0);
   const config = JSON.parse(await readFile(registry, "utf8"));
@@ -383,7 +420,7 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   expect(await readFile(receiptPath)).toEqual(activatedBytes);
   expect(await readFile(lock, "utf8")).toBe(JSON.stringify({ pid: process.pid }));
   // A genuinely active session on the target profile must not re-open the activation path either.
-  const child = Bun.spawn([executable, "--profile", old.profile, "--mode", "rpc", "--no-session", "--no-tools", "--no-skills", "--no-rules", "--no-title", "--model", "openai/gpt-4o", "--cwd", root], { env: ownedEnvironment(), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([executable, "--profile", old.profile, "--mode", "rpc", "--no-session", "--no-tools", "--no-skills", "--no-rules", "--no-title", "--model", "openai/gpt-4o", "--cwd", root], { env: ownedEnvironment(root), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   try {
     child.stdin.write('{"id":"ready","type":"get_state"}\n');
     const reader = child.stdout.getReader();
@@ -507,7 +544,7 @@ test("held before-session lease defers activation without touching registry", ()
 test("matching active target process defers with unchanged previous registry", () => fixture(async root => {
   const old = await installedFixture(root);
   const fixed = await packageFixture(root);
-  const env = ownedEnvironment();
+  const env = ownedEnvironment(root);
   const child = Bun.spawn([executable, "--profile", old.profile, "--mode", "rpc", "--no-session", "--no-tools", "--no-skills", "--no-rules", "--no-title", "--model", "openai/gpt-4o", "--cwd", root], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   try {
     child.stdin.write('{"id":"ready","type":"get_state"}\n');
@@ -534,7 +571,7 @@ test("matching active target process defers with unchanged previous registry", (
       return;
     }
     expect(resumed.phase).toBe("activated");
-    const installed = Bun.spawn([executable, "--profile", old.profile, "plugin", "list", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const installed = Bun.spawn([executable, "--profile", old.profile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
     const listing = JSON.parse(await new Response(installed.stdout).text());
     expect(await installed.exited).toBe(0);
     expect(listing.npm.find((p: { name: string }) => p.name === "omp-settings-ru").version).toBe("0.2.1");

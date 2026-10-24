@@ -1,7 +1,7 @@
 {
   "name": "omp-settings-ru",
-  "version": "0.5.0",
-  "description": "Русский перевод панели /settings в Oh My Pi — расширение OMP с двумя каналами установки",
+  "version": "0.6.0",
+  "description": "Русский перевод панели /settings в Oh My Pi — расширение OMP для marketplace-установки",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -34,8 +34,7 @@
     "marketplace:promote": "bun scripts/marketplace-index.ts",
     "matrix:check": "bun scripts/check-matrix.ts",
     "maintenance": "bun scripts/maintenance.ts",
-    "maintenance:controller": "bun scripts/maintenance-controller.ts",
-    "maintenance:acceptance": "bun scripts/maintenance-acceptance-smoke.ts",
+    "maintenance:actions": "bun scripts/maintenance-actions.ts",
     "release:check": "bun scripts/check-release.ts",
     "check": "bun run typecheck && bun test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check"
   },

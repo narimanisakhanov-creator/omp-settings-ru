@@ -221,8 +221,8 @@ export function decideMarketplaceIndexPublish(current: IndexPluginIdentity | nul
  * `marketplace.json` asset digest of the release, so a local file cannot be accepted as
  * the served catalog unless it is byte-identical to the uploaded asset.
  */
-export async function loadVerifiedCatalog(tag: string, runId: string, catalogPath?: string, repository = REPOSITORY): Promise<{catalog: MarketplaceCatalog; release: ReleaseEvidence}> {
-  const release = await releaseEvidence(tag, runId, repository);
+export async function loadVerifiedCatalog(tag: string, runId: string, catalogPath?: string, repository = REPOSITORY, token?: string): Promise<{catalog: MarketplaceCatalog; release: ReleaseEvidence}> {
+  const release = await releaseEvidence(tag, runId, repository, token);
   if (catalogPath !== undefined) {
     const bytes = new Uint8Array(await Bun.file(catalogPath).arrayBuffer());
     const asset = release.assets.find(candidate => candidate.name === CATALOG_ASSET);
@@ -252,9 +252,22 @@ export function selectRelease(rows: unknown, tag: string): unknown {
   return found;
 }
 
-/** The release payload for a tag, drafts included. */
+/**
+ * The release payload for a tag, drafts included.
+ *
+ * Drafts are invisible on the tag route, so the listing is the lookup. It is paginated
+ * because a repository with more than one page of releases must still find an older tag
+ * instead of reporting it as missing.
+ */
 export function findRelease(tag: string, repository = REPOSITORY): unknown {
-  return selectRelease(JSON.parse(runGh([`repos/${repository}/releases?per_page=100`])) as unknown, tag);
+  for (let page = 1; page <= 10; page += 1) {
+    const rows = JSON.parse(runGh([`repos/${repository}/releases?per_page=100&page=${page}`])) as unknown;
+    if (!Array.isArray(rows)) throw new Error("marketplace-releases-unreadable");
+    const found = rows.find(row => readField(row, "tag_name") === tag);
+    if (found !== undefined) return found;
+    if (rows.length < 100) break;
+  }
+  throw new Error("marketplace-release-not-found");
 }
 
 /**
@@ -263,8 +276,8 @@ export function findRelease(tag: string, repository = REPOSITORY): unknown {
  * A draft release has no public download path, so `browser_download_url` cannot be used
  * before promotion; the asset API with an octet-stream Accept header is the only route.
  */
-export async function downloadReleaseAsset(repository: string, assetId: number): Promise<Uint8Array> {
-  const result = Bun.spawnSync(["gh", "api", `repos/${repository}/releases/assets/${assetId}`, "-H", "Accept: application/octet-stream"], {stdout: "pipe", stderr: "pipe", timeout: 180_000});
+export async function downloadReleaseAsset(repository: string, assetId: number, token?: string): Promise<Uint8Array> {
+  const result = Bun.spawnSync(["gh", "api", `repos/${repository}/releases/assets/${assetId}`, "-H", "Accept: application/octet-stream"], {env: token ? {...process.env, GH_TOKEN: token} : process.env, stdout: "pipe", stderr: "pipe", timeout: 180_000});
   if (result.exitCode !== 0) throw new Error(`marketplace-asset-download-failed:${result.stderr.toString().trim()}`);
   return new Uint8Array(result.stdout);
 }
@@ -393,16 +406,16 @@ export async function draftCatalogEvidence(tag: string, runId: string, repositor
  * stays honest instead of silently accepting an unknown channel. A catalog asset that exists
  * but cannot be parsed is a malformed channel and refuses here rather than being ignored.
  */
-export async function servedChannelIdentity(repository = REPOSITORY): Promise<IndexPluginIdentity | null> {
-  const listed = Bun.spawnSync(["gh", "api", `repos/${repository}/releases/latest`], {stdout: "pipe", stderr: "pipe", timeout: 30_000});
+export async function servedChannelIdentity(repository = REPOSITORY, token?: string): Promise<IndexPluginIdentity | null> {
+  const listed = Bun.spawnSync(["gh", "api", `repos/${repository}/releases/latest`], {env: token ? {...process.env, GH_TOKEN: token} : process.env, stdout: "pipe", stderr: "pipe", timeout: 30_000});
   if (listed.exitCode !== 0) {
     if (/HTTP 404/.test(listed.stderr.toString())) return null;
     throw new Error(`marketplace-served-release-unavailable:${listed.stderr.toString().trim()}`);
   }
   const release = readRelease(JSON.parse(listed.stdout.toString()) as unknown, repository);
   const catalogAsset = release.assets.find(asset => asset.name === CATALOG_ASSET);
-  if (!catalogAsset) return {version: release.tag.slice(1), sha: tagCommit(repository, release.tag)};
-  const bytes = await downloadReleaseAsset(repository, catalogAsset.id);
+  if (!catalogAsset) return {version: release.tag.slice(1), sha: tagCommit(repository, release.tag, token)};
+  const bytes = await downloadReleaseAsset(repository, catalogAsset.id, token);
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(bytes));
@@ -423,20 +436,20 @@ function arg(args: string[], name: string): string {
   return value;
 }
 
-export function runGh(args: string[]): string {
-  const result = Bun.spawnSync(["gh", "api", ...args], { stdout: "pipe", stderr: "pipe", timeout: 30000 });
+export function runGh(args: string[], token?: string): string {
+  const result = Bun.spawnSync(["gh", "api", ...args], { env: token ? {...process.env, GH_TOKEN: token} : process.env, stdout: "pipe", stderr: "pipe", timeout: 30000 });
   if (result.exitCode !== 0) throw new Error(`marketplace-github-api-failed:${result.stderr.toString().trim()}`);
   return result.stdout.toString();
 }
 
-export function tagCommit(repository: string, tag: string): string {
-  const ref = JSON.parse(runGh([`repos/${repository}/git/ref/tags/${tag}`])) as unknown;
+export function tagCommit(repository: string, tag: string, token?: string): string {
+  const ref = JSON.parse(runGh([`repos/${repository}/git/ref/tags/${tag}`], token)) as unknown;
   const object = readField(ref, "object");
   const sha = readField(object, "sha");
   const type = readField(object, "type");
   if (type === "commit" && typeof sha === "string" && SHA.test(sha)) return sha;
   if (type !== "tag" || typeof sha !== "string" || !SHA.test(sha)) throw new Error("marketplace-tag-target-invalid");
-  const tagObject = JSON.parse(runGh([`repos/${repository}/git/tags/${sha}`])) as unknown;
+  const tagObject = JSON.parse(runGh([`repos/${repository}/git/tags/${sha}`], token)) as unknown;
   const target = readField(tagObject, "object");
   const targetSha = readField(target, "sha");
   if (readField(target, "type") !== "commit" || typeof targetSha !== "string" || !SHA.test(targetSha)) throw new Error("marketplace-annotated-tag-target-invalid");
@@ -449,10 +462,10 @@ async function download(url: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-async function releaseEvidence(tag: string, runId: string, repository: string): Promise<ReleaseEvidence> {
+async function releaseEvidence(tag: string, runId: string, repository: string, token?: string): Promise<ReleaseEvidence> {
   if (!/^v\d+\.\d+\.\d+$/.test(tag) || !/^\d+$/.test(runId)) throw new Error("marketplace-release-reference-invalid");
-  const raw = JSON.parse(runGh([`repos/${repository}/releases/tags/${tag}`])) as unknown;
-  const checks = JSON.parse(runGh([`repos/${repository}/actions/runs/${runId}`])) as unknown;
+  const raw = JSON.parse(runGh([`repos/${repository}/releases/tags/${tag}`], token)) as unknown;
+  const checks = JSON.parse(runGh([`repos/${repository}/actions/runs/${runId}`], token)) as unknown;
   if (readField(raw, "tag_name") !== tag || readField(raw, "draft") !== false || readField(raw, "prerelease") !== false || typeof readField(raw, "published_at") !== "string") throw new Error("marketplace-release-not-published");
   const rawAssets = readField(raw, "assets");
   const assets = Array.isArray(rawAssets) ? rawAssets.flatMap(asset => {
@@ -462,7 +475,7 @@ async function releaseEvidence(tag: string, runId: string, repository: string): 
     if (typeof name !== "string" || typeof url !== "string") return [];
     return [{ name, digest: typeof digest === "string" ? digest : null, browserDownloadUrl: url }];
   }) : [];
-  const targetCommitSha = tagCommit(repository, tag);
+  const targetCommitSha = tagCommit(repository, tag, token);
   const checksHeadSha = readField(checks, "head_sha");
   const checksRepository = readField(checks, "repository");
   const checksPassed = readField(checks, "status") === "completed" && readField(checks, "conclusion") === "success" && readField(checks, "path") === ".github/workflows/check.yml" && readField(checksRepository, "full_name") === repository && checksHeadSha === targetCommitSha;

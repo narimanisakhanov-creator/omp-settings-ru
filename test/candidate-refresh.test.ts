@@ -1,12 +1,15 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, cp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, cp, mkdir, readFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { SNAPSHOT_DIR } from "../scripts/maintenance/paths";
 
 test("candidate refresh preserves tested peer range and historical baseline lineage", async()=>{
  const directory=await mkdtemp(join(tmpdir(),"omp-upgrade-domain-"));
  try {
-  for(const path of ["src","scripts","baseline","package.json","bun.lock","tsconfig.json"])await cp(path,join(directory,path),{recursive:true});
+  for(const path of ["src","scripts","package.json","bun.lock","tsconfig.json"])await cp(path,join(directory,path),{recursive:true});
+  await mkdir(join(directory, SNAPSHOT_DIR), {recursive:true});
+  await cp(SNAPSHOT_DIR,join(directory,SNAPSHOT_DIR),{recursive:true});
   await symlink(join(process.cwd(),"node_modules"),join(directory,"node_modules"),process.platform==="win32"?"junction":"dir");
   const before=JSON.parse(await readFile(join(directory,"package.json"),"utf8"));
   // Refresh to the version already pinned, so the proof follows each host bump instead of one literal.

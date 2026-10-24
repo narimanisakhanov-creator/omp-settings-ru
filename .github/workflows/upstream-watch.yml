@@ -5,107 +5,176 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: OMP version to inspect
+        description: Exact stable OMP version (optional)
         required: false
         type: string
-permissions:
-  contents: read
+permissions: {}
 concurrency:
   group: upstream-watch
   cancel-in-progress: false
 jobs:
-  inspect:
+  discover:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      mode: ${{ steps.discover.outputs.mode }}
+      version: ${{ steps.discover.outputs.version }}
+      base: ${{ steps.discover.outputs.base }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
-      - id: version
+      - id: discover
         env:
-          REQUESTED_VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$REQUESTED_VERSION"
-          if [ -z "$version" ]; then
-            version=$(curl -fsSL https://registry.npmjs.org/@oh-my-pi%2Fpi-coding-agent | jq -er '."dist-tags".latest')
-          fi
-          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-          if [[ ! "$version" =~ $semver ]]; then
-            echo "Invalid upstream version: $version" >&2
-            exit 1
-          fi
-          pinned=$(jq -r '.devDependencies["@oh-my-pi/pi-coding-agent"]' package.json)
-          if [ "$version" = "$pinned" ]; then
-            printf 'mode=skip\n' >> "$GITHUB_OUTPUT"
-            printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-            echo "Already pinned at $pinned"
-            exit 0
-          fi
-          printf 'mode=new\n' >> "$GITHUB_OUTPUT"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-      # Inspection only. This workflow deliberately creates no branch and opens no pull
-      # request: the repository keeps exactly one public branch, so an upgrade candidate is
-      # reported as a run artifact that a maintainer applies by hand.
-      - if: steps.version.outputs.mode == 'new'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun install --ignore-scripts
-          bun scripts/upgrade-host.ts "$VERSION"
-          output_file=$(mktemp)
-          set +e
-          GITHUB_OUTPUT="$output_file" bun scripts/ci/prepare-host.ts "$VERSION" linux > host-prepare-output.txt 2>&1
-          prepare_status=$?
-          set -e
-          if [ "$prepare_status" -eq 0 ]; then
-            executable=$(sed -n 's/^executable=//p' "$output_file")
-            set +e
-            OMP_UPDATER_EXECUTABLE="$executable" OMP_UPDATER_HOST_VERSION="$VERSION" bun run check > check-output.txt 2>&1
-            status=$?
-            set -e
-          else
-            cat host-prepare-output.txt > check-output.txt
-            printf '\nNative updater host bootstrap failed (exit %s); full check was not run.\n' "$prepare_status" >> check-output.txt
-            status=$prepare_status
-          fi
-          rm -f "$output_file"
-          echo "check exit status: $status" >> check-output.txt
-          if [ "$status" -ne 0 ]; then echo "::warning::candidate check exited $status; review the attached artifacts; this report does not claim native/full check success"; fi
-      - if: steps.version.outputs.mode == 'new'
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: bun scripts/maintenance-actions.ts discover
+  prepare:
+    needs: discover
+    if: needs.discover.outputs.mode == 'prepare'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.discover.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - env:
+          VERSION: ${{ needs.discover.outputs.version }}
+          BASE: ${{ needs.discover.outputs.base }}
+        run: bun scripts/maintenance-actions.ts prepare --version "$VERSION" --base "$BASE" --output "$RUNNER_TEMP/prepared"
+      - id: upload
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
-          name: upgrade-candidate-${{ steps.version.outputs.version }}
-          path: |
-            host-prepare-output.txt
-            package.json
-            bun.lock
-            baseline/${{ steps.version.outputs.version }}-linux.json
-            upgrade-report.md
-            check-output.txt
-      - if: steps.version.outputs.mode == 'new'
+          name: prepared-${{ needs.discover.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          retention-days: 7
+  translate:
+    needs: [discover, prepare]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.discover.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact }}
+          path: ${{ runner.temp }}/prepared
+      - env:
+          MAINTENANCE_API_KEY: ${{ secrets.MAINTENANCE_API_KEY }}
+          MAINTENANCE_BASE_URL: ${{ vars.MAINTENANCE_BASE_URL }}
+          MAINTENANCE_MODEL: ${{ vars.MAINTENANCE_MODEL }}
+          MAINTENANCE_BASE_SHA: ${{ needs.discover.outputs.base }}
+        run: bun scripts/maintenance-actions.ts translate --bundle "$RUNNER_TEMP/prepared"
+      - id: upload
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: translated-${{ needs.discover.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          retention-days: 7
+      - if: failure()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: blocked-translation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: warn
+          retention-days: 7
+  verify:
+    needs: [discover, translate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.discover.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.translate.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate
+      - env:
+          GIT_AUTHOR_NAME: omp maintenance
+          GIT_AUTHOR_EMAIL: maintenance@users.noreply.github.com
+          GIT_COMMITTER_NAME: omp maintenance
+          GIT_COMMITTER_EMAIL: maintenance@users.noreply.github.com
+        run: bun scripts/maintenance-actions.ts verify --bundle "$RUNNER_TEMP/candidate"
+      - id: upload
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: maintenance-${{ needs.discover.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
+          if-no-files-found: error
+          retention-days: 90
+      - if: failure()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: blocked-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
+          if-no-files-found: warn
+          retention-days: 7
+  publish:
+    needs: [discover, verify]
+    if: always() && needs.discover.result == 'success' && (needs.discover.outputs.mode == 'resume' || (needs.discover.outputs.mode == 'prepare' && needs.verify.result == 'success'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - if: needs.discover.outputs.mode == 'prepare'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate
+      - if: needs.discover.outputs.mode == 'prepare'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-        shell: bash
-        run: |
-          {
-            echo "## OMP $VERSION candidate"
-            echo
-            echo "This run only inspected the candidate; it created no branch and no pull request."
-            echo
-            echo "Apply by hand: \`bun scripts/upgrade-host.ts $VERSION\`, refresh the platform baselines, review the changed source variants, then commit on \`main\` and tag the next release."
-            echo
-            echo "### upgrade report"
-            echo
-            cat upgrade-report.md
-            echo
-            echo "### check output (tail)"
-            echo
-            tail -n 80 check-output.txt
-          } >> "$GITHUB_STEP_SUMMARY"
+          MAINTENANCE_GH_TOKEN: ${{ secrets.MAINTENANCE_GH_TOKEN }}
+          MAINTENANCE_ARTIFACT_ID: ${{ needs.verify.outputs.artifact }}
+        run: bun scripts/maintenance-actions.ts publish-candidate --bundle "$RUNNER_TEMP/candidate"
+      - env:
+          MAINTENANCE_GH_TOKEN: ${{ secrets.MAINTENANCE_GH_TOKEN }}
+          VERSION: ${{ needs.discover.outputs.version }}
+        run: bun scripts/maintenance-actions.ts finalize --version "$VERSION"

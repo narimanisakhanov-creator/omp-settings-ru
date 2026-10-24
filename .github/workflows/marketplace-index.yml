@@ -1,89 +1,162 @@
 name: marketplace-index
 on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
         description: Draft release tag (vX.Y.Z) to promote
         required: true
         type: string
-  workflow_run:
-    workflows: [release]
-    types: [completed]
 permissions:
-  contents: write
-  actions: read
+  contents: read
 concurrency:
   group: marketplace-index
   cancel-in-progress: false
 jobs:
-  publish:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+  # Read-only proof. It resolves the successful release run for the exact tag commit,
+  # downloads and re-hashes every draft asset, prepares the native host for the tag's own
+  # package version, and exercises the draft catalog through the real distribution smoke.
+  # Only a sealed receipt produced after that smoke may leave this job.
+  prepublish:
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-name: ${{ steps.artifact.outputs.name }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: 1.4.2
-      # The draft release already carries its catalog; this job proves it, then promotes it.
-      # The publisher waits for the tag-commit check run instead of querying once, re-downloads
-      # every draft asset through the authenticated API, and refuses a downgrade or a conflict.
-      - name: Promote the verified draft release
+      - name: Resolve and validate the release tag
+        id: tag
+        shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           DISPATCH_TAG: ${{ inputs.tag }}
           RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
-        shell: bash
         run: |
           set -euo pipefail
           tag="${DISPATCH_TAG:-$RELEASE_TAG}"
-          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          if ! printf '%s' "$tag" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
             echo "Invalid release tag: $tag" >&2
             exit 1
           fi
-          bun scripts/marketplace-index.ts --tag "$tag" --timeout-ms 1800000
-      - name: Resolve promoted release
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DISPATCH_TAG: ${{ inputs.tag }}
-          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${DISPATCH_TAG:-$RELEASE_TAG}"
-          sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha')
-          type=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.type')
-          if [ "$type" = "tag" ]; then sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${sha}" --jq '.object.sha'); fi
-          check_run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${sha}&per_page=100" \
-            --jq "[.workflow_runs[] | select(.path == \".github/workflows/check.yml\" and .conclusion == \"success\")] | sort_by(.id) | last | .id // empty")
-          if [ -z "${check_run}" ]; then
-            echo "No successful check run for ${sha}" >&2
-            exit 1
-          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "check_run=$check_run" >> "$GITHUB_OUTPUT"
-      # The exercised native host is the same reviewed pin the release itself ran with.
-      - name: Resolve reviewed native host version
-        id: host-version
-        shell: bash
-        run: echo "version=$(bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).devDependencies["@oh-my-pi/pi-coding-agent"])')" >> "$GITHUB_OUTPUT"
-      - name: Prove the promoted release and validate the served catalog asset
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      # Proves the successful release run, the dereferenced tag commit, the exact check run
+      # and every asset digest. Nothing is promoted here; there is no write token.
+      - name: Prove the draft release against the exact tag commit
+        id: prepublish
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          CHECK_RUN: ${{ steps.release.outputs.check_run }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
         run: |
           set -euo pipefail
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern marketplace.json --dir "$RUNNER_TEMP"
-          bun scripts/marketplace-catalog.ts --validate --tag "$RELEASE_TAG" --check-run "$CHECK_RUN" --catalog "$RUNNER_TEMP/marketplace.json"
-      - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Prepare native host
+          bun scripts/release-actions.ts prepublish \
+            --tag "$TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --checkout "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/prepublish" \
+            --timeout-ms 1800000
+      # The host version is read from the tag commit's package.json, never from moving main.
+      - name: Prepare the exact native host
         id: native-host
         env:
           GH_TOKEN: ${{ github.token }}
-          HOST_VERSION: ${{ steps.host-version.outputs.version }}
+          HOST_VERSION: ${{ steps.prepublish.outputs.host-version }}
         run: bun scripts/ci/prepare-host.ts "$HOST_VERSION" linux
-      - name: Exercise the promoted release through both native channels
-        run: bun scripts/distribution-smoke.ts --executable "${{ steps.native-host.outputs.executable }}" --catalog "$RUNNER_TEMP/marketplace.json"
+      # The draft catalog points at the already public tag/commit, so the real release can be
+      # installed before latest is moved. A failure blocks promotion.
+      - name: Exercise the draft catalog through the native distribution smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/distribution-smoke.ts \
+            --executable "${{ steps.native-host.outputs.executable }}" \
+            --catalog "${{ steps.prepublish.outputs.catalog }}" \
+            | tee "$RUNNER_TEMP/prepublish/smoke.json"
+      # The receipt is written only after the smoke step succeeded and only for the exact
+      # catalog bytes that were proven above.
+      - name: Seal the prepublication receipt
+        shell: bash
+        run: bun scripts/release-actions.ts seal --dir "$RUNNER_TEMP/prepublish" --smoke-json "$RUNNER_TEMP/prepublish/smoke.json"
+      # A rerun of only the promote job keeps this name; the artifact is never re-addressed
+      # by the rerun's incremented attempt.
+      - id: artifact
+        shell: bash
+        run: echo "name=prepublish-${{ steps.tag.outputs.tag }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/prepublish/receipt.json
+          if-no-files-found: error
+          retention-days: 7
+  # Privileged promotion on a fresh runner. It executes only trusted-main scripts, verifies
+  # the prepublish artifact by immutable id and run origin, then calls the existing
+  # marketplace-index publisher. No host, candidate or release code runs in this job.
+  promote:
+    needs: prepublish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepublish.outputs.artifact-id }}
+          path: ${{ runner.temp }}/prepublish
+      - name: Verify provenance and the sealed artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepublish.outputs.tag }}
+          ARTIFACT_ID: ${{ needs.prepublish.outputs.artifact-id }}
+          ARTIFACT_NAME: ${{ needs.prepublish.outputs.artifact-name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/release-actions.ts verify-promotion \
+            --tag "$TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --receipt "$RUNNER_TEMP/prepublish/receipt.json" \
+            --artifact-id "$ARTIFACT_ID" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --checkout "$GITHUB_WORKSPACE"
+      # The only publisher. It re-downloads and re-hashes every draft asset itself, so the
+      # verification above cannot substitute a local file for the uploaded bytes.
+      - name: Promote the verified draft through the existing publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepublish.outputs.tag }}
+        run: bun scripts/marketplace-index.ts --tag "$TAG" --timeout-ms 1800000
+      # A successful promote is not the proof: the public latest channel must serve exactly
+      # this tag's catalog bytes.
+      - name: Prove the served latest catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepublish.outputs.tag }}
+        run: bun scripts/release-actions.ts prove-served --tag "$TAG" --repository "$GITHUB_REPOSITORY"

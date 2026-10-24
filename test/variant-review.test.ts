@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { ru } from "../src/translations/ru";
 import manifest from "../src/translations/variant-review.json";
 import { verifyVariantReviews } from "../scripts/verify-variant-reviews";
+import { translationFieldsHash } from "../scripts/maintenance/catalog";
 
 test("rejects appended source variant retaining stale translation bytes", () => {
   const setting = ru.settings["title.icons"]!;
@@ -45,5 +46,16 @@ test("requires independent title review even if candidate removes observed host 
   const setting = ru.settings["title.icons"]!;
   const pack = {...ru, settings: {...ru.settings, "title.icons": {variants: setting.variants.map(variant =>
     variant.sourceHash === row.sourceHash ? {...variant, observedIn: []} : variant)}}};
-  expect(verifyVariantReviews(pack, review)).toContain("independent-review-missing:title.icons");
+  expect(verifyVariantReviews(pack, review)).toContain("catalog-invalid");
+});
+
+test("new source identities require exact run proof rather than historical review labels",()=>{
+  const original=ru.settings.autoResume!.variants[0]!;
+  const variant={...original,sourceHash:"e".repeat(64),observedIn:["99.0.0"]};
+  const pack={...ru,settings:{...ru.settings,autoResume:{variants:[original,variant]}}};
+  const historical=manifest.variants.find(row=>row.path==="composer.tokenRate")!;
+  const row={...historical,path:"autoResume",sourceHash:variant.sourceHash,translationHash:translationFieldsHash(variant),platforms:[...variant.platforms],observedIn:["99.0.0"],review:"independently-confirmed",comparison:"Exact source and translation compared",reviewTask:"123:2",evidence:"a".repeat(64),reviewedAtVersion:"99.0.0"};
+  expect(verifyVariantReviews(pack,{...manifest,variants:[...manifest.variants,row]})).toEqual([]);
+  expect(verifyVariantReviews(pack,{...manifest,variants:[...manifest.variants,{...row,evidence:"path/to/file"}]})).toContain("independent-review-missing:autoResume");
+  expect(verifyVariantReviews(pack,{...manifest,variants:[...manifest.variants,{...row,reviewTask:"old-task"}]})).toContain("independent-review-missing:autoResume");
 });

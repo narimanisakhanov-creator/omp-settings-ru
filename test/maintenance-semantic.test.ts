@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  catalogFromSource, changedCatalogRequirements, claimedVersions, collectSemanticEvidence, identitiesOf,
+  catalogEntries, changedCatalogRequirements, claimedVersions, collectSemanticEvidence, identitiesOf,
   markerPairsOf, markers, measurementChanges, missingMarkers, packageChanges, readCatalog, readCatalogAtCommit,
-  translationHash, validateSemantic, type CatalogEntry, type SemanticEvidence,
+  translationHash, translationIdentitiesOf, validateSemantic, type CatalogEntry, type SemanticEvidence,
 } from "../scripts/maintenance/semantic";
-import { ACCEPTANCE_SCENARIO_FILES } from "../scripts/maintenance/acceptance-scenarios";
+import { parseCatalogJSON } from "../scripts/maintenance/catalog";
+import { SNAPSHOT_DIR, SUPPORTED_HOSTS, snapshotPath } from "../scripts/maintenance/paths";
+import type { BaselineSnapshot } from "../src/report";
+import { fixtureGit } from "./maintenance-runtime-fixture";
 import { validatePolicy } from "../scripts/maintenance/policy";
 import rawPolicy from "../maintenance.config.json";
 import { semanticRuntimeFixture } from "./maintenance-runtime-fixture";
@@ -16,36 +20,25 @@ import { parseLock } from "../scripts/maintenance/measurement-environment";
 const policy = validatePolicy(rawPolicy);
 const VERSIONS = ["18.6.1", "18.8.0", "18.8.4", "18.8.7"] as const;
 const CANDIDATE = "18.8.9";
-const T = "src/translations/ru-part-1.ts";
+const T = "src/translations/ru-catalog.json";
 /** Пути, разрешённые политикой и не являющиеся файлами перевода: строки ревью они не требуют. */
-const PLAIN_PATHS = ["package.json", "baseline/supported-hosts.json"] as const;
+const PLAIN_PATHS = ["package.json", SUPPORTED_HOSTS] as const;
 
-/** Настоящая форма каталога: `Record<путь настройки, SettingTranslationFields>` с sourceHash из метаданных хоста. */
-const CATALOG = `import type { SettingTranslationFields } from "./types";
-export const ruPart1: Readonly<Record<string, SettingTranslationFields>> = {
-  "theme.dark": {
-    sourceHash: "e14e408d3c42b38c7ccd2cdf7f9eead7e708b0662589c657f390577406358f19",
-    label: "Тёмная тема",
-    description: "Тема, используемая когда фон терминала тёмный",
-  },
-  "spelling.autocomplete": {
-    sourceHash: "d84b17e49e184329c94a1eac34ba67d51fcbb4452d4e55c3328a1031c318168f",
-    label: "Автодополнение",
-    descriptionSource: "Suggest words from the {dictionary} as you type",
-    description: "Подсказывать слова из {dictionary} при вводе",
-    options: {
-      system: { label: "Системный", description: "Словарь системы" },
-      apple: { label: "Apple", description: "Словарь macOS" },
-    },
-  },
-};
-`;
+const CATALOG = JSON.stringify({locale:"ru",settings:{
+  "theme.dark":{variants:[{sourceHash:"e14e408d3c42b38c7ccd2cdf7f9eead7e708b0662589c657f390577406358f19",label:"Тёмная тема",description:"Тема, используемая когда фон терминала тёмный",platforms:["win32"],observedIn:["18.8.7"]}]},
+  "spelling.autocomplete":{variants:[{sourceHash:"d84b17e49e184329c94a1eac34ba67d51fcbb4452d4e55c3328a1031c318168f",label:"Автодополнение",descriptionSource:"Suggest words from the {dictionary} as you type",description:"Подсказывать слова из {dictionary} при вводе",options:{system:{label:"Системный",description:"Словарь системы"},apple:{label:"Apple",description:"Словарь macOS"}},platforms:["darwin"],observedIn:["18.8.7"]}]},
+}});
+const entriesFromJSON = (text: string) => catalogEntries(parseCatalogJSON(text));
+const SOURCES = [{version:"18.8.7",platform:"win32",settings:{
+  "theme.dark":{sourceHash:entriesFromJSON(CATALOG).find(entry=>entry.path==="theme.dark")!.sourceHash,label:"Dark theme",description:"Theme when background is dark",warning:null,options:null},
+  "spelling.autocomplete":{sourceHash:entriesFromJSON(CATALOG).find(entry=>entry.path==="spelling.autocomplete")!.sourceHash,label:"Autocomplete",description:"Suggest words from the {dictionary} as you type",warning:null,options:[{value:"system",label:"System",description:"System dictionary"},{value:"apple",label:"Apple",description:"macOS dictionary"}]},
+}}] as unknown as BaselineSnapshot[];
 
 const VERSION_SET = [...VERSIONS, CANDIDATE];
 const PLATFORMS = ["win32", "linux", "darwin"] as const;
 
 function evidence(overrides: Partial<SemanticEvidence> = {}): SemanticEvidence {
-  const entries = catalogFromSource(CATALOG);
+  const entries = entriesFromJSON(CATALOG);
   return {
     candidateVersion: CANDIDATE,
     supportedVersions: VERSIONS,
@@ -60,7 +53,8 @@ function evidence(overrides: Partial<SemanticEvidence> = {}): SemanticEvidence {
     changedPaths: [...PLAIN_PATHS],
     identities: identitiesOf(entries),
     identitiesBefore: identitiesOf(entries),
-    markerPairs: markerPairsOf(entries),
+    translationIdentities: translationIdentitiesOf(entries), translationIdentitiesBefore: translationIdentitiesOf(entries),
+    markerPairs: markerPairsOf(entries, SOURCES),
     ...overrides,
   };
 }
@@ -74,76 +68,60 @@ function reviewRow(entry: CatalogEntry, platforms: readonly string[] = ["win32"]
   return {
     path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash,
     reviewedAtVersion: CANDIDATE, platforms,
+    review: "independently-confirmed" as const, comparison: "Compared source and Russian", reviewTask: "123:1", evidence: REVIEW_SHA,
+  };
+}
+
+const REVIEW_BYTES = '{"verdict":"approved","comparison":"Точный перевод сопоставлен с источником"}\n';
+const REVIEW_SHA = createHash("sha256").update(REVIEW_BYTES, "utf8").digest("hex");
+function reviewProof(entries: readonly CatalogEntry[]) {
+  return {
+    runId: "123", runAttempt: "1",
+    artifacts: new Map(entries.map(entry => [`${entry.path}:${entry.sourceHash}`, { bytes: REVIEW_BYTES }])),
   };
 }
 
 describe("разбор реального каталога", () => {
-  test("читает sourceHash, label, description, descriptionSource и вложенные options", () => {
-    const entries = catalogFromSource(CATALOG);
-    expect(entries.map(entry => entry.path)).toEqual(["theme.dark", "spelling.autocomplete"]);
-    const spelling = entries.find(entry => entry.path === "spelling.autocomplete")!;
-    expect(spelling.sourceHash).toBe("d84b17e49e184329c94a1eac34ba67d51fcbb4452d4e55c3328a1031c318168f");
-    expect(spelling.descriptionSource).toBe("Suggest words from the {dictionary} as you type");
-    expect(Object.keys(spelling.options ?? {})).toEqual(["system", "apple"]);
+  test("читает строгие JSON variants и сохраняет порядок полей", () => {
+    const spelling = entriesFromJSON(CATALOG).find(entry=>entry.path==="spelling.autocomplete")!;
     expect(spelling.options?.apple?.description).toBe("Словарь macOS");
-    expect(spelling.translationHash).toBe(translationHash({
-      sourceHash: spelling.sourceHash, label: spelling.label, description: spelling.description,
-      descriptionSource: spelling.descriptionSource, warning: spelling.warning, options: spelling.options,
-    }));
+    expect(spelling.platforms).toEqual(["darwin"]);
+    expect(spelling.observedIn).toEqual(["18.8.7"]);
+    const {path:_path,translationHash:hash,...variant}=spelling;
+    expect(hash).toBe(translationHash(variant));
   });
-
-  test("код каталога не исполняется, а нелитеральные значения отклоняются", () => {
-    // Вызов в значении свойства — не литерал: разбор обязан отказать, а не исполнить код.
-    expect(() => catalogFromSource(`export const bad = { x: dangerous() };`)).toThrow("nonliteral-catalog");
-    expect(() => catalogFromSource(`export const bad = { a: { sourceHash: "${"a".repeat(64)}", label: \`T\` } };`))
-      .toThrow("nonliteral-catalog");
-    expect(() => catalogFromSource(`export const bad = { a: { sourceHash: "${"a".repeat(64)}", ...rest } };`))
-      .toThrow("nonliteral-catalog");
+  test("идентичность включает платформу и каждое наблюдение", () => {
+    const entries=entriesFromJSON(CATALOG);
+    expect(identitiesOf(entries)).toHaveLength(2);
+    expect(identitiesOf(entries).some(identity=>identity.endsWith(":darwin:18.8.7"))).toBe(true);
   });
-
-  test("файл каталога — только данные: посторонние утверждения уровня модуля отклоняются", () => {
-    const map = `export const ru = { a: { sourceHash: "${"a".repeat(64)}", label: "A" } };`;
-    // Значимый импорт выполнил бы код зависимости при импорте файла.
-    expect(() => catalogFromSource(`import "./side-effect";\n${map}`)).toThrow("catalog-module-side-effect:import");
-    expect(() => catalogFromSource(`import { helper } from "./util";\n${map}`)).toThrow("catalog-module-side-effect:import");
-    // Вызов, объявление функции и присваивание — исполняемый код, а не данные.
-    expect(() => catalogFromSource(`await Bun.write("x", "y");\n${map}`)).toThrow(/catalog-module-side-effect/);
-    expect(() => catalogFromSource(`function boot() {}\n${map}`)).toThrow(/catalog-module-side-effect/);
-    expect(() => catalogFromSource(`let counter = 0;\n${map}`)).toThrow("catalog-module-side-effect:variable");
-    // Type-импорт и единственная экспортируемая карта — допустимая форма данных.
-    const valid = `import type { SettingTranslationFields } from "./types";\n${map}\n`;
-    expect(catalogFromSource(valid).map(entry => entry.path)).toEqual(["a"]);
-    expect(() => catalogFromSource(`export const {ru = dangerous()} = {a: {sourceHash: "${"a".repeat(64)}", label:"A"}};`))
-      .toThrow("catalog-module-side-effect:binding");
+  test("источник обязателен для каждого sourceHash; все поля участвуют", () => {
+    const entries=entriesFromJSON(CATALOG);
+    expect(()=>markerPairsOf(entries,[])).toThrow("catalog-source-missing");
+    const pairs=markerPairsOf(entries,SOURCES);
+    expect(pairs.some(pair=>pair.field==="options.apple.description")).toBe(true);
+    expect(pairs.find(pair=>pair.path==="spelling.autocomplete"&&pair.field==="description")?.source).toBe("Suggest words from the {dictionary} as you type");
   });
-
-  test("запись без sourceHash в форме sha256 отклоняется, а не выбрасывается", () => {
-    // Молчаливый пропуск записи — потеря каталога: нераспознанная форма обязана отказать.
-    expect(() => catalogFromSource(`export const ru = { a: { sourceHash: "nope", label: "A" } };`))
-      .toThrow("invalid-source-hash:a");
-    expect(() => catalogFromSource(`export const ru = { a: { label: "A" } };`)).toThrow("invalid-source-hash:a");
-    expect(() => catalogFromSource(`export const ru = { a: "строка" };`)).toThrow("malformed-catalog-entry:a");
+  test("candidate descriptionSource cannot hide source placeholders",()=>{
+    const entries=entriesFromJSON(CATALOG).map(entry=>entry.descriptionSource?{...entry,descriptionSource:"forged",description:"forged"}:entry);
+    expect(()=>markerPairsOf(entries,SOURCES)).toThrow("catalog-description-source-mismatch");
   });
-
-  test("неизвестное динамическое выражение карты отклоняется", () => {
-    expect(() => catalogFromSource(`export const ru = loadCatalog();`)).toThrow("nonliteral-catalog");
-    expect(() => catalogFromSource(`export const ru = baseCatalog;`)).toThrow("nonliteral-catalog");
-    expect(() => catalogFromSource(`export const ru = { ...baseCatalog };`)).toThrow("nonliteral-catalog");
-  });
-
-  test("идентичности включают путь настройки, sourceHash и хеш перевода", () => {
-    const identities = identitiesOf(catalogFromSource(CATALOG));
-    expect(identities).toHaveLength(2);
-    expect(identities.some(identity => identity.startsWith("theme.dark:e14e408d"))).toBe(true);
-  });
-
-  test("пары маркеров берутся из descriptionSource, а не из произвольного текста", () => {
-    const pairs = markerPairsOf(catalogFromSource(CATALOG));
-    expect(pairs).toEqual([{
-      path: "spelling.autocomplete",
-      source: "Suggest words from the {dictionary} as you type",
-      ru: "Подсказывать слова из {dictionary} при вводе",
-    }]);
+  test("all effective runtime variants pair against accepted baseline display fields",async()=>{
+    const entries=await readCatalog(join(import.meta.dir,".."));
+    const snapshots:BaselineSnapshot[]=[];
+    for(const version of VERSIONS)for(const platform of PLATFORMS)snapshots.push(await Bun.file(join(import.meta.dir,"..",snapshotPath(version,platform))).json() as BaselineSnapshot);
+    const pairs=markerPairsOf(entries,snapshots);
+    expect(new Set(pairs.map(pair=>`${pair.path}:${pair.sourceHash}`)).size).toBe(424);
+    const mismatches=pairs.filter(pair=>markers(pair.source).join("\0")!==markers(pair.ru).join("\0"));
+    expect(mismatches.map(pair=>({path:pair.path,sourceHash:pair.sourceHash,field:pair.field}))).toEqual([
+      {path:"statusLine.compactThinkingLevel",sourceHash:"d6bcd3d11e4d2ce2eba1cc7b75e5bc9c4589d1fe5bb1a174cfcd37d977ba285e",field:"description"},
+      {path:"statusLine.compactThinkingLevel",sourceHash:"e0a244746eda55072d4fe4c3a75f3238565ccf3857190875d8aef6b58d323927",field:"description"},
+    ]);
+    expect(validateSemantic(evidence({markerPairs:pairs}),policy)).toEqual({ok:true});
+    for(const original of mismatches) for(const altered of [
+      {...original,translationHash:"f".repeat(64)}, {...original,sourceHash:"f".repeat(64)},
+      {...original,field:"warning"}, {...original,path:"other.path"}, {...original,ru:original.ru+" {invented}"},
+    ]) expect(validateSemantic(evidence({markerPairs:[altered]}),policy)).toEqual({ok:false,reason:`placeholder-mismatch:${altered.path}:${altered.field}`});
   });
 });
 
@@ -210,24 +188,32 @@ describe("содержательный гейт", () => {
   });
 
   test("удаление исторической идентичности отклоняется даже при том же количестве записей", () => {
-    const entries = catalogFromSource(CATALOG);
+    const entries = entriesFromJSON(CATALOG);
     const swapped: CatalogEntry[] = [{ ...entries[0]!, sourceHash: "b".repeat(64), translationHash: "c".repeat(64) }, entries[1]!];
     expect(validateSemantic(evidence({ identities: identitiesOf(swapped) }), policy).ok).toBe(false);
     const verdict = validateSemantic(evidence({ identities: identitiesOf(swapped) }), policy);
     expect(verdict.ok === false && verdict.reason.startsWith("historical-identity-removed")).toBe(true);
   });
+  test("same source identity cannot change historical Russian bytes even with review",()=>{
+    const entries=entriesFromJSON(CATALOG);
+    const changed=entries.map(entry=>({...entry,translationHash:"f".repeat(64)}));
+    expect(identitiesOf(changed)).toEqual(identitiesOf(entries));
+    expect(validateSemantic(evidence({translationIdentities:translationIdentitiesOf(changed)}),policy)).toEqual({ok:false,reason:`historical-translation-changed:${translationIdentitiesOf(entries)[0]}`});
+    const entry=entries[0]!;
+    expect(validateSemantic(evidence({changedCatalogVariants:[requirement(entry)],reviewRequired:false}),policy)).toEqual({ok:false,reason:`review-row-missing:${entry.path}:${entry.sourceHash}`});
+  });
 
   test("строки ревью по вариантам изменённого файла каталога кандидата принимаются", () => {
-    const entries = catalogFromSource(CATALOG);
+    const entries = entriesFromJSON(CATALOG);
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
       changedCatalogVariants: entries.map(entry => requirement(entry)),
       reviewRows: entries.map(entry => reviewRow(entry)),
-    }), policy)).toEqual({ ok: true });
+    }), policy, reviewProof(entries))).toEqual({ ok: true });
   });
 
   test("пропущенный вариант изменённого файла каталога отклоняется", () => {
-    const entries = catalogFromSource(CATALOG);
+    const entries = entriesFromJSON(CATALOG);
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
       changedCatalogVariants: entries.map(entry => requirement(entry)),
@@ -236,7 +222,7 @@ describe("содержательный гейт", () => {
   });
 
   test("строка ревью по варианту вне изменённых файлов каталога отклоняется", () => {
-    const entries = catalogFromSource(CATALOG);
+    const entries = entriesFromJSON(CATALOG);
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
       changedCatalogVariants: [requirement(entries[0]!)],
@@ -245,7 +231,7 @@ describe("содержательный гейт", () => {
   });
 
   test("дубли строк ревью по одному варианту отклоняются", () => {
-    const entries = catalogFromSource(CATALOG);
+    const entries = entriesFromJSON(CATALOG);
     const entry = entries[0]!;
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
@@ -255,7 +241,7 @@ describe("содержательный гейт", () => {
   });
 
   test("чужой отпечаток перевода в строке ревью отклоняется", () => {
-    const entry = catalogFromSource(CATALOG)[0]!;
+    const entry = entriesFromJSON(CATALOG)[0]!;
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
       changedCatalogVariants: [requirement(entry)],
@@ -264,7 +250,7 @@ describe("содержательный гейт", () => {
   });
 
   test("неточный набор платформ в строке ревью отклоняется", () => {
-    const entry = catalogFromSource(CATALOG)[0]!;
+    const entry = entriesFromJSON(CATALOG)[0]!;
     // Вариант отдаётся трём платформам, а строка ревью называет одну: набор обязан совпасть точно.
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
@@ -288,12 +274,13 @@ describe("содержательный гейт", () => {
       reviewRows: [{
         path: "composer.tokenRate", sourceHash: newer, translationHash: "d".repeat(64),
         reviewedAtVersion: CANDIDATE, platforms: ["win32"],
+        review: "independently-confirmed", comparison: "Compared", reviewTask: "123:1", evidence: "a".repeat(64),
       }],
     }), policy)).toEqual({ ok: false, reason: `review-row-missing:composer.tokenRate:${older}` });
   });
 
   test("перенесённая версия ревью не принимается", () => {
-    const entry = catalogFromSource(CATALOG)[0]!;
+    const entry = entriesFromJSON(CATALOG)[0]!;
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
       changedCatalogVariants: [requirement(entry)],
@@ -302,7 +289,7 @@ describe("содержательный гейт", () => {
   });
 
   test("отпечаток ревью, не совпавший с каталогом, отклоняется", () => {
-    const entry = catalogFromSource(CATALOG)[0]!;
+    const entry = entriesFromJSON(CATALOG)[0]!;
     const foreign = "f".repeat(64);
     expect(validateSemantic(evidence({
       changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
@@ -312,7 +299,7 @@ describe("содержательный гейт", () => {
   });
 
   test("манифест ревью, не запрошенный стадией, отклоняется", () => {
-    const entry = catalogFromSource(CATALOG)[0]!;
+    const entry = entriesFromJSON(CATALOG)[0]!;
     expect(validateSemantic(evidence({ reviewRows: [reviewRow(entry)] }), policy))
       .toEqual({ ok: false, reason: "review-rows-unexpected" });
   });
@@ -320,13 +307,19 @@ describe("содержательный гейт", () => {
   test("изменение файла перевода вне известных файлов каталога отклоняется", () => {
     const changed = "src/translations/ru.ts";
     expect(validateSemantic(evidence({ changedPaths: [...PLAIN_PATHS, changed] }), policy))
-      .toEqual({ ok: false, reason: `unknown-catalog-file:${changed}` });
+      .toEqual({ ok: false, reason: `path-outside-policy:${changed}` });
   });
 
   test("утраченный маркер отклоняется", () => {
-    const pairs = [{ path: "spelling.autocomplete", source: "from the {dictionary} as you type", ru: "слова при вводе" }];
+    const pairs = [{ path: "spelling.autocomplete", sourceHash:"a".repeat(64), translationHash:"b".repeat(64), field:"description", source: "from the {dictionary} as you type", ru: "слова при вводе" }];
     expect(validateSemantic(evidence({ markerPairs: pairs }), policy))
-      .toEqual({ ok: false, reason: "placeholder-lost:spelling.autocomplete:{dictionary}" });
+      .toEqual({ ok: false, reason: "placeholder-mismatch:spelling.autocomplete:description" });
+  });
+  test("invented markers and invalid independent proof are rejected",()=>{
+    const markerPairs=[{path:"setting",sourceHash:"a".repeat(64),translationHash:"b".repeat(64),field:"options.value.label",source:"Plain",ru:"Текст {invented}"}];
+    expect(validateSemantic(evidence({markerPairs}),policy)).toEqual({ok:false,reason:"placeholder-mismatch:setting:options.value.label"});
+    const entry=entriesFromJSON(CATALOG)[0]!;
+    expect(validateSemantic(evidence({reviewRequired:true,changedCatalogVariants:[requirement(entry)],reviewRows:[{...reviewRow(entry),reviewTask:"unbound"}]}),policy)).toEqual({ok:false,reason:`review-proof-invalid:${entry.path}:${entry.sourceHash}`});
   });
 
   test("пустой фактический каталог или пустая база — отказ, а не успех", () => {
@@ -354,28 +347,79 @@ describe("содержательный гейт", () => {
   });
 });
 
+describe("trusted review run and content binding", () => {
+  const entry = entriesFromJSON(CATALOG)[0]!;
+  const key = `${entry.path}:${entry.sourceHash}`;
+  const bound = () => evidence({
+    reviewRequired: true, changedCatalogVariants: [requirement(entry)], reviewRows: [reviewRow(entry)],
+  });
+  test("accepts exact UTF-8 reviewer bytes or their independently measured digest", () => {
+    expect(validateSemantic(bound(), policy, reviewProof([entry]))).toEqual({ ok: true });
+    expect(validateSemantic(bound(), policy, {
+      runId: "123", runAttempt: "1", artifacts: new Map([[key, { sha256: REVIEW_SHA }]]),
+    })).toEqual({ ok: true });
+  });
+  test("requires caller-owned proof context for a nonempty semantic delta", () => {
+    expect(validateSemantic(bound(), policy)).toEqual({ ok: false, reason: "review-context-missing" });
+  });
+  test("rejects a different run or rerun attempt even when both are well formed", () => {
+    for (const [runId, runAttempt] of [["124", "1"], ["123", "2"]]) {
+      expect(validateSemantic(bound(), policy, { ...reviewProof([entry]), runId: runId!, runAttempt: runAttempt! }))
+        .toEqual({ ok: false, reason: `review-task-mismatch:${key}` });
+    }
+  });
+  test("rejects malformed trusted run identity", () => {
+    for (const identity of [{ runId: "run-123", runAttempt: "1" }, { runId: "123", runAttempt: "" }]) {
+      expect(validateSemantic(bound(), policy, { ...reviewProof([entry]), ...identity }))
+        .toEqual({ ok: false, reason: "review-context-invalid" });
+    }
+  });
+  test("rejects missing artifacts rather than trusting the row's own evidence", () => {
+    expect(validateSemantic(bound(), policy, reviewProof([])))
+      .toEqual({ ok: false, reason: `review-artifact-missing:${key}` });
+    const otherSource = { ...entry, sourceHash: "f".repeat(64) };
+    expect(validateSemantic(bound(), policy, reviewProof([otherSource])))
+      .toEqual({ ok: false, reason: `review-artifact-missing:${key}` });
+    expect(validateSemantic(bound(), policy, reviewProof([{ ...entry, path: "other.path" }])))
+      .toEqual({ ok: false, reason: `review-artifact-missing:${key}` });
+  });
+  test("rejects byte tampering, digest tampering and a conflicting supplied byte digest", () => {
+    for (const artifact of [
+      { bytes: REVIEW_BYTES.trimEnd() },
+      { bytes: REVIEW_BYTES.replace("approved", "rejected") },
+      { sha256: "f".repeat(64) },
+      { bytes: REVIEW_BYTES, sha256: "f".repeat(64) },
+    ]) {
+      expect(validateSemantic(bound(), policy, { ...reviewProof([]), artifacts: new Map([[key, artifact]]) }))
+        .toEqual({ ok: false, reason: `review-evidence-mismatch:${key}` });
+    }
+    const tampered = bound();
+    expect(validateSemantic({ ...tampered, reviewRows: [{ ...reviewRow(entry), evidence: "f".repeat(64) }] }, policy, reviewProof([entry])))
+      .toEqual({ ok: false, reason: `review-evidence-mismatch:${key}` });
+  });
+  test("unchanged catalogs need no review context", () => {
+    expect(validateSemantic(evidence(), policy)).toEqual({ ok: true });
+  });
+});
+
 const REPO_ROOT = join(import.meta.dir, "..");
 const CATALOG_DIR = "src/translations";
-const CATALOG_FILE_NAMES = ["ru-part-1.ts", "ru-part-2.ts", "ru-part-3.ts", "ru-variants.ts"] as const;
-
-function catalogSource(entries: readonly string[]): string {
-  return `import type { SettingTranslationFields } from "./types";
-export const ru: Readonly<Record<string, SettingTranslationFields>> = {
-${entries.join(",\n")}
-};
-`;
-}
 
 function catalogEntry(path: string, hashChar: string, label = "Метка"): string {
-  return `  "${path}": { sourceHash: "${hashChar.repeat(64)}", label: "${label}" }`;
+  return JSON.stringify({path,sourceHash:hashChar.repeat(64),label,platforms:["win32","linux","darwin"],observedIn:["18.8.7"]});
 }
-
-function writeCatalog(dir: string, contents: Readonly<Record<string, string>>): void {
-  mkdirSync(join(dir, CATALOG_DIR), { recursive: true });
-  for (const name of CATALOG_FILE_NAMES) {
-    const body = contents[name] ?? catalogSource([]);
-    writeFileSync(join(dir, CATALOG_DIR, name), body);
-  }
+function catalogSource(entries: readonly string[]): string {
+  const settings: Record<string,{variants:unknown[]}>={};
+  for(const text of entries){const {path,...variant}=JSON.parse(text);(settings[path]??={variants:[]}).variants.push(variant);}
+  return JSON.stringify({locale:"ru",settings});
+}
+function writeCatalog(dir: string, text = catalogSource([])): void {
+  mkdirSync(join(dir,CATALOG_DIR),{recursive:true});
+  writeFileSync(join(dir,T),text);
+}
+function commitBase(root:string):string {
+  fixtureGit(root,["init","-q"]);fixtureGit(root,["add","-A"]);fixtureGit(root,["commit","-q","-m","base"]);
+  return fixtureGit(root,["rev-parse","HEAD"]);
 }
 
 async function failureMessage(run: () => unknown): Promise<string> {
@@ -402,11 +446,10 @@ describe("каталог рабочего дерева и базы", () => {
   test("readCatalog отказывает на отсутствующем файле каталога, а не пропускает его", async () => {
     const root = mkdtempSync(join(tmpdir(), "semantic-missing-file-"));
     try {
-      writeCatalog(root, {});
-      rmSync(join(root, CATALOG_DIR, "ru-variants.ts"));
-      expect(await failureMessage(() => readCatalog(root))).toBe("catalog-file-missing:ru-variants.ts");
-      expect(await failureMessage(() => readCatalog(join(root, "нет-такого-каталога"))))
-        .toBe("catalog-file-missing:ru-part-1.ts");
+      writeCatalog(root);
+      rmSync(join(root,T));
+      expect(await failureMessage(() => readCatalog(root))).toBe("catalog-file-missing:ru-catalog.json");
+      expect(await failureMessage(() => readCatalog(join(root,"absent")))).toBe("catalog-file-missing:ru-catalog.json");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -420,20 +463,14 @@ describe("каталог рабочего дерева и базы", () => {
         { cwd: root, stdout: "pipe", stderr: "pipe" },
       );
       expect(git("init").exitCode).toBe(0);
-      writeCatalog(root, {
-        "ru-part-1.ts": catalogSource([catalogEntry("part.one", "a")]),
-        "ru-part-2.ts": catalogSource([catalogEntry("part.two", "b")]),
-        "ru-part-3.ts": catalogSource([catalogEntry("part.three", "c")]),
-      });
-      rmSync(join(root, CATALOG_DIR, "ru-variants.ts"));
-      expect(git("add", "-A").exitCode).toBe(0);
-      expect(git("commit", "-m", "partial").exitCode).toBe(0);
-      expect(() => readCatalogAtCommit(root, "HEAD")).toThrow("catalog-blob-missing");
-      writeFileSync(join(root, CATALOG_DIR, "ru-variants.ts"), catalogSource([catalogEntry("part.variant", "d")]));
-      expect(git("add", "-A").exitCode).toBe(0);
-      expect(git("commit", "-m", "full").exitCode).toBe(0);
-      expect(readCatalogAtCommit(root, "HEAD").map(entry => entry.path))
-        .toEqual(["part.one", "part.three", "part.two", "part.variant"]);
+      writeFileSync(join(root,"README.md"),"base");
+      expect(git("add","-A").exitCode).toBe(0);
+      expect(git("commit","-m","partial").exitCode).toBe(0);
+      expect(()=>readCatalogAtCommit(root,"HEAD")).toThrow("catalog-blob-missing");
+      writeCatalog(root,catalogSource([catalogEntry("part.one","a"),catalogEntry("part.two","b")]));
+      expect(git("add","-A").exitCode).toBe(0);
+      expect(git("commit","-m","full").exitCode).toBe(0);
+      expect(readCatalogAtCommit(root,"HEAD").map(entry=>entry.path)).toEqual(["part.one","part.two"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -445,11 +482,13 @@ describe("каталог рабочего дерева и базы", () => {
       fixture.applyCandidate(fixture.checkout);
       const file = join(fixture.checkout,T);
       const text = await Bun.file(file).text();
-      const before = catalogFromSource(text).find(entry=>entry.path==="theme.dark")!;
+      const before = entriesFromJSON(text).find(entry=>entry.path==="theme.dark"&&entry.platforms.includes("win32"))!;
       writeFileSync(file,text.replace("Перевод theme.dark","Переписанный перевод"));
       const requests = fixture.requests();
       expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000}))
-        .toEqual({failure:`historical-identity-removed:${before.path}:${before.sourceHash}:${before.translationHash}`});
+        .toEqual({failure:`historical-translation-changed:${translationIdentitiesOf([before])[0]}`});
+      const requirements=await changedCatalogRequirements(fixture.checkout,fixture.base,[...fixture.versions,fixture.candidate]);
+      expect(requirements).toEqual({failure:`historical-translation-changed:${translationIdentitiesOf([before])[0]}`});
       expect(fixture.requests()).toEqual(requests);
     } finally { await fixture.close(); }
   },90_000);
@@ -457,29 +496,49 @@ describe("каталог рабочего дерева и базы", () => {
   test("требования строк ревью выводятся из базовых снимков поддерживаемых версий", async () => {
     const root = mkdtempSync(join(tmpdir(), "semantic-requirements-"));
     try {
-      writeCatalog(root, { "ru-part-2.ts": catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]) });
+      writeCatalog(root,catalogSource([catalogEntry("old.setting","b")]));
+      const base=commitBase(root);
+      writeCatalog(root,catalogSource([catalogEntry("old.setting","b"),catalogEntry("theme.dark","a","Тёмная")]));
       const snapshot = (settings: Readonly<Record<string, string>>): string => JSON.stringify({
         version: "18.8.7", platform: "win32",
         settings: Object.fromEntries(Object.entries(settings).map(([path, hash]) => [path, { sourceHash: hash }])),
       });
-      mkdirSync(join(root, "baseline"), { recursive: true });
+      mkdirSync(join(root, SNAPSHOT_DIR), { recursive: true });
       for (const platform of ["win32", "linux", "darwin"]) {
-        writeFileSync(join(root, `baseline/18.8.7-${platform}.json`), snapshot({ "theme.dark": "a".repeat(64) }));
+        writeFileSync(join(root, snapshotPath("18.8.7", platform)), snapshot({ "theme.dark": "a".repeat(64) }));
       }
-      const collected = await changedCatalogRequirements(root, ["src/translations/ru-part-2.ts"], ["18.8.7"]);
+      const collected = await changedCatalogRequirements(root,base,["18.8.7"]);
       if ("failure" in collected) throw new Error(collected.failure);
       const variant = collected.variants[0]!;
       expect(variant.path).toBe("theme.dark");
       expect(variant.platforms).toEqual(["darwin", "linux", "win32"]);
-      expect(variant.translationHash).toBe(catalogFromSource(catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]))[0]!.translationHash);
-      // Снимок платформы без этого варианта не должен попасть в требуемый набор.
-      writeFileSync(join(root, "baseline/18.8.7-darwin.json"), snapshot({}));
-      const narrowed = await changedCatalogRequirements(root, ["src/translations/ru-part-2.ts"], ["18.8.7"]);
-      if ("failure" in narrowed) throw new Error(narrowed.failure);
-      expect(narrowed.variants[0]!.platforms).toEqual(["linux", "win32"]);
+      expect(variant.translationHash).toBe(entriesFromJSON(catalogSource([catalogEntry("theme.dark","a","Тёмная")]))[0]!.translationHash);
+      writeFileSync(join(root,snapshotPath("18.8.7","darwin")),snapshot({}));
+      expect(await changedCatalogRequirements(root,base,["18.8.7"])).toEqual({failure:`catalog-platform-mismatch:theme.dark:${"a".repeat(64)}`});
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+  test("unchanged data and added observations need no review; platform extension does",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"semantic-platform-extension-"));
+    const variant={sourceHash:"a".repeat(64),label:"Метка",platforms:["win32"],observedIn:["18.8.7"]};
+    const pack=(platforms:string[],observedIn=["18.8.7"])=>JSON.stringify({locale:"ru",settings:{setting:{variants:[{...variant,platforms,observedIn}]}}});
+    try {
+      writeCatalog(root,pack(["win32"]));mkdirSync(join(root,SNAPSHOT_DIR),{recursive:true});
+      for(const platform of PLATFORMS) writeFileSync(join(root,snapshotPath("18.8.7",platform)),JSON.stringify({settings:platform==="win32"?{setting:{sourceHash:variant.sourceHash}}:{}}));
+      const base=commitBase(root);
+      expect(await changedCatalogRequirements(root,base,["18.8.7"])).toEqual({variants:[]});
+      writeCatalog(root,pack(["win32"],["18.8.7","18.8.9"]));
+      expect(await changedCatalogRequirements(root,base,["18.8.7"])).toEqual({variants:[]});
+      writeCatalog(root,pack(["win32","linux"]));
+      writeFileSync(join(root,snapshotPath("18.8.7","linux")),JSON.stringify({settings:{setting:{sourceHash:variant.sourceHash}}}));
+      const extended=await changedCatalogRequirements(root,base,["18.8.7"]);
+      if("failure" in extended)throw new Error(extended.failure);
+      expect(extended.variants).toEqual([{path:"setting",sourceHash:variant.sourceHash,translationHash:translationHash(variant),platforms:["linux","win32"]}]);
+      writeCatalog(root,pack(["win32"],["18.8.9"]));
+      const removed=await changedCatalogRequirements(root,base,["18.8.7"]);
+      expect("failure" in removed&&removed.failure.startsWith("historical-identity-removed:")).toBe(true);
+    } finally {rmSync(root,{recursive:true,force:true});}
   });
 
   test("переписанный измерительный код обесценивает доказательство до запуска скриптов", async () => {
@@ -490,7 +549,7 @@ describe("каталог рабочего дерева и базы", () => {
         { cwd: root, stdout: "pipe", stderr: "pipe" },
       );
       expect(git("init").exitCode).toBe(0);
-      writeCatalog(root, {});
+      writeCatalog(root);
       mkdirSync(join(root, "scripts"), { recursive: true });
       mkdirSync(join(root, "src/translations"), { recursive: true });
       writeFileSync(join(root, "scripts/check-coverage.ts"), "// измерительный код\n");
@@ -506,7 +565,7 @@ describe("каталог рабочего дерева и базы", () => {
       writeFileSync(join(root, "src/report.ts"), "// подмена вспомогательного модуля\n");
       expect(await measurementChanges(root, "HEAD")).toEqual(["src/report.ts"]);
       // Данные каталога перевода — исключение: их изменение измерение не отменяет.
-      writeFileSync(join(root, "src/translations/ru-part-2.ts"), catalogSource([catalogEntry("theme.dark", "a")]));
+      writeFileSync(join(root,T),catalogSource([catalogEntry("theme.dark","a")]));
       expect(await measurementChanges(root, "HEAD")).toEqual(["src/report.ts"]);
       writeFileSync(join(root, "src/report.ts"), "// вспомогательный модуль измерения\n");
       expect(await measurementChanges(root, "HEAD")).toEqual([]);
@@ -563,60 +622,37 @@ describe("каталог рабочего дерева и базы", () => {
   test("вариант без следа в базовых снимках не подтверждается платформенно", async () => {
     const root = mkdtempSync(join(tmpdir(), "semantic-unbaselined-"));
     try {
-      writeCatalog(root, { "ru-part-2.ts": catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]) });
-      mkdirSync(join(root, "baseline"), { recursive: true });
+      writeCatalog(root,catalogSource([catalogEntry("old.setting","b")]));
+      const base=commitBase(root);
+      writeCatalog(root,catalogSource([catalogEntry("old.setting","b"),catalogEntry("theme.dark","a","Тёмная")]));
+      mkdirSync(join(root, SNAPSHOT_DIR), { recursive: true });
       for (const platform of ["win32", "linux", "darwin"]) {
-        writeFileSync(join(root, `baseline/18.8.7-${platform}.json`), JSON.stringify({ settings: {} }));
+        writeFileSync(join(root, snapshotPath("18.8.7", platform)), JSON.stringify({ settings: {} }));
       }
-      const collected = await changedCatalogRequirements(root, ["src/translations/ru-part-2.ts"], ["18.8.7"]);
+      const collected = await changedCatalogRequirements(root,base,["18.8.7"]);
       expect(collected).toEqual({ failure: `catalog-variant-without-baseline:theme.dark:${"a".repeat(64)}` });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test("варианты одного пути с разными sourceHash сосуществуют, точный дубль схлопывается", async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-variants-"));
+  test("разные sourceHash сосуществуют; перекрывающаяся платформа отклоняется",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"semantic-variants-"));
     try {
-      // Один путь с двумя разными sourceHash — два исторических варианта, оба обязаны выжить.
-      writeCatalog(root, {
-        "ru-part-1.ts": catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]),
-        "ru-part-2.ts": catalogSource([catalogEntry("theme.dark", "b", "Тёмная (историческая)")]),
-      });
-      const kept = await readCatalog(root);
-      expect(kept.map(entry => entry.path)).toEqual(["theme.dark", "theme.dark"]);
-      expect(new Set(kept.map(entry => entry.sourceHash)).size).toBe(2);
-      // Точный дубль (тот же путь и sourceHash, тот же перевод) схлопывается в одну запись.
-      writeCatalog(root, {
-        "ru-part-1.ts": catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]),
-        "ru-part-2.ts": catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]),
-      });
-      expect(await readCatalog(root)).toHaveLength(1);
-      // Тот же путь и sourceHash, но другой перевод — противоречие, а не тихая замена.
-      writeCatalog(root, {
-        "ru-part-1.ts": catalogSource([catalogEntry("theme.dark", "a", "Тёмная")]),
-        "ru-part-2.ts": catalogSource([catalogEntry("theme.dark", "a", "Иначе")]),
-      });
-      expect(await failureMessage(() => readCatalog(root))).toBe(`conflicting-translation:theme.dark:${"a".repeat(64)}`);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+      writeCatalog(root,catalogSource([catalogEntry("theme.dark","a"),catalogEntry("theme.dark","b")]));
+      expect(await readCatalog(root)).toHaveLength(2);
+      writeCatalog(root,catalogSource([catalogEntry("theme.dark","a"),catalogEntry("theme.dark","a")]));
+      expect(await failureMessage(()=>readCatalog(root))).toBe("duplicate-source-variant:theme.dark:win32");
+    } finally {rmSync(root,{recursive:true,force:true});}
   });
-
-  test("реальный каталог: 138+137+135+10 = 420 записей, 420 идентичностей, 410 путей", async () => {
-    const perFile: Record<string, number> = {
-      "ru-part-1.ts": 138, "ru-part-2.ts": 137, "ru-part-3.ts": 135, "ru-variants.ts": 10,
-    };
-    for (const [name, count] of Object.entries(perFile)) {
-      const text = await Bun.file(join(REPO_ROOT, CATALOG_DIR, name)).text();
-      expect(catalogFromSource(text)).toHaveLength(count);
-    }
-    const entries = await readCatalog(REPO_ROOT);
-    expect(entries).toHaveLength(420);
-    expect(identitiesOf(entries)).toHaveLength(420);
-    expect(new Set(entries.map(entry => entry.path)).size).toBe(410);
-    // Исторические варианты действительно сохраняются как пары одного пути.
-    expect(entries.filter(entry => entry.path === "composer.tokenRate")).toHaveLength(2);
+  test("полный эффективный каталог: 410 путей, 424 варианта, 1269 платформенных идентичностей",async()=>{
+    const entries=await readCatalog(REPO_ROOT);
+    expect(entries).toHaveLength(424);
+    expect(entries.reduce((count,entry)=>count+entry.platforms.length,0)).toBe(1269);
+    expect(new Set(entries.map(entry=>entry.path)).size).toBe(410);
+    expect(entries.filter(entry=>entry.path==="title.icons")).toHaveLength(3);
+    expect(entries.filter(entry=>entry.path==="spelling.autocomplete")).toHaveLength(2);
+    expect(entries.filter(entry=>entry.path==="tools.xdev")).toHaveLength(2);
   });
 });
 
@@ -643,9 +679,13 @@ describe("реальная сетка принятых и заявленных �
         expect(result.coverage.find(pair=>pair.version===version&&pair.platform===platform)).toEqual({version,platform,complete:expected,total:expected});
         expect(result.drift.find(pair=>pair.version===version&&pair.platform===platform)).toEqual({version,platform,added:0,removed:0,changed:0});
       }
-      expect(result.changedCatalogVariants).toHaveLength(7);
-      expect(result.changedCatalogVariants.every(variant=>variant.platforms.join(",")==="win32")).toBe(true);
-      expect(validateSemantic(result,policy)).toEqual({ok:true});
+      expect(result.changedCatalogVariants).toHaveLength(18);
+      for(const platform of PLATFORMS) expect(result.changedCatalogVariants.filter(variant=>variant.platforms.join(",")===platform)).toHaveLength(6);
+      expect(result.reviewRequired).toBe(true);
+      expect(validateSemantic(result,policy)).toEqual({ok:false,reason:`review-row-missing:${result.changedCatalogVariants[0]!.path}:${result.changedCatalogVariants[0]!.sourceHash}`});
+      const reviewRows=result.changedCatalogVariants.map(variant=>({...variant,reviewedAtVersion:fixture.candidate,review:"independently-confirmed" as const,comparison:"Compared independently",reviewTask:"123:1",evidence:REVIEW_SHA}));
+      const artifacts = new Map(result.changedCatalogVariants.map(variant => [`${variant.path}:${variant.sourceHash}`, { bytes: REVIEW_BYTES }]));
+      expect(validateSemantic({...result,reviewRows},policy,{runId:"123",runAttempt:"1",artifacts})).toEqual({ok:true});
       expect(fixture.requests().every(path=>path.startsWith("/@oh-my-pi/pi-")||/^\/pi-(coding-agent|utils)-[0-9.]+\.tgz$/.test(path))).toBe(true);
       expect(measurementRoots()).toEqual(rootsBefore);
     } finally { await fixture.close(); }
@@ -655,7 +695,7 @@ describe("реальная сетка принятых и заявленных �
     const fixture = await semanticRuntimeFixture();
     try {
       fixture.applyCandidate(fixture.checkout);
-      const file = join(fixture.checkout,"baseline/supported-hosts.json");
+      const file = join(fixture.checkout,SUPPORTED_HOSTS);
       const requests = fixture.requests();
       writeFileSync(file,JSON.stringify(hostManifest([[fixture.candidate,PLATFORMS]])));
       expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000}))
@@ -672,7 +712,7 @@ describe("реальная сетка принятых и заявленных �
     try {
       fixture.applyCandidate(fixture.checkout);
       const rootsBefore = measurementRoots();
-      const file = join(fixture.checkout,`baseline/${fixture.candidate}-darwin.json`);
+      const file = join(fixture.checkout,snapshotPath(fixture.candidate,"darwin"));
       const snapshot = JSON.parse(await Bun.file(file).text());
       snapshot.settings["theme.dark"].sourceHash = "e".repeat(64);
       writeFileSync(file,JSON.stringify(snapshot));
@@ -687,8 +727,8 @@ describe("реальная сетка принятых и заявленных �
 describe("манифест поддержанных версий читается строго", () => {
   function manifestRoot(manifest: unknown): string {
     const root = mkdtempSync(join(tmpdir(), "semantic-manifest-"));
-    mkdirSync(join(root, "baseline"), { recursive: true });
-    writeFileSync(join(root, "baseline/supported-hosts.json"),
+    mkdirSync(join(root, SNAPSHOT_DIR), { recursive: true });
+    writeFileSync(join(root, SUPPORTED_HOSTS),
       typeof manifest === "string" ? manifest : JSON.stringify(manifest));
     return root;
   }
@@ -740,7 +780,7 @@ describe("реальный потребитель в доверенном кор
     const fixture = await semanticRuntimeFixture();
     try {
       fixture.applyCandidate(fixture.checkout);
-      const file = join(fixture.checkout,"baseline/supported-hosts.json");
+      const file = join(fixture.checkout,SUPPORTED_HOSTS);
       const manifest = JSON.parse(await Bun.file(file).text());
       const requests = fixture.requests();
       const marker = join(fixture.root,"selector-executed");
@@ -757,17 +797,16 @@ describe("реальный потребитель в доверенном кор
     } finally { await fixture.close(); }
   },90_000);
 
-  test("деструктуризация каталога с исполняемым default отклоняется до установки и импорта", async () => {
+  test("исполняемый текст вместо JSON отклоняется до установки и импорта", async () => {
     const fixture = await semanticRuntimeFixture();
     try {
       fixture.applyCandidate(fixture.checkout);
       const marker = join(fixture.root,"binding-executed");
       const file = join(fixture.checkout,T);
-      const original = await Bun.file(file).text();
       const requests = fixture.requests();
-      writeFileSync(file,original.replace("const ruPart1 =",`const {ruPart1 = (() => { Bun.write(${JSON.stringify(marker)},"executed"); return {}; })()} =`));
-      expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000}))
-        .toEqual({failure:"catalog-module-side-effect:binding"});
+      writeFileSync(file,`export const ru = (()=>{Bun.write(${JSON.stringify(marker)},"executed");return {};})();`);
+      const result=await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000});
+      expect("failure" in result).toBe(true);
       expect(fixture.requests()).toEqual(requests);
       expect(existsSync(marker)).toBe(false);
     } finally { await fixture.close(); }

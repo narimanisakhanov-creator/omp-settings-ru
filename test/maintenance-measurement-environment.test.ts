@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, onTestFinished, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -8,6 +8,7 @@ import {
   approvedDelta, declaredHostAliases, dispose, expectedLock, exportHostSnapshot, hostAliasOf, hostIdentity,
   lockVerdict, manifestWithDelta, parseLock, prepareToolRoot,
 } from "../scripts/maintenance/measurement-environment";
+import { SNAPSHOT_DIR, snapshotPath } from "../scripts/maintenance/paths";
 
 /**
  * Среда измерения: проверяется на настоящем Bun и настоящих пакетах.
@@ -20,24 +21,16 @@ import {
  * сравнение lock-файлов, SRI и отпечатки каталогов считаются по фактическому ответу реестра.
  */
 
-const roots: string[] = [];
-/** Процессы реестра-фикстуры: поднимаются на время теста и гасятся в `afterEach`. */
-const registries: { stop(): void }[] = [];
+/** Every resource registers with the test that created it; parallel tests must never share cleanup state. */
+async function tempRoot(label: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), `maint-env-${label}-`));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  return root;
+}
 /** Срок каждой установки в дочернем процессе: незавершённая установка — это зависший тест, а не долгий. */
 const INSTALL_DEADLINE = 30_000;
 /** Срок тяжёлого теста целиком: фикстура, установка корня и выгрузка снимка. */
 const HEAVY_TEST_DEADLINE = 90_000;
-
-async function tempRoot(label: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), `maint-env-${label}-`));
-  roots.push(root);
-  return root;
-}
-
-afterEach(async () => {
-  while (registries.length > 0) registries.pop()!.stop();
-  while (roots.length > 0) await rm(roots.pop()!, { recursive: true, force: true });
-});
 
 /**
  * Синхронный запуск Bun: установка идёт в дочернем процессе, поэтому процесс реестра продолжает отвечать.
@@ -126,7 +119,7 @@ interface Registry {
   readonly requests: () => Promise<readonly string[]>;
 }
 
-/** Реестр на loopback: порт выбирается свободный, готовность подтверждается пробой, процесс гасится в `afterEach`. */
+/** Registry processes are owned by the test that starts them, never by a module-global stack. */
 async function startRegistry(dataDir: string): Promise<Registry> {
   const logPath = join(dataDir, "requests.log");
   await writeFile(logPath, "");
@@ -137,12 +130,11 @@ async function startRegistry(dataDir: string): Promise<Registry> {
   await writeFile(script, FIXTURE_REGISTRY);
   const child = Bun.spawn(["bun", script, logPath, dataDir, String(port)], { stdout: "pipe", stderr: "pipe" });
   let stopped = false;
-  registries.push({
-    stop: () => {
-      if (stopped) return;
-      stopped = true;
-      child.kill("SIGKILL");
-    },
+  onTestFinished(async () => {
+    if (stopped) return;
+    stopped = true;
+    child.kill("SIGKILL");
+    await child.exited;
   });
   // Готовность — сигнал процесса, а не выдержка времени: сервер пишет `ready`, когда начал слушать порт.
   const url = `http://127.0.0.1:${port}/`;
@@ -162,7 +154,6 @@ async function startRegistry(dataDir: string): Promise<Registry> {
     requests: async () => (await readFile(logPath, "utf8")).split("\n").map(line => line.trim()).filter(Boolean),
   };
 }
-
 /** Публикация tarball-а: packument с абсолютной ссылкой и SRI — ровно то, что реестр отвечает клиенту. */
 async function publish(dataDir: string, tarballPath: string, name: string, version: string, registry: Registry): Promise<void> {
   const bytes = await readFile(tarballPath);
@@ -273,11 +264,10 @@ async function fixture(): Promise<Fixture> {
   await writeFile(join(checkout, "scripts", "matrix-registry-worker.ts"), FIXTURE_WORKER);
   await mkdir(join(checkout, "src", "translations"), { recursive: true });
   await writeFile(join(checkout, "src", "report.ts"), "// принятый вспомогательный модуль\n");
-  for (const name of ["ru-part-1.ts", "ru-part-2.ts", "ru-part-3.ts", "ru-variants.ts"]) {
-    await writeFile(join(checkout, "src", "translations", name), "export const entries = {};\n");
-  }
-  await mkdir(join(checkout, "baseline"), { recursive: true });
-  await writeFile(join(checkout, "baseline", `${HOST_VERSION}-win32.json`), JSON.stringify({ settings: {} }));
+  await writeFile(join(checkout,"src/translations/ru-catalog.json"),'{"locale":"ru","settings":{}}\n');
+  await writeFile(join(checkout,"src/translations/variant-review.json"),'{"variants":[]}\n');
+  await mkdir(join(checkout, SNAPSHOT_DIR), { recursive: true });
+  await writeFile(join(checkout, snapshotPath(HOST_VERSION, "win32")), JSON.stringify({ settings: {} }));
   // Базовый lock-файл — настоящий: его считает Bun по ответу реестра-фикстуры, а не тест.
   install(["install", "--lockfile-only", "--ignore-scripts", `--registry=${registry.url}`], checkout);
 
@@ -470,7 +460,7 @@ describe("доверенный корень измерения", () => {
       // Код и конфигурация — из принятого коммита, а не из рабочего дерева кандидата.
       expect(await readFile(join(root, "scripts", "matrix-registry-worker.ts"), "utf8")).toBe(FIXTURE_WORKER);
       // Данные кандидата наложены: файлы каталога и базовые снимки взяты из проверяемого дерева.
-      expect(await readFile(join(root, "src", "translations", "ru-part-2.ts"), "utf8")).toBe("export const entries = {};\n");
+      expect(await readFile(join(root,"src/translations/ru-catalog.json"),"utf8")).toBe('{"locale":"ru","settings":{}}\n');
       // Служебные каталоги убраны, корень оставлен вызывающему.
       expect(existsSync(`${root}.lock`)).toBe(false);
       expect(existsSync(`${root}.cache`)).toBe(false);
@@ -619,12 +609,12 @@ describe("отказы не оставляют мусора", () => {
 
   test("отсутствующие данные кандидата отклоняются, служебные каталоги убраны", async () => {
     const fixtureValue = await fixture();
-    await rm(join(fixtureValue.checkout, "src", "translations", "ru-part-2.ts"), { force: true });
+    await rm(join(fixtureValue.checkout,"src/translations/ru-catalog.json"),{force:true});
     const root = join(await tempRoot("nodata"), "tools");
     expect(await prepareToolRoot({
       checkout: fixtureValue.checkout, baseSha: fixtureValue.baseSha, root,
       delta: deltaFor(fixtureValue), registry: fixtureValue.registry, deadlineMs: 180_000,
-    })).toEqual({ failure: "candidate-data-missing:src/translations/ru-part-2.ts" });
+    })).toEqual({ failure: "candidate-data-missing:src/translations/ru-catalog.json" });
     await leftoversAbsent(root);
   });
 });

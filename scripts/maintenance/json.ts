@@ -1,8 +1,8 @@
 /**
- * Чтение недоверенного JSON из внешних границ (gh, orca) без необъявленных приведений типа.
+ * Чтение недоверенного JSON из файлов, API и RPC без необъявленных приведений типа.
  *
- * Все значения приходят из сети или из RPC, поэтому каждое поле проверяется в рантайме; чтение отсутствующего
- * или неверно типизированного поля даёт `undefined`, а не выдуманную форму.
+ * Внешние значения проверяются в рантайме; чтение отсутствующего или неверно типизированного
+ * поля даёт `undefined`. Строгий парсер дополнительно запрещает неоднозначные повторные ключи.
  */
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -41,4 +41,24 @@ export function readPath(value: unknown, ...keys: readonly string[]): string | u
     current = record[key];
   }
   return typeof current === "string" ? current : undefined;
+}
+
+/** Duplicate keys (including escaped spellings) make untrusted JSON ambiguous. */
+export function parseStrictJSON(text: string): unknown {
+  const parsed: unknown = JSON.parse(text);
+  const frames: (Set<string> | undefined)[] = [];
+  const tokens = /"(?:\\.|[^"\\])*"|[{}\[\]]/g;
+  for (const token of text.matchAll(tokens)) {
+    const value = token[0];
+    if (value === "{") frames.push(new Set());
+    else if (value === "[") frames.push(undefined);
+    else if (value === "}" || value === "]") frames.pop();
+    else if (/^\s*:/.test(text.slice(token.index! + value.length))) {
+      const keys = frames[frames.length - 1];
+      const key: string = JSON.parse(value);
+      if (!keys || keys.has(key)) throw new Error("json-duplicate-key");
+      keys.add(key);
+    }
+  }
+  return parsed;
 }

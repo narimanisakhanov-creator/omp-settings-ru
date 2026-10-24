@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { SNAPSHOT_DIR } from "./paths";
 
 /**
  * Доверенная среда измерения.
@@ -66,10 +67,9 @@ const HOST_PACKAGE = /^@oh-my-pi\/pi-(coding-agent|natives|tui|utils)$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 /** Код и конфигурация измерения — только из принятого коммита. */
 const TRUSTED_PATHS = ["scripts", "src", "tsconfig.json", "package.json", "bun.lock", "bunfig.toml"] as const;
-/** Данные, которые кандидат вправе менять: четыре файла каталога. */
+/** Candidate inputs are data only; runtime and measuring code remain accepted bytes. */
 const DATA_FILES = [
-  "src/translations/ru-part-1.ts", "src/translations/ru-part-2.ts", "src/translations/ru-part-3.ts",
-  "src/translations/ru-variants.ts",
+  "src/translations/ru-catalog.json", "src/translations/variant-review.json",
 ] as const;
 
 /** Имя алиаса выводится из версии хоста — это и есть проверяемая связь имени и спецификации. */
@@ -457,29 +457,29 @@ export async function prepareToolRoot(input: {
 
     const installArgs = ["install", "--frozen-lockfile", "--ignore-scripts", "--cache-dir", cacheDir];
     if (input.registry) installArgs.push(`--registry=${input.registry}`);
-    if (spawnBun(root, installArgs, deadline).code !== 0) return { failure: "tools-install-failed" };
+    const installResult = spawnBun(root, installArgs, deadline);
+    if (installResult.code !== 0) return { failure: "tools-install-failed" };
 
-    // Данные кандидата: четыре файла каталога и базовые снимки. Код кандидата сюда не попадает — принятые
-    // `scripts/` и `src/` остаются нетронутыми. Снимки зеркалятся точно: удаление базового снимка кандидатом
-    // обязано быть видно измерению, а не подменяться копией из принятого коммита.
+    // Inject JSON catalog/review data and snapshots, never candidate executable modules.
+    // Snapshot deletion must remain observable rather than falling back to accepted copies.
     for (const path of DATA_FILES) {
       const bytes = await readFile(join(checkout, path)).catch(() => undefined);
       if (!bytes) return { failure: `candidate-data-missing:${path}` };
       await writeFile(join(root, path), bytes);
     }
-    const snapshots = await readdir(join(checkout, "baseline")).catch(() => undefined);
+    const snapshots = await readdir(join(checkout, SNAPSHOT_DIR)).catch(() => undefined);
     if (!snapshots) return { failure: "candidate-baseline-missing" };
     // Каталог снимков не входит в принятый код, поэтому его создаёт измерение: базовые снимки — данные
     // кандидата, и без этого шага писать их было бы некуда.
-    await mkdir(join(root, "baseline"), { recursive: true });
-    const installed = await readdir(join(root, "baseline")).catch(() => [] as string[]);
+    await mkdir(join(root, SNAPSHOT_DIR), { recursive: true });
+    const installed = await readdir(join(root, SNAPSHOT_DIR)).catch(() => [] as string[]);
     for (const name of installed.filter(name => name.endsWith(".json"))) {
-      if (!snapshots.includes(name)) await rm(join(root, "baseline", name), { force: true });
+      if (!snapshots.includes(name)) await rm(join(root, SNAPSHOT_DIR, name), { force: true });
     }
     for (const name of snapshots.filter(name => name.endsWith(".json")).sort()) {
-      const bytes = await readFile(join(checkout, "baseline", name)).catch(() => undefined);
+      const bytes = await readFile(join(checkout, SNAPSHOT_DIR, name)).catch(() => undefined);
       if (!bytes) return { failure: `candidate-baseline-missing:${name}` };
-      await writeFile(join(root, "baseline", name), bytes);
+      await writeFile(join(root, SNAPSHOT_DIR, name), bytes);
     }
 
     const hosts: HostIdentity[] = [];

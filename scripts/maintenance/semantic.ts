@@ -1,22 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import ts from "typescript";
-import { ACCEPTANCE_SCENARIO_FILES } from "./acceptance-scenarios";
+import { CATALOG_PATH, parseCatalogJSON, readCatalogJSON, translationFieldsHash } from "./catalog";
+import type { LocalePack, SourcePlatform } from "../../src/translations/types";
+import type { BaselineSnapshot } from "../../src/report";
 import { approvedDelta, dispose, hostAliasOf, lockVerdict, prepareToolRoot } from "./measurement-environment";
+import { SUPPORTED_HOSTS, snapshotPath } from "./paths";
 import type { ControllerPolicy } from "./contracts";
-/**
- * Содержательный гейт перевода.
- *
- * Реальная модель каталога: `src/translations/ru-part-{1,2,3}.ts` — это
- * `Record<путь настройки, {sourceHash, label?, description?, descriptionSource?, warning?, options?}>`.
- * `sourceHash` — sha256 нормализованных метаданных хоста (с шаблонами), поэтому его нельзя пересчитать из
- * самого файла перевода: он сверяется с фактическим `sourceHash` из каталога и с независимым ревью.
- *
- * Файлы читаются статически (TypeScript AST), код кандидата не исполняется. Покрытие и дрейф считают
- * реальные скрипты репозитория; контроллер здесь проверяет идентичности каталога, сохранность исторических
- * вариантов и подстановочные маркеры.
- */
+
+/** Candidate catalog bytes are strict JSON data; executable code always comes from the accepted base. */
 
 export interface OptionTranslation {
   readonly label?: string;
@@ -32,6 +24,8 @@ export interface CatalogEntry {
   readonly descriptionSource?: string;
   readonly warning?: string;
   readonly options?: Readonly<Record<string, OptionTranslation>>;
+  readonly platforms: readonly SourcePlatform[];
+  readonly observedIn: readonly string[];
 }
 
 export interface ReviewRow {
@@ -41,6 +35,24 @@ export interface ReviewRow {
   readonly translationHash: string;
   readonly reviewedAtVersion: string;
   readonly platforms: readonly string[];
+  readonly review: "independently-confirmed";
+  readonly comparison: string;
+  readonly reviewTask: string;
+  readonly evidence: string;
+}
+
+/** Artifact content comes from the trusted caller, never from a candidate review row.
+ * Digest-only artifacts are allowed only after that caller has measured the actual sanitized bytes.
+ */
+export type ReviewContentArtifact =
+  | { readonly bytes: string; readonly sha256?: string }
+  | { readonly bytes?: never; readonly sha256: string };
+
+export interface ReviewProofContext {
+  readonly runId: string;
+  readonly runAttempt: string;
+  /** Keys are exactly `${path}:${sourceHash}`. Values bind sanitized reviewer content, not report JSON. */
+  readonly artifacts: ReadonlyMap<string, ReviewContentArtifact>;
 }
 
 export interface CoveragePair {
@@ -65,14 +77,16 @@ export interface SemanticEvidence {
   readonly drift: readonly DriftPair[];
   readonly reviewRows: readonly ReviewRow[];
   readonly changedPaths: readonly string[];
-  /** Идентичности каталога в проверяемом коммите: `path:sourceHash:translationHash`. */
+  /** Source identities are exactly path/sourceHash/platform/observedIn, never translation hashes. */
   readonly identities: readonly string[];
   /** Идентичности каталога в базе: ничего из этого набора не может исчезнуть. */
   readonly identitiesBefore: readonly string[];
+  readonly translationIdentities: readonly string[];
+  readonly translationIdentitiesBefore: readonly string[];
   /** Записи с шаблоном исходника и переводом — источник проверки маркеров. */
-  readonly markerPairs: readonly { path: string; source: string; ru: string }[];
+  readonly markerPairs: readonly { path: string; sourceHash: string; translationHash: string; field: string; source: string; ru: string }[];
   /**
-   * Варианты изменённых файлов каталога с полной строкой требования: путь настройки, `sourceHash`,
+   * Новые identities и расширения платформ с полной строкой требования: путь настройки, `sourceHash`,
    * `translationHash` и точный набор платформ, где этот вариант действительно отдаётся базовыми снимками.
    * Ключ — пара «путь настройки + sourceHash»: у одного пути бывает несколько исторических вариантов.
    */
@@ -83,8 +97,8 @@ export interface SemanticEvidence {
     readonly platforms: readonly string[];
   }[];
   /**
-   * Требуется ли покрытие строками ревью. На стадии подготовки независимого ревью ещё не было, поэтому
-   * строки не запрашиваются; на стадии ревью манифест обязателен и сверяется точно.
+   * Nonempty semantic delta always requires independent proof. Preparation may collect evidence,
+   * but cannot declare semantic approval until exact review rows are supplied.
    */
   readonly reviewRequired: boolean;
 }
@@ -103,115 +117,24 @@ export function missingMarkers(source: string, translation: string): readonly st
   return markers(source).filter(marker => !present.has(marker));
 }
 
-/** Хеш перевода по полям варианта — та же формула, что в `verify-variant-reviews.ts`. */
-export function translationHash(entry: Omit<CatalogEntry, "path" | "translationHash">): string {
-  const { sourceHash: _sourceHash, ...fields } = entry;
-  return createHash("sha256").update(JSON.stringify(fields)).digest("hex");
+/** Shared insertion-order-sensitive display hash; platform/version provenance is excluded. */
+export const translationHash = translationFieldsHash;
+
+// Exact historical review rows at immutable commit 370b2028798c5f5c1da797e0d321191ae1780d88,
+// src/translations/variant-review.json. Only this already-shipped description mapping is approved.
+const HISTORICAL_MARKER_TRANSLATIONS: Readonly<Record<string,string>> = {
+  d6bcd3d11e4d2ce2eba1cc7b75e5bc9c4589d1fe5bb1a174cfcd37d977ba285e: "9dbad3a9e55dc9a065ffd495403e4063cfa21de916b3a0bd6b7fd14f222bd894",
+  e0a244746eda55072d4fe4c3a75f3238565ccf3857190875d8aef6b58d323927: "575a3dfe997e1dc5e826c1fb041a45b4c390d73e81636c844d68a2305ea0f4da",
+};
+
+export function catalogEntries(pack: LocalePack): readonly CatalogEntry[] {
+  return Object.entries(pack.settings).flatMap(([path, setting]) => setting.variants.map(variant => ({
+    path, ...variant, translationHash: translationFieldsHash(variant),
+  }))).sort((left, right) => left.path.localeCompare(right.path) || left.sourceHash.localeCompare(right.sourceHash));
 }
 
-function literal(node: ts.Expression): unknown {
-  if (ts.isStringLiteral(node)) return node.text;
-  if (ts.isObjectLiteralExpression(node)) {
-    const result: Record<string, unknown> = {};
-    for (const property of node.properties) {
-      if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
-        throw new Error("nonliteral-catalog");
-      }
-      result[property.name.text] = literal(property.initializer);
-    }
-    return result;
-  }
-  throw new Error("nonliteral-catalog");
-}
-
-/**
- * Поля одного варианта каталога. Форма проверяется строго: запись без `sourceHash` в форме sha256 — это
- * признак того, что мы не поняли структуру файла, а не запись, которую можно молча выбросить.
- */
-function fieldsOf(value: unknown, path: string): Omit<CatalogEntry, "path" | "translationHash"> {
-  if (typeof value !== "object" || value === null) throw new Error(`malformed-catalog-entry:${path}`);
-  const record = value as Record<string, unknown>;
-  if (typeof record.sourceHash !== "string" || !/^[a-f0-9]{64}$/.test(record.sourceHash)) {
-    throw new Error(`invalid-source-hash:${path}`);
-  }
-  const options = record.options;
-  if (options !== undefined && (typeof options !== "object" || options === null)) {
-    throw new Error(`malformed-catalog-entry:${path}`);
-  }
-  return {
-    sourceHash: record.sourceHash,
-    label: typeof record.label === "string" ? record.label : undefined,
-    description: typeof record.description === "string" ? record.description : undefined,
-    descriptionSource: typeof record.descriptionSource === "string" ? record.descriptionSource : undefined,
-    warning: typeof record.warning === "string" ? record.warning : undefined,
-    options: options === undefined ? undefined : options as Record<string, OptionTranslation>,
-  };
-}
-
-/**
- * Разбор одного файла каталога.
- *
- * Файл — это данные, а не программа: он обязан состоять только из type-импортов и одного экспортируемого
- * литерального объектного объявления. Любое другое утверждение (значимый импорт, вызов, объявление функции,
- * присваивание) означает, что при импорте файла выполнится неизвестный код, поэтому это отказ, а не пропуск.
- * Динамическое выражение вместо карты (вызов, ссылка) — та же неизвестная структура: отказ.
- */
-export function catalogFromSource(text: string): readonly CatalogEntry[] {
-  const source = ts.createSourceFile("catalog.ts", text, ts.ScriptTarget.Latest, true);
-  const entries: CatalogEntry[] = [];
-  for (const statement of source.statements) {
-    if (ts.isImportDeclaration(statement)) {
-      // Разрешён только type-импорт: значимый импорт выполнял бы код зависимости при импорте файла.
-      if (!statement.importClause?.isTypeOnly) throw new Error("catalog-module-side-effect:import");
-      continue;
-    }
-    if (!ts.isVariableStatement(statement)) throw new Error(`catalog-module-side-effect:${ts.SyntaxKind[statement.kind]}`);
-    const exported = statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
-    if (!exported) throw new Error("catalog-module-side-effect:variable");
-    if (!(statement.declarationList.flags & ts.NodeFlags.Const)) throw new Error("catalog-module-side-effect:mutable");
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name)) throw new Error("catalog-module-side-effect:binding");
-      if (!declaration.initializer || !ts.isObjectLiteralExpression(declaration.initializer)) {
-        throw new Error("nonliteral-catalog");
-      }
-      for (const property of declaration.initializer.properties) {
-        if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
-          throw new Error("nonliteral-catalog");
-        }
-        const path = property.name.text;
-        const fields = fieldsOf(literal(property.initializer), path);
-        entries.push({ path, ...fields, translationHash: translationHash(fields) });
-      }
-    }
-  }
-  return entries;
-}
-
-/** Файлы каталога обязаны присутствовать все: отсутствие файла — не «нет записей», а неполный каталог. */
-const CATALOG_FILES = ["ru-part-1.ts", "ru-part-2.ts", "ru-part-3.ts", "ru-variants.ts"] as const;
+const CATALOG_FILES = ["ru-catalog.json", "variant-review.json"] as const;
 const CATALOG_DIR = "src/translations/";
-
-/**
- * Вариант идентифицируется парой `(path, sourceHash)`: один путь в разных версиях хоста имеет разные
- * `sourceHash`, и такие варианты обязаны сосуществовать. Совпадающий вариант (тот же `translationHash`)
- * схлопывается, конфликтующий перевод того же варианта — отказ.
- */
-function addEntry(entries: Map<string, CatalogEntry>, entry: CatalogEntry): void {
-  const key = `${entry.path}\u0000${entry.sourceHash}`;
-  const existing = entries.get(key);
-  if (existing) {
-    if (existing.translationHash !== entry.translationHash) {
-      throw new Error(`conflicting-translation:${entry.path}:${entry.sourceHash}`);
-    }
-    return;
-  }
-  entries.set(key, entry);
-}
-
-function sortedEntries(entries: Map<string, CatalogEntry>): readonly CatalogEntry[] {
-  return [...entries.values()].sort((left, right) =>
-    left.path.localeCompare(right.path) || left.sourceHash.localeCompare(right.sourceHash));
-}
 
 /**
  * Области, изменение которых отменяет силу измерения: покрытие и дрейф считают скрипты репозитория, и
@@ -233,7 +156,11 @@ const MEASUREMENT_EXEMPT = CATALOG_FILES.map(name => `${CATALOG_DIR}${name}`);
  * сценарий, не может быть проверен тем же прогоном. Сравнение идёт с базовым блобом — как у прочего
  * измерительного кода, — поэтому правка сценария отменяет силу измерения до первого подпроцесса.
  */
-const MEASUREMENT_SCENARIOS: readonly string[] = ACCEPTANCE_SCENARIO_FILES;
+const MEASUREMENT_SCENARIOS: readonly string[] = [
+  "test/maintenance-actions.e2e.test.ts", "test/maintenance-translation.test.ts",
+  "test/maintenance-github.e2e.test.ts", "test/maintenance-tree.test.ts",
+  "test/maintenance-semantic.test.ts", "test/maintenance-measurement-environment.test.ts",
+];
 
 function isMeasurementPath(path: string): boolean {
   if ((MEASUREMENT_CONFIG as readonly string[]).includes(path)) return true;
@@ -249,7 +176,7 @@ function gitBytes(worktree: string, args: readonly string[]): { stdout: Uint8Arr
 /**
  * Изменившиеся файлы измерительного кода: базовый коммит против фактического рабочего дерева.
  *
- * Сравнивается весь код под `scripts/` и `src/` (кроме четырёх файлов каталога), а не только две точки
+ * Сравнивается весь код под `scripts/` и `src/` (кроме JSON-данных каталога/ревью), а не только две точки
  * входа: иначе изменение вспомогательного модуля прошло бы мимо проверки. Пустое множество — измерительный
  * код не тронут, и его результату можно верить.
  */
@@ -355,7 +282,7 @@ export async function packageChanges(worktree: string, baseSha: string, candidat
  * записи — что заявленная поддержка ничем не подтверждена.
  */
 export async function claimedVersions(worktree: string): Promise<readonly string[]> {
-  const file = Bun.file(`${worktree}/baseline/supported-hosts.json`);
+  const file = Bun.file(join(worktree, SUPPORTED_HOSTS));
   if (!await file.exists()) throw new Error("supported-hosts-unreadable");
   let parsed: unknown;
   try {
@@ -394,44 +321,58 @@ export async function claimedVersions(worktree: string): Promise<readonly string
   return versions;
 }
 
-/** Каталог рабочего дерева: все файлы `src/translations/ru-part-*.ts`, затем исторические варианты. */
+/** Only the effective JSON catalog is a candidate input; old TS layouts are deliberately unsupported. */
 export async function readCatalog(worktree: string): Promise<readonly CatalogEntry[]> {
-  const entries = new Map<string, CatalogEntry>();
-  for (const name of CATALOG_FILES) {
-    const file = Bun.file(`${worktree}/src/translations/${name}`);
-    if (!await file.exists()) throw new Error(`catalog-file-missing:${name}`);
-    for (const entry of catalogFromSource(await file.text())) addEntry(entries, entry);
-  }
-  return sortedEntries(entries);
+  return catalogEntries(await readCatalogJSON(worktree));
 }
 
-/** Каталог из конкретного коммита — база для проверки сохранности исторических вариантов. */
 export function readCatalogAtCommit(worktree: string, sha: string): readonly CatalogEntry[] {
-  const entries = new Map<string, CatalogEntry>();
-  for (const name of CATALOG_FILES) {
-    const blob = Bun.spawnSync(["git", "show", `${sha}:src/translations/${name}`], { cwd: worktree, stdout: "pipe", stderr: "pipe" });
-    if (blob.exitCode !== 0) throw new Error(`catalog-blob-missing:${sha}:${name}`);
-    for (const entry of catalogFromSource(blob.stdout.toString())) addEntry(entries, entry);
-  }
-  return sortedEntries(entries);
+  const blob = gitBytes(worktree, ["show", `${sha}:${CATALOG_PATH}`]);
+  if (blob.code !== 0) throw new Error(`catalog-blob-missing:${sha}:ru-catalog.json`);
+  return catalogEntries(parseCatalogJSON(new TextDecoder().decode(blob.stdout)));
 }
 
+/** Every source/platform observation is independently preserved; new observations are additive. */
 export function identitiesOf(entries: readonly CatalogEntry[]): readonly string[] {
-  return entries.map(entry => `${entry.path}:${entry.sourceHash}:${entry.translationHash}`).sort();
+  return entries.flatMap(entry => entry.platforms.flatMap(platform => entry.observedIn.map(version =>
+    `${entry.path}:${entry.sourceHash}:${platform}:${version}`,
+  ))).sort();
 }
 
-/** Пары «шаблон исходника → перевод» для проверки маркеров. */
-export function markerPairsOf(entries: readonly CatalogEntry[]): readonly { path: string; source: string; ru: string }[] {
-  const pairs: { path: string; source: string; ru: string }[] = [];
+/** Historical Russian bytes are protected separately from source provenance. */
+export function translationIdentitiesOf(entries: readonly CatalogEntry[]): readonly string[] {
+  return entries.flatMap(entry => entry.platforms.map(platform =>
+    `${entry.path}:${entry.sourceHash}:${platform}:${entry.translationHash}`,
+  )).sort();
+}
+
+/** Every display field is paired with source metadata of the exact source identity. */
+export function markerPairsOf(entries: readonly CatalogEntry[], snapshots: readonly BaselineSnapshot[]): SemanticEvidence["markerPairs"] {
+  const pairs: { path: string; sourceHash: string; translationHash: string; field: string; source: string; ru: string }[] = [];
   for (const entry of entries) {
-    if (entry.descriptionSource && entry.description) {
-      pairs.push({ path: entry.path, source: entry.descriptionSource, ru: entry.description });
+    const source = snapshots.map(snapshot => snapshot.settings[entry.path]).find(source => source?.sourceHash === entry.sourceHash);
+    if (!source) throw new Error(`catalog-source-missing:${entry.path}:${entry.sourceHash}`);
+    const add = (field: string, english: unknown, russian: unknown) => {
+      if (typeof english === "string" && typeof russian === "string") pairs.push({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, field, source: english, ru: russian });
+      else if (typeof english === "string" || typeof russian === "string") throw new Error(`catalog-field-source-mismatch:${entry.path}:${field}`);
+    };
+    add("label", source.label, entry.label);
+    if (entry.descriptionSource !== undefined && entry.descriptionSource !== source.description) throw new Error(`catalog-description-source-mismatch:${entry.path}`);
+    add("description", source.description, entry.description);
+    add("warning", source.warning, entry.warning);
+    if (Array.isArray(source.options)) for (const option of source.options) {
+      add(`options.${option.value}.label`, option.label, entry.options?.[option.value]?.label);
+      add(`options.${option.value}.description`, option.description, entry.options?.[option.value]?.description);
     }
+    const sourceOptionKeys = Array.isArray(source.options) ? source.options.map(option => option.value) : [];
+    if (Object.keys(entry.options ?? {}).some(value => !sourceOptionKeys.includes(value))) throw new Error(`catalog-option-source-mismatch:${entry.path}`);
   }
   return pairs;
 }
 
-export function validateSemantic(evidence: SemanticEvidence, policy: ControllerPolicy): SemanticVerdict {
+export function validateSemantic(
+  evidence: SemanticEvidence, policy: ControllerPolicy, proof?: ReviewProofContext,
+): SemanticVerdict {
   // Пустой фактический каталог или пустая база — это не «нечего проверять»: каталог проекта всегда непуст,
   // поэтому пустое множество идентичностей означает непрочитанный/неполный каталог и обязано отказать.
   if (evidence.identities.length === 0) return { ok: false, reason: "catalog-empty" };
@@ -482,8 +423,7 @@ export function validateSemantic(evidence: SemanticEvidence, policy: ControllerP
       return expanded.endsWith("/") ? path.startsWith(expanded) : path === expanded;
     });
     if (!allowed) return { ok: false, reason: `path-outside-policy:${path}` };
-    // Изменение в каталоге перевода вне четырёх известных файлов — неизвестная структура: не проверяется
-    // построчно и потому не допускается. Такой файл требует отдельного полного ревью каталога.
+    // Only the two explicit JSON data files are mutable under translations; runtime modules are protected.
     const name = path.startsWith(CATALOG_DIR) ? path.slice(CATALOG_DIR.length) : undefined;
     if (name !== undefined && !(CATALOG_FILES as readonly string[]).includes(name)) {
       return { ok: false, reason: `unknown-catalog-file:${path}` };
@@ -496,10 +436,13 @@ export function validateSemantic(evidence: SemanticEvidence, policy: ControllerP
   for (const identity of evidence.identitiesBefore) {
     if (!current.has(identity)) return { ok: false, reason: `historical-identity-removed:${identity}` };
   }
+  const translations = new Set(evidence.translationIdentities);
+  for (const identity of evidence.translationIdentitiesBefore) {
+    if (!translations.has(identity)) return { ok: false, reason: `historical-translation-changed:${identity}` };
+  }
 
-  // Строки ревью называются путями настроек и покрывают варианты изменённых файлов каталога точно — без
-  // пропусков и без лишних записей. Ключ — пара «путь настройки + sourceHash»: у одного пути бывает
-  // несколько исторических вариантов, и путь файла такую пару не заменяет.
+  // Review rows cover the semantic delta exactly: path/sourceHash, display hash, and observed platforms.
+  // A changed JSON file does not invalidate unchanged identities.
   const byPath = new Map<string, Set<string>>();
   for (const identity of evidence.identities) {
     const index = identity.indexOf(":");
@@ -510,7 +453,7 @@ export function validateSemantic(evidence: SemanticEvidence, policy: ControllerP
     byPath.set(path, set);
   }
   const key = (path: string, sourceHash: string): string => `${path}:${sourceHash}`;
-  if (!evidence.reviewRequired) {
+  if (!evidence.reviewRequired && evidence.changedCatalogVariants.length === 0) {
     if (evidence.reviewRows.length > 0) return { ok: false, reason: "review-rows-unexpected" };
   } else {
     for (const variant of evidence.changedCatalogVariants) {
@@ -519,6 +462,9 @@ export function validateSemantic(evidence: SemanticEvidence, policy: ControllerP
       if (rows.length === 0) return { ok: false, reason: `review-row-missing:${keyed}` };
       if (rows.length > 1) return { ok: false, reason: `review-row-duplicate:${keyed}` };
       const row = rows[0]!;
+      if (row.review !== "independently-confirmed" || typeof row.comparison !== "string" || !row.comparison.trim() || typeof row.reviewTask !== "string" || !/^\d+:\d+$/.test(row.reviewTask) || typeof row.evidence !== "string" || !/^[a-f0-9]{64}$/.test(row.evidence)) {
+        return { ok: false, reason: `review-proof-invalid:${keyed}` };
+      }
       if (row.translationHash !== variant.translationHash) {
         return { ok: false, reason: `review-translation-mismatch:${keyed}` };
       }
@@ -534,11 +480,31 @@ export function validateSemantic(evidence: SemanticEvidence, policy: ControllerP
       const actual = byPath.get(row.path);
       if (!actual || !actual.has(row.sourceHash)) return { ok: false, reason: `review-hash-mismatch:${row.path}` };
     }
+    if (evidence.changedCatalogVariants.length > 0) {
+      if (!proof) return { ok: false, reason: "review-context-missing" };
+      if (!/^\d+$/.test(proof.runId) || !/^\d+$/.test(proof.runAttempt)) return { ok: false, reason: "review-context-invalid" };
+      for (const row of evidence.reviewRows) {
+        const keyed = key(row.path, row.sourceHash);
+        if (row.reviewTask !== `${proof.runId}:${proof.runAttempt}`) return { ok: false, reason: `review-task-mismatch:${keyed}` };
+        const artifact = proof.artifacts.get(keyed);
+        if (!artifact) return { ok: false, reason: `review-artifact-missing:${keyed}` };
+        const digest = artifact.bytes === undefined ? artifact.sha256 : createHash("sha256").update(artifact.bytes, "utf8").digest("hex");
+        if (!/^[a-f0-9]{64}$/.test(digest) || (artifact.sha256 !== undefined && artifact.sha256 !== digest) || row.evidence !== digest) {
+          return { ok: false, reason: `review-evidence-mismatch:${keyed}` };
+        }
+      }
+    }
   }
 
   for (const pair of evidence.markerPairs) {
-    const missing = missingMarkers(pair.source, pair.ru);
-    if (missing.length) return { ok: false, reason: `placeholder-lost:${pair.path}:${missing.join(",")}` };
+    const historical = pair.path === "statusLine.compactThinkingLevel" && pair.field === "description"
+      && Object.hasOwn(HISTORICAL_MARKER_TRANSLATIONS,pair.sourceHash)
+      && HISTORICAL_MARKER_TRANSLATIONS[pair.sourceHash] === pair.translationHash
+      && pair.source.includes("<level>") && pair.ru.includes("<уровень>");
+    const russian = historical ? pair.ru.replaceAll("<уровень>","<level>") : pair.ru;
+    if (markers(pair.source).join("\0") !== markers(russian).join("\0")) {
+      return { ok: false, reason: `placeholder-mismatch:${pair.path}:${pair.field}` };
+    }
   }
   return { ok: true };
 }
@@ -615,7 +581,7 @@ export async function collectSemanticEvidence(
     return { failure: error instanceof Error ? error.message : String(error) };
   }
   const versions = [...new Set([...supportedVersions, ...claimed, candidateVersion])];
-  const manifest = await Bun.file(`${worktree}/baseline/supported-hosts.json`).json() as { versions: { version: string; platforms: string[] }[] };
+  const manifest = await Bun.file(join(worktree, SUPPORTED_HOSTS)).json() as { versions: { version: string; platforms: string[] }[] };
   for (const version of versions) {
     const record = manifest.versions.find(record => record.version === version);
     if (!record) return { failure: `supported-version-missing:${version}` };
@@ -637,15 +603,15 @@ export async function collectSemanticEvidence(
   }
   if (entries.length === 0) return { failure: "catalog-unreadable" };
   if (before.length === 0) return { failure: "baseline-catalog-unreadable" };
-  // Сохранность истории проверяется тем же сравнением множеств идентичностей `путь:sourceHash:translationHash`,
-  // что и в `validateSemantic`: изменённая запись исторического варианта (правка `label`, `description`,
-  // `descriptionSource`, `warning`, `options` при том же `sourceHash`) даёт другую идентичность и обязана
-  // отказать здесь — до измерения. Новые записи при этом не запрещены: база обязана остаться подмножеством,
-  // поэтому настоящее расширение каталога под новый upstream проходит и не «замораживается».
+  // Source/platform/observation identities and historical translation bytes are separate invariants.
+  // Neither a new observation nor a reviewer approval authorizes rewriting an old translation.
   {
     const current = new Set(identitiesOf(entries));
     const removed = identitiesOf(before).find(identity => !current.has(identity));
     if (removed !== undefined) return { failure: `historical-identity-removed:${removed}` };
+    const translations = new Set(translationIdentitiesOf(entries));
+    const changed = translationIdentitiesOf(before).find(identity => !translations.has(identity));
+    if (changed !== undefined) return { failure: `historical-translation-changed:${changed}` };
   }
   const acceptedManifest = gitBytes(worktree, ["show", `${baseSha}:package.json`]);
   if (acceptedManifest.code !== 0) return { failure: "package-baseline-unavailable" };
@@ -669,67 +635,76 @@ export async function collectSemanticEvidence(
     if ("failure" in lock) return lock;
     const measured = await collectCoverageAndDrift(prepared.root, versions);
     if ("failure" in measured) return measured;
-    const requirements = await changedCatalogRequirements(prepared.root, changedPaths, versions);
+    const requirements = await changedCatalogRequirements(worktree, baseSha, versions);
     if ("failure" in requirements) return requirements;
+    const snapshots: BaselineSnapshot[] = [];
+    for (const version of versions) for (const platform of ["win32", "linux", "darwin"]) {
+      snapshots.push(await Bun.file(join(prepared.root, snapshotPath(version, platform))).json() as BaselineSnapshot);
+    }
+    let markerPairs: SemanticEvidence["markerPairs"];
+    try { markerPairs = markerPairsOf(entries, snapshots); }
+    catch (error) { return { failure: error instanceof Error ? error.message : String(error) }; }
     return {
       candidateVersion, supportedVersions: versions,
       coverage: measured.coverage, drift: measured.drift,
-      reviewRows: review ?? [], reviewRequired: review !== undefined, changedPaths,
+      reviewRows: review ?? [], reviewRequired: requirements.variants.length > 0 || review !== undefined, changedPaths,
       changedCatalogVariants: requirements.variants,
-      identities: identitiesOf(entries), identitiesBefore: identitiesOf(before), markerPairs: markerPairsOf(entries),
+      identities: identitiesOf(entries), identitiesBefore: identitiesOf(before), markerPairs,
+      translationIdentities: translationIdentitiesOf(entries), translationIdentitiesBefore: translationIdentitiesOf(before),
     };
   } finally {
     await dispose(prepared.root);
   }
 }
 
-/**
- * Требования строк ревью для изменённых файлов каталога.
- *
- * Набор платформ берётся из **принятых** базовых снимков (`baseline/<version>-<platform>.json` — входящие
- * артефакты, а не отчёт исполнителя): вариант отдаётся ровно тем платформам, чей снимок несёт этот
- * `sourceHash` для этого пути настройки. Манифест ревью, назвавший другой набор, не является доказательством.
- */
+/** Review only new identities and platform extensions, never every row in a changed data file. */
 export async function changedCatalogRequirements(
-  worktree: string, changedPaths: readonly string[], versions: readonly string[],
+  worktree: string, baseSha: string, versions: readonly string[],
 ): Promise<{ readonly variants: readonly {
   readonly path: string; readonly sourceHash: string; readonly translationHash: string; readonly platforms: readonly string[];
 }[] } | { readonly failure: string }> {
-  const platformOf = new Map<string, string[]>();
-  for (const version of versions) {
-    for (const platform of ["win32", "linux", "darwin"] as const) {
-      const file = Bun.file(`${worktree}/baseline/${version}-${platform}.json`);
+  try {
+    const current = await readCatalog(worktree);
+    const before = readCatalogAtCommit(worktree, baseSha);
+    const identities = new Set(identitiesOf(current));
+    const removed = identitiesOf(before).find(identity => !identities.has(identity));
+    if (removed) return { failure: `historical-identity-removed:${removed}` };
+    const translations = new Set(translationIdentitiesOf(current));
+    const changed = translationIdentitiesOf(before).find(identity => !translations.has(identity));
+    if (changed) return { failure: `historical-translation-changed:${changed}` };
+    const observed = new Map<string, Set<string>>();
+    const oldObserved = new Map<string, Set<string>>();
+    for (const version of versions) for (const platform of ["win32", "linux", "darwin"]) {
+      const path = snapshotPath(version, platform);
+      const file = Bun.file(join(worktree, path));
       if (!await file.exists()) return { failure: `baseline-missing:${version}-${platform}` };
-      const snapshot = JSON.parse(await file.text()) as { settings?: Record<string, { sourceHash?: string }> };
-      for (const [path, setting] of Object.entries(snapshot.settings ?? {})) {
-        if (typeof setting?.sourceHash !== "string") continue;
-        const key = `${path}\u0000${setting.sourceHash}`;
-        const platforms = platformOf.get(key) ?? [];
-        if (!platforms.includes(platform)) platforms.push(platform);
-        platformOf.set(key, platforms);
+      const add = (text: string, target: Map<string, Set<string>>) => {
+        const snapshot = JSON.parse(text) as BaselineSnapshot;
+        for (const [path, setting] of Object.entries(snapshot.settings)) {
+          const key = `${path}\0${setting.sourceHash}`;
+          const platforms = target.get(key) ?? new Set<string>();
+          platforms.add(platform); target.set(key, platforms);
+        }
+      };
+      add(await file.text(), observed);
+      const blob = gitBytes(worktree, ["show", `${baseSha}:${path}`]);
+      if (blob.code === 0) add(new TextDecoder().decode(blob.stdout), oldObserved);
+    }
+    const variants: { path: string; sourceHash: string; translationHash: string; platforms: readonly string[] }[] = [];
+    for (const entry of current) {
+      const key = `${entry.path}\0${entry.sourceHash}`;
+      const previous = before.filter(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash);
+      const platforms = [...(observed.get(key) ?? [])].filter(platform => entry.platforms.includes(platform as SourcePlatform)).sort();
+      const extended = entry.platforms.some(platform => !previous.some(old => old.platforms.includes(platform)))
+        || platforms.some(platform => !oldObserved.get(key)?.has(platform));
+      if (!previous.length || extended) {
+        if (!platforms.length) return { failure: `catalog-variant-without-baseline:${entry.path}:${entry.sourceHash}` };
+        if (platforms.join(",") !== [...entry.platforms].sort().join(",")) return { failure: `catalog-platform-mismatch:${entry.path}:${entry.sourceHash}` };
+        variants.push({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms });
       }
     }
+    return { variants };
+  } catch (error) {
+    return { failure: error instanceof Error ? error.message : String(error) };
   }
-  // Варианты изменённых файлов каталога считаются из фактического содержимого, а не из имён файлов:
-  // строки ревью адресуют пару «путь настройки + sourceHash», и только она отличает исторический вариант.
-  const variants: { path: string; sourceHash: string; translationHash: string; platforms: readonly string[] }[] = [];
-  for (const path of changedPaths) {
-    const name = path.startsWith(CATALOG_DIR) ? path.slice(CATALOG_DIR.length) : undefined;
-    if (name === undefined || !(CATALOG_FILES as readonly string[]).includes(name)) continue;
-    const file = Bun.file(`${worktree}/${path}`);
-    if (!await file.exists()) return { failure: `catalog-file-missing:${name}` };
-    for (const entry of catalogFromSource(await file.text())) {
-      const platforms = platformOf.get(`${entry.path}\u0000${entry.sourceHash}`);
-      // Вариант, который не отдаёт ни один поддерживаемый хост, нечем подтвердить платформенно: это отказ,
-      // а не строка с пустым набором платформ, которую можно «удовлетворить».
-      if (!platforms || platforms.length === 0) {
-        return { failure: `catalog-variant-without-baseline:${entry.path}:${entry.sourceHash}` };
-      }
-      variants.push({
-        path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash,
-        platforms: [...platforms].sort(),
-      });
-    }
-  }
-  return { variants };
 }

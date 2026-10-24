@@ -72,8 +72,11 @@ export interface GithubPort {
   verifyPublishedRelease(tag: string, runId: string, mergeSha: string): Promise<{ kind: "found" } | { kind: "pending" } | { kind: "blocked"; reason: string }>;
 }
 
-async function gh(args: readonly string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
-  const child = Bun.spawn(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
+async function gh(args: readonly string[], timeoutMs: number, token?: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/TOKEN|SECRET|PASSWORD|API_KEY|AUTHORIZATION|CREDENTIAL/i.test(key)) delete env[key];
+  if (token) env.GH_TOKEN = token;
+  const child = Bun.spawn(["gh", ...args], { env, stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill(), timeoutMs);
   try {
     const [stdout, stderr, code] = await Promise.all([
@@ -90,12 +93,12 @@ async function gh(args: readonly string[], timeoutMs: number): Promise<{ code: n
 export class GitHub implements GithubPort {
   private identity?: ControllerIdentity;
 
-  constructor(private readonly policy: ControllerPolicy) {}
+  constructor(private readonly policy: ControllerPolicy, private readonly token = process.env.GH_TOKEN) {}
 
   /** Фактическая личность и её сверка с политикой. Кэшируется в пределах процесса. */
   async assertIdentity(): Promise<ControllerIdentity> {
     if (this.identity) return this.identity;
-    const result = await gh(["api", "user"], this.policy.deadlinesMs.command);
+    const result = await gh(["api", "user"], this.policy.deadlinesMs.command, this.token);
     if (result.code !== 0) throw new Error("identity-unavailable");
     const user = asRecord(JSON.parse(result.stdout) as unknown);
     const login = readString(user, "login");
@@ -107,14 +110,17 @@ export class GitHub implements GithubPort {
   }
 
   private async api(path: string): Promise<unknown> {
-    const result = await gh(["api", path], this.policy.deadlinesMs.command);
-    if (result.code !== 0) throw Object.assign(new Error("github-read-unavailable"), { cause: result.stderr });
+    const result = await gh(["api", path], this.policy.deadlinesMs.command, this.token);
+    if (result.code !== 0) {
+      if (/HTTP 404/.test(result.stderr)) throw new Error("github-not-found");
+      throw new Error("github-read-unavailable");
+    }
     return JSON.parse(result.stdout) as unknown;
   }
 
   private async mutate(args: readonly string[]): Promise<string> {
     await this.assertIdentity();
-    const result = await gh(args, this.policy.deadlinesMs.command);
+    const result = await gh(args, this.policy.deadlinesMs.command, this.token);
     if (result.code !== 0) throw Object.assign(new Error("github-mutation-refused"), { cause: result.stderr });
     return result.stdout;
   }
@@ -162,13 +168,18 @@ export class GitHub implements GithubPort {
   /** Открытые запросы — вход для решения precheck. */
   async openPullRequests(): Promise<readonly PrObservation[]> {
     const root = `repos/${this.policy.repository}`;
-    const raw = await this.api(`${root}/pulls?state=open&per_page=100`);
-    if (!Array.isArray(raw)) throw new Error("pull-list-unreadable");
-    return raw.map(asRecord).filter((row): row is Record<string, unknown> => row !== undefined).map(row => this.readPr(row));
+    const rows: PrObservation[] = [];
+    for (let page = 1; page <= 100; page++) {
+      const raw = await this.api(`${root}/pulls?state=open&per_page=100&page=${page}`);
+      if (!Array.isArray(raw) || raw.some(row => !asRecord(row))) throw new Error("pull-list-unreadable");
+      rows.push(...raw.map(row => this.readPr(asRecord(row)!)));
+      if (raw.length < 100) return rows;
+    }
+    throw new Error("pull-list-truncated");
   }
 
   private async refSha(branch: string): Promise<string | undefined> {
-    const raw = await this.api(`repos/${this.policy.repository}/git/ref/heads/${branch}`).catch(() => undefined);
+    const raw = await this.api(`repos/${this.policy.repository}/git/ref/heads/${branch}`).catch(error => { if (error instanceof Error && error.message === "github-not-found") return undefined; throw error; });
     return readPath(raw, "object", "sha");
   }
 
@@ -321,7 +332,7 @@ export class GitHub implements GithubPort {
   }
 
   async tag(tag: string, sha: string): Promise<void> {
-    const existing = await this.api(`repos/${this.policy.repository}/git/ref/tags/${tag}`).catch(() => undefined);
+    const existing = await this.api(`repos/${this.policy.repository}/git/ref/tags/${tag}`).catch(error => { if (error instanceof Error && error.message === "github-not-found") return undefined; throw error; });
     const existingSha = readPath(existing, "object", "sha");
     if (existingSha) {
       if (existingSha !== sha) throw new Error("tag-conflict");
@@ -334,9 +345,15 @@ export class GitHub implements GithubPort {
   }
 
   async releaseState(tag: string): Promise<ReleaseState | undefined> {
-    const raw = await this.api(`repos/${this.policy.repository}/releases?per_page=100`);
-    if (!Array.isArray(raw)) throw new Error("release-list-unreadable");
-    const release = raw.map(asRecord).find(row => readString(row, "tag_name") === tag);
+    const releases: Record<string, unknown>[] = [];
+    for (let page = 1; page <= 100; page++) {
+      const raw = await this.api(`repos/${this.policy.repository}/releases?per_page=100${page === 1 ? "" : `&page=${page}`}`);
+      if (!Array.isArray(raw) || raw.some(row => !asRecord(row))) throw new Error("release-list-unreadable");
+      releases.push(...raw as Record<string, unknown>[]);
+      if (raw.length < 100) break;
+      if (page === 100) throw new Error("release-list-truncated");
+    }
+    const release = releases.find(row => readString(row, "tag_name") === tag);
     if (!release) return undefined;
     return {
       tag,
@@ -391,7 +408,7 @@ export class GitHub implements GithubPort {
 
   /** Коммит, на который указывает тег (аннотированный тег разыменовывается). */
   async tagTarget(tag: string): Promise<string | undefined> {
-    const ref = await this.api(`repos/${this.policy.repository}/git/ref/tags/${tag}`).catch(() => undefined);
+    const ref = await this.api(`repos/${this.policy.repository}/git/ref/tags/${tag}`).catch(error => { if (error instanceof Error && error.message === "github-not-found") return undefined; throw error; });
     const sha = readPath(ref, "object", "sha");
     const type = readPath(ref, "object", "type");
     if (!sha) return undefined;
@@ -426,12 +443,12 @@ export class GitHub implements GithubPort {
         || readString(check, "status") !== "completed" || readString(check, "conclusion") !== "success") {
         return { kind: "blocked", reason: "release-check-proof-invalid" };
       }
-      const bytes = await downloadReleaseAsset(this.policy.repository, catalogs[0]!.id);
+      const bytes = await downloadReleaseAsset(this.policy.repository, catalogs[0]!.id, this.token);
       directory = await mkdtemp(join(tmpdir(), "maintenance-published-catalog-"));
       const catalogPath = join(directory, CATALOG_ASSET);
       await writeFile(catalogPath, bytes);
       // Supplying downloaded bytes is essential: undefined asks the generator for a NEW local catalog.
-      const { release } = await loadVerifiedCatalog(tag, runId, catalogPath, this.policy.repository);
+      const { release } = await loadVerifiedCatalog(tag, runId, catalogPath, this.policy.repository, this.token);
       if (release.targetCommitSha !== mergeSha) return { kind: "blocked", reason: "release-target-mismatch" };
       return { kind: "found" };
     } catch (error) {

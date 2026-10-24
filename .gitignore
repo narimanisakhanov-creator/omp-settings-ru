@@ -12,8 +12,16 @@ dist/
 .firecrawl/
 upgrade-report.md
 check-output.txt
-# приватные планы, agent-инструкции и backups канала — не часть публичного плагина
+*.tsbuildinfo
+*.tmp
+*.dump
+# локальные снимки метаданных хоста: канонический отслеживаемый экземпляр — test/fixtures/host-snapshots/
+baseline/
+# приватные планы, agent-инструкции, трассы сессий и backups канала — не часть публичного плагина
 .kiro/
 .agents/
+.hiro/
+.triage/
+.orca/
 /*_PLAN.md
 /*private-backup*.json

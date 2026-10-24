@@ -2,25 +2,83 @@ name: release
 on:
   push:
     tags: ['v*']
+  # Recovery dispatch only: the tag comes from the ref, never from an input.
+  workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false
 jobs:
-  release:
+  # Read-only proof and build. No write token exists in this job, so neither the tag code
+  # nor the native smoke can mutate a release, a ref or a tag.
+  verify:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-name: ${{ steps.artifact-name.outputs.name }}
     steps:
+      - name: Validate the tag ref before any checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "release requires a tag ref, got $GITHUB_REF" >&2; exit 1 ;;
+          esac
+          tag="${GITHUB_REF#refs/tags/}"
+          if ! printf '%s' "$tag" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "release tag must be exact stable vX.Y.Z, got $tag" >&2
+            exit 1
+          fi
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Dereference the annotated tag to its release commit
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          sha=$(git rev-parse --verify "${tag}^{commit}")
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "tag did not dereference to a commit" >&2
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$sha" ]; then
+            echo "checked-out commit is not the dereferenced tag commit" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      # The build and smoke run on this exact commit, not on a tag name that could move.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Confirm the exact release commit is checked out
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "${{ steps.release.outputs.sha }}" ]; then
+            echo "checkout is not the release commit" >&2
+            exit 1
+          fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
-      - name: Validate tag version
+      - name: Validate tag version against this commit's package.json
         shell: bash
         run: |
-          tag_version=${GITHUB_REF_NAME#v}
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
           package_version=$(bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).version)')
           if [ "$tag_version" != "$package_version" ]; then
             echo "Tag version $tag_version does not match package.json version $package_version" >&2
@@ -33,34 +91,112 @@ jobs:
       - name: Prepare exact native updater host
         id: updater-host
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           HOST_VERSION: ${{ steps.host-version.outputs.version }}
         run: bun scripts/ci/prepare-host.ts "$HOST_VERSION" linux
       - run: bun run check
         env:
           OMP_UPDATER_EXECUTABLE: ${{ steps.updater-host.outputs.executable }}
           OMP_UPDATER_HOST_VERSION: ${{ steps.host-version.outputs.version }}
-      - id: pack
+      # All release assets are staged together so one artifact carries the exact bytes
+      # that the privileged job will re-hash before it uploads anything.
+      - name: Build archive, checksums, catalog, notes and asset manifest
         shell: bash
-        run: |
-          archive=$(npm pack --silent)
-          sha256sum "$archive" > SHA256SUMS
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
-      # The catalog pins the annotated tag's commit, so it is built from the dereferenced
-      # commit rather than from the moving ref name.
-      - name: Build the marketplace catalog for this exact commit
-        shell: bash
-        run: |
-          commit=$(git rev-parse "${GITHUB_REF_NAME}^{commit}")
-          bun scripts/marketplace-catalog.ts --build --version "${GITHUB_REF_NAME#v}" --commit "$commit" --output "$RUNNER_TEMP/marketplace.json"
-      # A draft release is not `latest`, so the catalog can never be observed missing. The
-      # draft is promoted by the marketplace-index workflow only after the tag-commit check
-      # run succeeds and every uploaded asset is re-downloaded and re-hashed.
-      - name: Create draft GitHub Release with archive, checksums and catalog
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/release-assets"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+          archive=$(npm pack --silent --pack-destination "$staging")
+          archive_name=$(basename "$archive")
+          (cd "$staging" && sha256sum "$archive_name" > SHA256SUMS)
+          # The catalog pins the annotated tag's commit, so it is built from the
+          # dereferenced commit rather than from the moving ref name.
+          bun scripts/marketplace-catalog.ts --build --version "${TAG#v}" --commit "$SHA" --output "$staging/marketplace.json"
+          bun -e 'const v=process.argv.at(-1); const s=await Bun.file("CHANGELOG.md").text(); const escaped=v.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&"); const re=new RegExp(`^##\\s+(?:\\[)?${escaped}(?:\\])?(?:\\([^\\n]*\\))?[^\\n]*\\n[\\s\\S]*?(?=\\n##\\s|(?![\\s\\S]))`,"m"); process.stdout.write(s.match(re)?.[0]?.trim() ?? "")' "${TAG#v}" > "$staging/release-notes.md"
+          bun scripts/release-actions.ts manifest --dir "$staging" --repository "$GITHUB_REPOSITORY" --tag "$TAG" --version "${TAG#v}" --release-sha "$SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+      # The name carries the attempt that produced these bytes; the privileged job derives
+      # the attempt from it instead of reading a step output that a partial rerun may lose.
+      - id: artifact-name
+        shell: bash
+        run: echo "name=release-${GITHUB_REF_NAME}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: ${{ runner.temp }}/release-assets
+          if-no-files-found: error
+          retention-days: 7
+  # Privileged job on a fresh runner. It executes only trusted-main scripts, reads the
+  # release artifact by immutable id, and reconciles the draft without ever overwriting
+  # an existing or conflicting asset.
+  draft:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - name: Require trusted main before reading any tag object
         shell: bash
         run: |
-          version=${GITHUB_REF_NAME#v}
-          notes=$(bun -e 'const v=process.argv.at(-1); const s=await Bun.file("CHANGELOG.md").text(); const escaped=v.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&"); const re=new RegExp(`^##\\s+(?:\\[)?${escaped}(?:\\])?(?:\\([^\\n]*\\))?[^\\n]*\\n[\\s\\S]*?(?=\\n##\\s|(?![\\s\\S]))`,"m"); process.stdout.write(s.match(re)?.[0]?.trim() ?? "")' "$version")
-          gh release create "$GITHUB_REF_NAME" "${{ steps.pack.outputs.archive }}" SHA256SUMS "$RUNNER_TEMP/marketplace.json" --title "$GITHUB_REF_NAME" --draft --notes "$notes"
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse refs/remotes/origin/main)" ]; then
+            echo "draft job is not on trusted main" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact-id }}
+          path: ${{ runner.temp }}/release-assets
+      - name: Assert the artifact identity before any write
+        shell: bash
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          ARTIFACT_ID: ${{ needs.verify.outputs.artifact-id }}
+          ARTIFACT_NAME: ${{ needs.verify.outputs.artifact-name }}
+        run: |
+          set -euo pipefail
+          # The artifact name is the only durable record of the attempt that produced the
+          # bytes; a missing or foreign value must stop here, not mis-bind the manifest.
+          if ! printf '%s' "$ARTIFACT_NAME" | grep -Eq "^release-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-${GITHUB_RUN_ID}-[1-9][0-9]*$"; then
+            echo "artifact name does not belong to this run: $ARTIFACT_NAME" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "artifact id is not an immutable positive integer: $ARTIFACT_ID" >&2
+            exit 1
+          fi
+          case "$ARTIFACT_NAME" in
+            "release-${TAG}-${GITHUB_RUN_ID}-"*) ;;
+            *) echo "artifact name does not carry tag $TAG" >&2; exit 1 ;;
+          esac
+      - name: Create or resume the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          ARTIFACT_ID: ${{ needs.verify.outputs.artifact-id }}
+          ARTIFACT_NAME: ${{ needs.verify.outputs.artifact-name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/release-actions.ts draft \
+            --tag "$TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --artifact-id "$ARTIFACT_ID" \
+            --artifact-name "$ARTIFACT_NAME" \
+            --assets "$RUNNER_TEMP/release-assets" \
+            --checkout "$GITHUB_WORKSPACE"

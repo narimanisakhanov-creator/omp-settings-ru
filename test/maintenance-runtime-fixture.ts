@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSourceSnapshot } from "../src/report";
 import { hostAliasOf } from "../scripts/maintenance/measurement-environment";
+import { SNAPSHOT_DIR, SUPPORTED_HOSTS, snapshotPath } from "../scripts/maintenance/paths";
 
 export const FIXTURE_PLATFORMS = ["win32", "linux", "darwin"] as const;
 export const FIXTURE_ADDED = ["terminal.programStatus", "tts.localSpeed", "speech.speed", "bash.gitGuard", "worktree.onStart", "worktree.onExit"] as const;
@@ -77,26 +78,31 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     const schemas = Object.fromEntries(FIXTURE_PLATFORMS.map(platform => [platform,schema(version === candidate,platform)]));
     await publish("@oh-my-pi/pi-coding-agent",version,{"config/all-settings.js":`const schemas = ${JSON.stringify(schemas)}; export function orderedSettings() { return Object.entries(schemas[process.platform]).map(([id,definition]) => ({id,definition})); }`});
   }
-  for (const file of ["scripts/check-coverage.ts","scripts/diff-upstream.ts","scripts/matrix-host.ts","scripts/matrix-registry-worker.ts","src/report.ts","src/source.ts","src/source-templates.ts","src/host-types.ts","src/translations/types.ts","src/translations/resolve.ts"]) {
+  for (const file of ["scripts/check-coverage.ts","scripts/diff-upstream.ts","scripts/matrix-host.ts","scripts/matrix-registry-worker.ts","scripts/maintenance/paths.ts","src/report.ts","src/source.ts","src/source-templates.ts","src/host-types.ts","src/translations/types.ts","src/translations/resolve.ts"]) {
     mkdirSync(join(checkout,file,".."),{recursive:true}); copyFileSync(join(repository,file),join(checkout,file));
   }
-  writeFileSync(join(checkout,"src/translations/ru.ts"),`import {ruPart1} from "./ru-part-1"; import {ruPart2} from "./ru-part-2"; import {ruPart3} from "./ru-part-3"; const settings = {}; for (const [index,part] of [ruPart1,ruPart2,ruPart3].entries()) for (const [path,fields] of Object.entries(part)) { settings[path] ??= {variants:[]}; settings[path].variants.push({...fields,platforms:[["win32","linux","darwin"][index]]}); } export const ru = {locale:"ru",settings};`);
-  const catalog = (includeCandidate: boolean, platform: string, exportName: string) => {
-    const entries: Record<string,unknown> = {};
-    for (const version of includeCandidate ? [...versions,candidate] : versions) {
+  writeFileSync(join(checkout,"src/translations/ru.ts"),`import catalog from "./ru-catalog.json"; export const ru = catalog;`);
+  const catalog = (includeCandidate: boolean) => {
+    const settings: Record<string,{variants: {sourceHash:string;label:string;description:string;platforms:string[];observedIn:string[]}[]}> = {};
+    for (const version of includeCandidate ? [...versions,candidate] : versions) for (const platform of FIXTURE_PLATFORMS) {
       const snapshot = buildSourceSnapshot({version,platform,schema:schema(version === candidate,platform)});
-      for (const [path,source] of Object.entries(snapshot.settings)) entries[path] = {sourceHash:source.sourceHash,label:`Перевод ${path}`,description:`Описание ${path}`};
+      for (const [path,source] of Object.entries(snapshot.settings)) {
+        const setting = settings[path] ??= {variants:[]};
+        const existing = setting.variants.find(variant=>variant.sourceHash===source.sourceHash);
+        if (existing) { if (!existing.observedIn.includes(version)) existing.observedIn.push(version); }
+        else setting.variants.push({sourceHash:source.sourceHash,label:`Перевод ${path}`,description:`Описание ${path}`,platforms:[platform],observedIn:[version]});
+      }
     }
-    return `export const ${exportName} = ${JSON.stringify(entries,null,2)};\n`;
+    return JSON.stringify({locale:"ru",settings},null,2)+"\n";
   };
   const manifest = (candidateIncluded: boolean) => ({name:"omp-settings-ru",version:candidateIncluded?"0.6.0":"0.5.0",type:"module",peerDependencies:{},devDependencies:{"@oh-my-pi/pi-utils":"1.0.0",...Object.fromEntries((candidateIncluded?[...versions,candidate]:versions).map(version => [hostAliasOf(version),`npm:@oh-my-pi/pi-coding-agent@${version}`]))}});
   const supported = (included: boolean) => ({schemaVersion:1,versions:(included?[...versions,candidate]:versions).map(version => ({version,package:hostAliasOf(version),platforms:FIXTURE_PLATFORMS}))});
   function data(target: string, included: boolean) {
-    mkdirSync(join(target,"baseline"),{recursive:true});
-    writeFileSync(join(target,"baseline/supported-hosts.json"),JSON.stringify(supported(included)));
-    for (const version of included?[...versions,candidate]:versions) for (const platform of FIXTURE_PLATFORMS) writeFileSync(join(target,`baseline/${version}-${platform}.json`),JSON.stringify(buildSourceSnapshot({version,platform,schema:schema(version===candidate,platform)})));
-    for (const [index,platform] of FIXTURE_PLATFORMS.entries()) writeFileSync(join(target,`src/translations/ru-part-${index+1}.ts`),catalog(included,platform,`ruPart${index+1}`));
-    writeFileSync(join(target,"src/translations/ru-variants.ts"),"export const historical1861 = {};\n");
+    mkdirSync(join(target,SNAPSHOT_DIR),{recursive:true});
+    writeFileSync(join(target,SUPPORTED_HOSTS),JSON.stringify(supported(included)));
+    for (const version of included?[...versions,candidate]:versions) for (const platform of FIXTURE_PLATFORMS) writeFileSync(join(target,snapshotPath(version,platform)),JSON.stringify(buildSourceSnapshot({version,platform,schema:schema(version===candidate,platform)})));
+    writeFileSync(join(target,"src/translations/ru-catalog.json"),catalog(included));
+    writeFileSync(join(target,"src/translations/variant-review.json"),JSON.stringify({variants:[]}));
     writeFileSync(join(target,"package.json"),JSON.stringify(manifest(included),null,2));
   }
   function install() {
@@ -112,6 +118,6 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
   data(checkout,true); install(); const candidateLock = readFileSync(join(checkout,"bun.lock"),"utf8");
   // Restore only this freshly-created fixture to its accepted tree.
   fixtureGit(checkout,["restore","--source=HEAD","--worktree","."]);
-  for (const platform of FIXTURE_PLATFORMS) await rm(join(checkout,`baseline/${candidate}-${platform}.json`),{force:true});
+  for (const platform of FIXTURE_PLATFORMS) await rm(join(checkout,snapshotPath(candidate,platform)),{force:true});
   return {root,checkout,base,registry,versions,candidate,applyCandidate(target) {data(target,true);writeFileSync(join(target,"bun.lock"),candidateLock);},requests:()=>readFileSync(join(registryDir,"requests.log"),"utf8").split("\n").filter(Boolean),async close(){child.kill("SIGKILL");await child.exited;await rm(root,{recursive:true,force:true});}};
 }

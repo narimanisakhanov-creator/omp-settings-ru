@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
 import ts from "typescript";
-import { ru } from "../src/translations/ru";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import manifest from "../src/translations/variant-review.json";
-import type { LocalePack, SourceVariant } from "../src/translations/types";
+import type { LocalePack } from "../src/translations/types";
+import { parseCatalogJSON, translationFieldsHash } from "./maintenance/catalog";
+import { parseStrictJSON } from "./maintenance/json";
 
 // Fixed prior objects, not candidate-controlled tag names or candidate catalog bytes.
 const historicalCommits = ["78fe0ef2360c2265e33bdbbe123a00309d866c46", "98986767a2caea9eb9b1725a0b3f4f2137caaae1"] as const;
+// Existing non-hosted review rows are immutable history, never a template for new approvals.
+const historicalReviewCommit = "370b2028798c5f5c1da797e0d321191ae1780d88";
 const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
-function fieldsHash(variant: SourceVariant): string {
-  const {platforms: _platforms, observedIn: _observed, sourceHash: _source, ...fields} = variant;
-  return digest(JSON.stringify(fields));
-}
+const fieldsHash = translationFieldsHash;
 // Historical files contain literals only. Parse, never execute immutable or candidate TypeScript.
 function literal(node: ts.Expression): unknown {
   if (ts.isStringLiteral(node)) return node.text;
@@ -57,8 +59,15 @@ function historicalIdentity() {
 }
 
 /** Every shipped source/platform/Russian identity needs verified history or exact explicit review. */
-export function verifyVariantReviews(pack: LocalePack = ru, review: typeof manifest = manifest): string[] {
+export function verifyVariantReviews(
+  pack: LocalePack = parseCatalogJSON(readFileSync(join(import.meta.dir,"../src/translations/ru-catalog.json"),"utf8")),
+  review: typeof manifest = parseStrictJSON(readFileSync(join(import.meta.dir,"../src/translations/variant-review.json"),"utf8")) as typeof manifest,
+): string[] {
   const failures: string[] = [];
+  try { parseCatalogJSON(JSON.stringify(pack)); } catch { return ["catalog-invalid"]; }
+  const prior = Bun.spawnSync(["git","show",`${historicalReviewCommit}:src/translations/variant-review.json`],{stdout:"pipe",stderr:"pipe"});
+  if (prior.exitCode !== 0) return ["historical-reviews-unavailable"];
+  const oldRows = (parseStrictJSON(prior.stdout.toString()) as typeof manifest).variants;
   let history: HistoricalCatalogIdentity;
   try { history = historicalIdentity(); } catch { return ["historical-catalog-unavailable"]; }
   if (history.hash !== review.historicalCatalogHash) failures.push("historical-catalog-hash-mismatch");
@@ -69,6 +78,12 @@ export function verifyVariantReviews(pack: LocalePack = ru, review: typeof manif
     const hash = fieldsHash(variant);
     if (hash !== row.translationHash) { failures.push("translation-review-mismatch:" + row.path); continue; }
     if (!row.comparison.trim() || !row.review.trim()) { failures.push("semantic-review-missing:" + row.path); continue; }
+    if (!oldRows.some(old => JSON.stringify(old) === JSON.stringify(row))) {
+      const reviewedAtVersion = (row as unknown as Record<string,unknown>).reviewedAtVersion;
+      if (row.review !== "independently-confirmed" || !/^\d+:\d+$/.test(row.reviewTask ?? "") || !/^[a-f0-9]{64}$/.test(row.evidence ?? "") || typeof reviewedAtVersion !== "string" || !variant.observedIn.includes(reviewedAtVersion)) {
+        failures.push("independent-review-missing:" + row.path); continue;
+      }
+    }
     if (row.path === "title.icons" && !history.identities.has(`${row.path}:${row.sourceHash}:${row.platforms[0]}`) && (row.review !== "independently-confirmed" || !row.reviewTask || !row.evidence)) {
       failures.push("independent-review-missing:title.icons"); continue;
     }

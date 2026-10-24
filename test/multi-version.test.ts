@@ -3,9 +3,10 @@ import { applyTranslations } from "../src/apply-translations";
 import { ru } from "../src/translations/ru";
 import { resolveVariant } from "../src/translations/resolve";
 import type { HostMetadata, HostUiMetadata } from "../src/host-types";
+import { snapshotPath } from "../scripts/maintenance/paths";
 
 async function registry(version: string, platform = "win32"): Promise<HostMetadata> {
-  const baseline = await Bun.file(`baseline/${version}-${platform}.json`).json();
+  const baseline = await Bun.file(snapshotPath(version, platform)).json();
   const schema: HostMetadata["schema"] = {};
   for (const [path, value] of Object.entries(baseline.settings)) {
     const source = value as HostUiMetadata & {sourceHash?: string};

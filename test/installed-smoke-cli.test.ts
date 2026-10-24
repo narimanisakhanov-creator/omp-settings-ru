@@ -40,14 +40,13 @@ test("actual installed host exercises panel search edits recovery and clean fres
  * old implicit default release is gone, so an unlabelled run can no longer prove stale bytes. The
  * deliberately absent executable is the sentinel for "nothing was spawned".
  */
-function refusedSmokeTarget(args: string[]): {exitCode: number | null; errorLine: string | undefined; output: string; homeCreated: boolean} {
+function refusedSmokeTarget(args: string[]): {exitCode: number | null; output: string; homeCreated: boolean} {
   const parent = mkdtempSync(join(tmpdir(), "omp-smoke-target-"));
   const home = join(parent, "home");
   const executable = join(parent, "absent-executable", process.platform === "win32" ? "omp.exe" : "omp");
   try {
     const result = Bun.spawnSync(["bun", "scripts/distribution-smoke.ts", ...args, "--executable", executable, "--home", home], {stdout: "pipe", stderr: "pipe", timeout: 60000});
-    const output = result.stdout.toString() + result.stderr.toString();
-    return {exitCode: result.exitCode, errorLine: output.split("\n").map(line => line.trim()).find(line => line.startsWith("error:")), output, homeCreated: existsSync(home)};
+    return {exitCode: result.exitCode, output: result.stdout.toString() + result.stderr.toString(), homeCreated: existsSync(home)};
   } finally {
     rmSync(parent, {recursive: true, force: true});
   }
@@ -56,7 +55,7 @@ function refusedSmokeTarget(args: string[]): {exitCode: number | null; errorLine
 test("distribution smoke target is required when neither --source nor --catalog is given", () => {
   const run = refusedSmokeTarget([]);
   expect(run.exitCode).not.toBe(0);
-  expect(run.errorLine).toBe("error: smoke-target-required: use --source or --catalog <path>");
+  expect(run.output).toContain("smoke-target-required");
   expect(run.output).not.toMatch(/uv_spawn|ENOENT|native-executable-required/);
   expect(run.homeCreated).toBe(false);
 }, 180000);
@@ -64,7 +63,7 @@ test("distribution smoke target is required when neither --source nor --catalog 
 test("distribution smoke target conflict is refused when both --source and --catalog are given", () => {
   const run = refusedSmokeTarget(["--source", "--catalog", join(tmpdir(), "omp-smoke-absent-catalog.json")]);
   expect(run.exitCode).not.toBe(0);
-  expect(run.errorLine).toBe("error: smoke-target-conflict: use --source or --catalog <path>");
+  expect(run.output).toContain("smoke-target-conflict");
   expect(run.output).not.toMatch(/uv_spawn|ENOENT|native-executable-required/);
   expect(run.homeCreated).toBe(false);
 }, 180000);

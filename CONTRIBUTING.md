@@ -6,9 +6,9 @@
 
 ## граница публичного репозитория
 
-`main` содержит только потребительские материалы плагина: runtime и переводы `src/`, baseline, тесты, документацию, CI и release tooling.
+`main` содержит только потребительские материалы плагина: runtime и переводы `src/`, снимки метаданных хоста в `test/fixtures/host-snapshots/`, тесты, документацию, CI и release tooling.
 
-личная работа агента и сопровождающего остаётся вне checkout: specs и планы (`.kiro/`), agent-инструкции и skills (`.agents/`), заметки, промпты, логи сессий, отчёты о работе, материалы ревью, приватные backups канала и scratch-каталоги вроде `.tools/` и `.smoke/`. `.gitignore` закрывает известные каталоги от случайного `git add -A`; `git check-ignore -v <путь>` показывает сработавшее правило. ignore не заменяет решение: такие файлы не добавляй и через `git add -f`, а отчёты и планы храни вне репозитория.
+личная работа агента и сопровождающего остаётся вне checkout: specs и планы (`.kiro/`), agent-инструкции и skills (`.agents/`), трассы сессий и заметки (`.hiro/`, `.triage/`, `.orca/`), промпты, логи сессий, отчёты о работе, материалы ревью, приватные backups канала и scratch-каталоги вроде `.tools/` и `.smoke/`. локальные снимки `baseline/` — тоже вне Git: канонический экземпляр один, `test/fixtures/host-snapshots/`. `.gitignore` закрывает известные каталоги от случайного `git add -A`; `git check-ignore -v <путь>` показывает сработавшее правило. ignore не заменяет решение: такие файлы не добавляй и через `git add -f`, а отчёты и планы храни вне репозитория.
 
 перед коммитом `git status` без `--ignored` должен показывать только файлы, нужные потребителю плагина.
 
@@ -40,10 +40,10 @@ runtime получает живой реестр запущенного OMP; л�
 
 ## матрица и peer-диапазон
 
-`baseline/supported-hosts.json` связывает версии, алиасы пакетов и платформы.
+`test/fixtures/host-snapshots/supported-hosts.json` связывает версии, алиасы пакетов и платформы, а `sha256` каждой записи указывает на снимок `<версия>-<платформа>.json` в том же каталоге. это единственный отслеживаемый экземпляр данных хоста: `baseline/` в checkout — локальный рабочий каталог для ручного экспорта, он игнорируется Git, и пути к снимкам берутся только из `scripts/maintenance/paths.ts`.
 три уровня доказательств не заменяют друг друга:
 
-- baseline/source-derived и native-package-registry фиксируют метаданные реестра, не панель;
+- source-derived и native-package-registry фиксируют метаданные реестра, не панель;
 - `installedEvidence` и `unavailableInstalledRuns` в существующем manifest — исторически зафиксированные локальные прогоны и пробелы, а не полный список текущих CI-прогонов;
 - per-commit native CI receipts относятся к точному SHA, пакету и бинарнику, доступны в artifacts конкретного workflow и не переопределяют старые локальные записи.
 
@@ -89,16 +89,17 @@ omp --profile omp-settings-ru-proof --no-extensions -e ./src/index.ts
 для публичного снимка нужен читаемый PNG настоящей панели; лог и перенабранный SVG его не заменяют.
 снимок относится к хешу загруженных при захвате файлов: поздний smoke других байтов не меняет его provenance.
 
-## смена канала
+## переход на marketplace
 
-Закрой старые сессии и убери explicit `-e`/`--plugin-dir`/configured extension roots. `omp plugin list --json` должен показывать одну user install; project install сначала разбери отдельно. Uninstall удаляет собственные plugin settings/features, поэтому для state-preserving смены используй внешний скрипт checkout, не runtime:
+штатная установка — только marketplace; legacy npm-managed GitHub-установка больше не поддерживается и не документируется как способ установки. State-preserving переход из **одной** legacy npm user-установки выполняется одноразово из checkout:
 
 ```text
 bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to marketplace --spec omp-settings-ru@omp-settings-ru --backup <new-private-backup.json> --apply
-bun scripts/switch-channel.ts --home <isolated-home> --profile <named-profile> --executable <omp> --to npm --spec github:narimanisakhanov-creator/omp-settings-ru#v<version> --backup <another-private-backup.json> --apply
 ```
 
-Скрипт требует explicit named profile, до удаления типизированно проверяет lock и сохраняет own state/settings с JSON types, `null`/`[]` features и disabled-state; чужие записи и неизвестные поля переносятся без изменений. Marketplace должен быть добавлен заранее. Backup приватный, не перезаписывается. При сбое install частично поставленный альтернативный канал сначала удаляется, затем восстанавливается исходный канал и его own запись; если и это невозможно, скрипт сообщает точный backup и не выдаёт сбой за успех — не копируй весь старый lockfile поверх текущего. Для личного профиля нужна отдельная разрешённая операция; local proof использует только disposable homes.
+Закрой старые сессии и убери explicit `-e`/`--plugin-dir`/configured extension roots: они не являются установками и не видны в `plugin list`. `omp plugin list --json` должен показывать ровно одну legacy npm user-установку в каталоге профиля; project-scoped marketplace-копия или npm-запись вне этого каталога, а также уже выбранный marketplace отклоняются. Marketplace должен быть добавлен заранее; старый каталог из ветки переводится через `marketplace remove`, `add` нового URL и `marketplace update`, а не через `uninstall`.
+
+Скрипт требует explicit named profile и `--apply`, а `--to npm` отклоняет до любых действий. До удаления он типизированно проверяет lock и сохраняет own state/settings с JSON types, `null`/`[]` features и disabled-state; чужие записи и неизвестные поля переносятся без изменений. Backup приватный, не перезаписывается. При сбое install частично поставленный marketplace сначала удаляется, затем восстанавливается точный старый npm-тег и own запись; если и это невозможно, скрипт сообщает точный backup и не выдаёт сбой за успех — не копируй весь старый lockfile поверх текущего. Для личного профиля нужна отдельная разрешённая операция; local proof использует только disposable homes. Обратный переход на npm не поддерживается.
 
 ## сопровождение
 

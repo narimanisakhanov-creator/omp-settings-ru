@@ -1,11 +1,12 @@
 import { buildDriftReport } from "../src/report";
 import type { BaselineSnapshot } from "../src/report";
 import { loadMatrixHost, requestedPairs } from "./matrix-host";
+import { snapshotPath } from "./maintenance/paths";
 
 const pairs = [];
 for (const pair of requestedPairs(process.argv.slice(2))) {
   const {host, evidence} = await loadMatrixHost(pair.version, pair.platform);
-  const baselinePath = `baseline/${host.version}-${host.platform}.json`;
+  const baselinePath = snapshotPath(host.version, host.platform);
   const baseline = await Bun.file(baselinePath).json() as BaselineSnapshot;
   const drift = buildDriftReport(host, baseline);
   const ok = baseline.version === host.version && baseline.platform === host.platform && !drift.addedPaths.length && !drift.removedPaths.length && !drift.changedPaths.length;

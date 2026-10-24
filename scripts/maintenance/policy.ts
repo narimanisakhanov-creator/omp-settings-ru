@@ -12,7 +12,10 @@ import type { ControllerPolicy, SourcePlatform } from "./contracts";
 const PLATFORMS: readonly SourcePlatform[] = ["win32", "darwin", "linux"];
 
 export async function runGit(args: readonly string[], cwd?: string): Promise<{code: number; stdout: string; stderr: string}> {
-  const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/TOKEN|SECRET|PASSWORD|API_KEY|AUTHORIZATION|CREDENTIAL/i.test(key) || key.startsWith("GIT_CONFIG_")) delete env[key];
+  delete env.GIT_ASKPASS; delete env.SSH_ASKPASS;
+  const child = Bun.spawn(["git", ...args], { cwd, env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -34,15 +37,17 @@ export function validatePolicy(raw: unknown): ControllerPolicy {
   const controller = root.controller;
   if (typeof controller !== "object" || controller === null) invalid("controller-missing");
   const c = controller as Record<string, unknown>;
+  const controllerKeys = ["baseBranch", "controllerLogin", "controllerType", "branchPattern", "executorPaths", "requiredCheckTemplate", "additionalRequiredChecks", "deadlinesMs"];
+  if (Object.keys(c).some(key => !controllerKeys.includes(key))) invalid("controller-field");
 
   if (c.baseBranch !== "main") invalid("base-branch");
   if (typeof c.controllerLogin !== "string" || !c.controllerLogin) invalid("controller-login");
   if (c.controllerType !== "User") invalid("controller-type");
   if (typeof c.branchPattern !== "string" || !c.branchPattern) invalid("branch-pattern");
-  for (const key of ["executorAgent", "reviewerAgent", "requiredCheckTemplate"] as const) {
+  for (const key of ["requiredCheckTemplate"] as const) {
     if (typeof c[key] !== "string" || !c[key]) invalid(key);
   }
-  for (const key of ["incomingPaths", "executorPaths", "additionalRequiredChecks"] as const) {
+  for (const key of ["executorPaths", "additionalRequiredChecks"] as const) {
     if (!Array.isArray(c[key]) || (c[key] as unknown[]).some(value => typeof value !== "string")) invalid(key);
   }
   if (!Array.isArray(root.requiredCheckPlatforms) || root.requiredCheckPlatforms.length === 0) invalid("check-platforms");
@@ -50,13 +55,10 @@ export function validatePolicy(raw: unknown): ControllerPolicy {
     const entry = pair as Record<string, unknown>;
     if (typeof entry.os !== "string" || !PLATFORMS.includes(entry.platform as SourcePlatform)) invalid("check-platform");
   }
-  const scanner = c.scanner as Record<string, unknown> | undefined;
-  if (!scanner || typeof scanner.version !== "string" || typeof scanner.asset !== "string"
-    || typeof scanner.url !== "string" || !/^[a-f0-9]{64}$/.test(String(scanner.archiveSha256))
-    || !/^[a-f0-9]{64}$/.test(String(scanner.executableSha256))) invalid("scanner");
   const deadlines = c.deadlinesMs as Record<string, unknown> | undefined;
   if (!deadlines) invalid("deadlines");
-  for (const key of ["precheck", "command", "agent", "verification", "release", "checks"] as const) {
+  if (Object.keys(deadlines).some(key => !["precheck", "command", "verification", "release", "checks"].includes(key))) invalid("deadline-field");
+  for (const key of ["precheck", "command", "verification", "release", "checks"] as const) {
     if (!Number.isSafeInteger(deadlines[key]) || (deadlines[key] as number) <= 0) invalid(`deadline-${key}`);
   }
   if ((deadlines.precheck as number) > 30000) invalid("precheck-deadline");
@@ -68,26 +70,14 @@ export function validatePolicy(raw: unknown): ControllerPolicy {
     controllerLogin: c.controllerLogin as string,
     controllerType: "User",
     branchPattern: c.branchPattern as string,
-    executorAgent: c.executorAgent as string,
-    reviewerAgent: c.reviewerAgent as string,
-    incomingPaths: c.incomingPaths as string[],
     executorPaths: c.executorPaths as string[],
     requiredCheckTemplate: c.requiredCheckTemplate as string,
     requiredCheckPlatforms: (root.requiredCheckPlatforms as {os: string; platform: SourcePlatform}[])
       .map(pair => ({ os: pair.os, platform: pair.platform })),
     additionalRequiredChecks: c.additionalRequiredChecks as string[],
-    scanner: {
-      version: scanner.version as string,
-      platform: scanner.platform as SourcePlatform,
-      asset: scanner.asset as string,
-      url: scanner.url as string,
-      archiveSha256: scanner.archiveSha256 as string,
-      executableSha256: scanner.executableSha256 as string,
-    },
     deadlinesMs: {
       precheck: deadlines.precheck as number,
       command: deadlines.command as number,
-      agent: deadlines.agent as number,
       verification: deadlines.verification as number,
       release: deadlines.release as number,
       checks: deadlines.checks as number,
@@ -95,9 +85,9 @@ export function validatePolicy(raw: unknown): ControllerPolicy {
   };
 }
 
-/** Устойчивый отпечаток: политика + селектор репозитория + команда precheck. */
-export function policyDigest(policy: ControllerPolicy, repoSelector: string, precheckCommand: string): string {
-  return createHash("sha256").update(JSON.stringify({ policy, repoSelector, precheck: precheckCommand })).digest("hex");
+/** Stable normalized policy and repository identity; no machine-local commands enter the digest. */
+export function policyDigest(policy: ControllerPolicy, repoSelector: string): string {
+  return createHash("sha256").update(JSON.stringify({ policy, repoSelector })).digest("hex");
 }
 
 /**
@@ -113,6 +103,14 @@ export async function loadAcceptedPolicy(checkout: string): Promise<{policy: Con
   const shown = await runGit(["show", `${baseSha}:maintenance.config.json`], checkout);
   if (shown.code !== 0) throw new Error("policy-unavailable");
   const policy = validatePolicy(JSON.parse(shown.stdout));
-  const precheck = `bun "${checkout}\\scripts\\maintenance-controller.ts" --precheck`;
-  return { policy, digest: policyDigest(policy, `github:${policy.repository}`, precheck), baseSha };
+  return { policy, digest: policyDigest(policy, `github:${policy.repository}`), baseSha };
+}
+
+/** Stable versions compare numerically, not lexically (18.10 follows 18.9). */
+export function compareVersions(left: string, right: string): number {
+  const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+  if (!stable.test(left) || !stable.test(right)) throw new Error("stable-version-required");
+  const a = left.split(".").map(BigInt); const b = right.split(".").map(BigInt);
+  for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index]! > b[index]! ? 1 : -1;
+  return 0;
 }

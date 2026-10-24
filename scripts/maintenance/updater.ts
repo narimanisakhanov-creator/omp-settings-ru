@@ -145,23 +145,38 @@ export async function prepareActivation(options: UpdateOptions): Promise<void> {
 }
 
 export interface LivenessQuery { readonly exit: number; readonly stdout: string; readonly stderr: string }
-export interface LivenessRow { readonly pid: number; readonly line: string }
+export interface ProcessIdentity { readonly pid: number; readonly startedAt: string }
+export interface LivenessRow extends ProcessIdentity { readonly line: string }
+export type LivenessResolution = ProcessIdentity & ({ readonly status: "exited" } | { readonly status: "live"; readonly line: string });
 export type LivenessVerdict = { readonly status: "idle" | "busy" | "failed"; readonly refusal?: string };
 
 const LIVENESS_UNVERIFIABLE = "liveness-query-unverifiable";
 
-function isLivenessRow(row: unknown): row is LivenessRow {
+function isProcessIdentity(row: unknown): row is ProcessIdentity {
   if (!row || typeof row !== "object" || Array.isArray(row)) return false;
-  const candidate = row as { pid?: unknown; line?: unknown };
-  return typeof candidate.pid === "number" && Number.isSafeInteger(candidate.pid) && candidate.pid > 0 && typeof candidate.line === "string";
+  const candidate = row as { pid?: unknown; startedAt?: unknown };
+  return typeof candidate.pid === "number" && Number.isSafeInteger(candidate.pid) && candidate.pid > 0
+    && typeof candidate.startedAt === "string" && (candidate.startedAt === "" || /^\d{14}\.\d{6}$/.test(candidate.startedAt));
 }
 
-export function selectLiveOmpRows(livePids: readonly number[], cimRows: readonly LivenessRow[]): LivenessRow[] {
-  const argv = new Map(cimRows.map(row => [row.pid, row.line]));
-  // Only live pids are sessions: a CIM row for an already-exited process is not.
-  // A live pid the CIM snapshot did not cover may have started during sampling,
-  // so its argv is unknown (empty) rather than absent.
-  return livePids.map(pid => ({ pid, line: argv.get(pid) ?? "" }));
+function isLivenessRow(row: unknown): row is LivenessRow {
+  return isProcessIdentity(row) && typeof (row as LivenessRow).line === "string";
+}
+
+function isLivenessResolution(row: unknown): row is LivenessResolution {
+  return isProcessIdentity(row) && ((row as LivenessResolution).status === "exited" || ((row as LivenessResolution).status === "live" && isLivenessRow(row)));
+}
+
+export function selectLiveOmpRows(live: readonly ProcessIdentity[], cim: readonly LivenessRow[], resolved: readonly LivenessResolution[]): LivenessRow[] {
+  const rows: LivenessRow[] = [];
+  for (const process of live) {
+    const initial = process.startedAt && cim.find(row => row.pid === process.pid && row.startedAt === process.startedAt);
+    if (initial && initial.line !== "") { rows.push(initial); continue; }
+    const exact = resolved.find(row => row.pid === process.pid && row.startedAt === process.startedAt);
+    if (exact?.status === "exited") continue;
+    rows.push({ ...process, line: process.startedAt && exact?.status === "live" ? exact.line : "" });
+  }
+  return rows;
 }
 
 export function classifyLiveness(profile: string, rows: readonly LivenessRow[]): LivenessVerdict {
@@ -182,32 +197,73 @@ export function parseLivenessSample(profile: string, query: LivenessQuery): Live
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { return failed; }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return failed;
-  const { live, cim } = parsed as { live?: unknown; cim?: unknown };
-  if (!Array.isArray(live) || !Array.isArray(cim)) return failed;
-  // A dropped invalid row could turn a busy snapshot into an idle verdict.
-  if (!live.every((pid): pid is number => typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0)) return failed;
-  if (!cim.every(isLivenessRow)) return failed;
-  return classifyLiveness(profile, selectLiveOmpRows(live, cim));
+  const { live, cim, resolved } = parsed as { live?: unknown; cim?: unknown; resolved?: unknown };
+  if (!Array.isArray(live) || !Array.isArray(cim) || !Array.isArray(resolved)) return failed;
+  // Dropped or conflicting identities could turn an unknown live process into false idle.
+  if (!live.every(isProcessIdentity) || !cim.every(isLivenessRow) || !resolved.every(isLivenessResolution)) return failed;
+  for (const rows of [live, cim, resolved]) if (new Set(rows.map(row => row.pid)).size !== rows.length) return failed;
+  return classifyLiveness(profile, selectLiveOmpRows(live, cim, resolved));
 }
 
-async function livenessQuery(profile: string): Promise<LivenessQuery> {
-  // Accepted launcher contract requires explicit --profile for named targets.
-  // The CIM argv snapshot is taken BEFORE the live-pid snapshot, so a process
-  // starting during sampling is live-without-argv (unknown, busy) rather than
-  // silently dropped. Liveness comes from live processes only, so a process that
-  // already exited (still listed by CIM) cannot masquerade as an active session.
-  // GetProcessesByName returns an empty array when nothing matches; only a real
-  // failure throws, so "no omp process" is a valid empty result, not an error.
-  const script = `$ErrorActionPreference = 'Stop'; $cim = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'omp.exe' } | ForEach-Object { $line = $_.CommandLine; if ($null -eq $line) { $line = '' }; '{"pid":' + [int]$_.ProcessId + ',"line":' + (ConvertTo-Json $line -Compress) + '}' }); $live = @([System.Diagnostics.Process]::GetProcessesByName('omp') | ForEach-Object { [int]$_.Id }); Write-Output ('{"live":[' + (($live | ForEach-Object { $_.ToString() }) -join ',') + '],"cim":[' + ($cim -join ',') + ']}')`;
+async function livenessQuery(): Promise<LivenessQuery> {
+  // CIM is older than the live set. Join by pid AND creation time, never pid alone.
+  // Only missing/unknown identities get an exact CIM query followed by a live-handle
+  // check: unrelated births become classifiable, proven deaths disappear, and an
+  // unreadable process that remains alive still refuses activation. No re-sampling.
+  const script = `
+$ErrorActionPreference = 'Stop'
+function Get-Birth($date) {
+  if ($null -eq $date) { return '' }
+  return $date.ToUniversalTime().ToString('yyyyMMddHHmmss.ffffff', [System.Globalization.CultureInfo]::InvariantCulture)
+}
+function Get-LiveBirth($process) {
+  try {
+    $birth = Get-Birth $process.StartTime
+    if ($process.HasExited) { return $null }
+    return $birth
+  } catch {
+    try { if ($process.HasExited) { return $null } } catch {}
+    return ''
+  }
+}
+$cim = @(Get-CimInstance Win32_Process -Filter "Name = 'omp.exe'" | ForEach-Object {
+  $line = $_.CommandLine
+  if ($null -eq $line) { $line = '' }
+  [pscustomobject]@{ pid = [int]$_.ProcessId; startedAt = (Get-Birth $_.CreationDate); line = [string]$line }
+})
+$live = [System.Collections.Generic.List[object]]::new()
+$resolved = [System.Collections.Generic.List[object]]::new()
+foreach ($process in [System.Diagnostics.Process]::GetProcessesByName('omp')) {
+  try {
+    $birth = Get-LiveBirth $process
+    if ($null -eq $birth) { continue }
+    $processId = [int]$process.Id
+    $live.Add([pscustomobject]@{ pid = $processId; startedAt = $birth })
+    $known = @($cim | Where-Object { $_.pid -eq $processId -and $_.startedAt -eq $birth -and $birth -ne '' -and $_.line -ne '' })
+    if ($known.Count -ne 0) { continue }
+    $exact = @(Get-CimInstance Win32_Process -Filter "ProcessId = $processId AND Name = 'omp.exe'")
+    $stillBorn = Get-LiveBirth $process
+    if ($null -eq $stillBorn) {
+      $resolved.Add([pscustomobject]@{ pid = $processId; startedAt = $birth; status = 'exited' })
+    } else {
+      $line = ''
+      if ($birth -ne '' -and $stillBorn -eq $birth -and $exact.Count -eq 1 -and (Get-Birth $exact[0].CreationDate) -eq $birth -and $null -ne $exact[0].CommandLine) { $line = [string]$exact[0].CommandLine }
+      $resolved.Add([pscustomobject]@{ pid = $processId; startedAt = $birth; status = 'live'; line = $line })
+    }
+  } finally { $process.Dispose() }
+}
+[pscustomobject]@{ live = @($live.ToArray()); cim = $cim; resolved = @($resolved.ToArray()) } | ConvertTo-Json -Depth 5 -Compress
+`;
   const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
   const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { exit, stdout, stderr };
 }
 
 async function profileLiveness(profile: string): Promise<LivenessVerdict> {
-  // Non-Windows and untrusted profile names cannot establish liveness: unknown stays fail-closed.
+  // Accepted launcher contract requires explicit --profile for named targets.
+  // Non-Windows and untrusted profile names cannot establish liveness.
   if (!/^[A-Za-z0-9._-]+$/.test(profile) || process.platform !== "win32") return { status: "busy", refusal: "active-session-or-liveness-unverifiable" };
-  return parseLivenessSample(profile, await livenessQuery(profile));
+  return parseLivenessSample(profile, await livenessQuery());
 }
 
 async function completedActivation(options:UpdateOptions,host:InstalledHost,entries:Map<string,Buffer>,profile:string,previousPackageHash:string):Promise<UpdateReceipt|undefined>{

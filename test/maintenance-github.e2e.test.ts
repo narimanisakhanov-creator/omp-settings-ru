@@ -14,11 +14,10 @@ const checkPath = ".github/workflows/check.yml";
 const names = ["check (ubuntu-latest, 18.8.7)", "release-check"];
 const policy: ControllerPolicy = {
   schemaVersion: 1, repository, baseBranch: "main", controllerLogin: "controller", controllerType: "User",
-  branchPattern: "maintenance/*", executorAgent: "executor", reviewerAgent: "reviewer", incomingPaths: [], executorPaths: [],
+  branchPattern: "^upgrade/omp-([0-9]+\\.[0-9]+\\.[0-9]+)$", executorPaths: [],
   requiredCheckTemplate: "check ({os}, {version})", requiredCheckPlatforms: [{os: "ubuntu-latest", platform: "linux"}],
   additionalRequiredChecks: ["release-check"],
-  scanner: {version: "1", platform: "linux", asset: "scanner", url: "https://example.invalid", archiveSha256: "", executableSha256: ""},
-  deadlinesMs: {precheck: 10000, command: 10000, agent: 10000, verification: 10000, release: 10000, checks: 10000},
+  deadlinesMs: {precheck: 10000, command: 10000, verification: 10000, release: 10000, checks: 10000},
 };
 const digest = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 function workflow(overrides: Record<string, unknown> = {}) {

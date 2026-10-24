@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { BaselineSnapshot } from "../src/report";
+import { snapshotPath } from "../scripts/maintenance/paths";
 
 // The source export derives a non-native platform's registry from package source. That derivation is
 // only trustworthy if it reproduces the reviewed baseline exactly, including per-path sourceHash and
@@ -20,7 +21,7 @@ for (const [version, alias] of [["18.6.1", "omp-host-1861"], ["18.8.0", "omp-hos
   for (const platform of derived) {
     test(`source registry export derives the reviewed ${version} ${platform} baseline`, async () => {
       const snapshot = exportDerived(alias!, version!, platform);
-      const baseline = await Bun.file(`baseline/${version}-${platform}.json`).json() as BaselineSnapshot;
+      const baseline = await Bun.file(snapshotPath(version!, platform)).json() as BaselineSnapshot;
       expect(snapshot.version).toBe(version!);
       expect(snapshot.platform).toBe(platform);
       expect(snapshot.settings).toEqual(baseline.settings);
@@ -29,12 +30,12 @@ for (const [version, alias] of [["18.6.1", "omp-host-1861"], ["18.8.0", "omp-hos
 }
 
 test("derived source export keeps the darwin-only Apple completion option", async () => {
-  const baseline = await Bun.file("baseline/18.8.4-darwin.json").json() as BaselineSnapshot;
+  const baseline = await Bun.file(snapshotPath("18.8.4", "darwin")).json() as BaselineSnapshot;
   const snapshot = exportDerived("omp-host-1884", "18.8.4", "darwin");
   expect(snapshot.settings).toEqual(baseline.settings);
   const appleOption = {value: "apple", label: "Apple", description: "macOS dictionary completions"};
   expect(snapshot.settings["spelling.autocomplete"]!.options).toContainEqual(appleOption);
   // The Apple option is a darwin-only branch, absent from the win32 baseline for the same version.
-  const windows = await Bun.file("baseline/18.8.4-win32.json").json() as BaselineSnapshot;
+  const windows = await Bun.file(snapshotPath("18.8.4", "win32")).json() as BaselineSnapshot;
   expect(windows.settings["spelling.autocomplete"]!.options).not.toContainEqual(appleOption);
 });
