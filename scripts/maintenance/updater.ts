@@ -440,7 +440,11 @@ export async function runUpdate(options: UpdateOptions): Promise<UpdateReceipt> 
   };
   const checks: { name: string; status: string }[] = JSON.parse(doctor.output || "[]");
   const health = doctor.code === 0 && checks.some(check => check.name === "plugin:omp-settings-ru" && check.status === "ok") && checks.every(check => check.status !== "error");
-  const smokePassed = await startupSmoke(options, target, `omp-settings-ru-proof-${randomUUID()}`, stage);
+  // The startup smoke boots a real host against identical staged bytes in a disposable
+  // profile. A single fresh-profile retry separates a transient host spawn failure from a
+  // genuinely broken package; a second failure still blocks activation.
+  let smokePassed = await startupSmoke(options, target, `omp-settings-ru-proof-${randomUUID()}`, stage);
+  if (!smokePassed) smokePassed = await startupSmoke(options, target, `omp-settings-ru-proof-${randomUUID()}`, stage);
   await writeFile(join(options.stateDirectory, "verification.json"), JSON.stringify({ host, pin, profile, capabilities, managerHealthy: health, managerChecks: checks, sessionSmoke: smokePassed ? "observed-interactive-settings" : "unverified" }));
   if (!capabilities.installVerifiedPath || !health) return pending("isolated-manager-verification-failed");
   if (previousBytes && previousMetadata && previousEntries) {

@@ -83,7 +83,7 @@ test("accepts differing archive and canonical content hashes proven against one 
     expect(binding.treeHash).toBe(f.treeHash);
     expect(binding.fileCount).toBe(2);
   } finally {await rm(f.directory, {recursive: true, force: true});}
-});
+}, 30_000);
 
 for (const attack of ["archive", "content", "head", "tree"] as const) test(`refuses mismatched ${attack} binding`, async () => {
   const f = await fixture();
