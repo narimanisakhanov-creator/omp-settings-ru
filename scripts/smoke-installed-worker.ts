@@ -11,7 +11,18 @@ await writeFile(join(agentDir, "config.yml"), "startup:\n  setupWizard: false\n"
 const clean = (text: string) => text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b[=>]/g, "");
 function native(args: string[]) {
   const result = Bun.spawnSync([executable, "--profile", profile, ...args], {env: process.env, stdout:"pipe",stderr:"pipe",timeout:30000});
-  if (result.exitCode !== 0) throw new Error("native-profile-operation-failed");
+  if (result.exitCode !== 0) {
+    // Keep the child's own evidence: a bare code cannot distinguish a refused link, a crash
+    // and a timeout, and the runner failure has to be diagnosable from the log alone.
+    const detail = {
+      command: ["plugin", ...args].join(" "),
+      exitCode: result.exitCode,
+      signalCode: result.signalCode ?? null,
+      stdout: result.stdout.toString().slice(-2000),
+      stderr: result.stderr.toString().slice(-2000),
+    };
+    throw new Error(`native-profile-operation-failed:${JSON.stringify(detail)}`);
+  }
   return result.stdout.toString();
 }
 native(["plugin","link",pluginPath]);

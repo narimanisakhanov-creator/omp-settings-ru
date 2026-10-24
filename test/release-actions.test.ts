@@ -20,6 +20,7 @@ import {
   parsePrepublishReceipt,
   parseReleaseManifest,
   parseReleaseArtifactName,
+  planPrepublishAttempts,
   parseReleaseRow,
   parseReleaseRun,
   releaseNamingErrors,
@@ -313,6 +314,17 @@ test("the seal exists only after a successful distribution smoke and proofs the 
   expect(promotionErrors(sealed, { ...expected, tagSha: MAIN_SHA })).toEqual(["promotion-sha-mismatch"]);
   expect(promotionErrors(sealed, { ...expected, releaseRunAttempt: "1" })).toEqual(["promotion-release-run-mismatch"]);
   expect(promotionErrors(sealed, { ...expected, hostVersion: "18.8.8" })).toEqual(["promotion-host-version-mismatch"]);
+});
+test("a partial rerun plans the build attempt and the current attempt separately", () => {
+  // After `rerun --failed` the run is on attempt 2 while the artifact still carries attempt 1.
+  // The artifact name and its verify job are proven at 1; the sealed receipt binds 2, which is
+  // what promotion compares against. Conflating them made every rerun mismatch.
+  expect(planPrepublishAttempts({ currentRunAttempt: "2", artifactName: "release-v1.2.3-1234-1", tag: "v1.2.3", runId: "1234" }))
+    .toEqual({ artifactAttempt: "1", evidenceRunAttempt: "2", verifyRunAttempt: "1" });
+  expect(planPrepublishAttempts({ currentRunAttempt: "1", artifactName: "release-v1.2.3-1234-1", tag: "v1.2.3", runId: "1234" }))
+    .toEqual({ artifactAttempt: "1", evidenceRunAttempt: "1", verifyRunAttempt: "1" });
+  expect(refusal(() => planPrepublishAttempts({ currentRunAttempt: "2", artifactName: "release-v1.2.3-9999-1", tag: "v1.2.3", runId: "1234" })))
+    .toBe("release-artifact-name-mismatch");
 });
 
 interface ArtifactFixture {

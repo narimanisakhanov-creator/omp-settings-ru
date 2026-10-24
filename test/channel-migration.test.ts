@@ -64,14 +64,22 @@ test("configured extension roots are refused before migration", () => {
   const parent = mkdtempSync(join(tmpdir(), "omp-channel-target-"));
   const home = join(parent, "home");
   const profile = "proof";
-  mkdirSync(join(home, ".omp", "profiles", profile, "agent"), { recursive: true });
-  writeFileSync(join(home, ".omp", "profiles", profile, "agent", "config.yml"), "extensions:\n  - ./src/index.ts\n");
   try {
     const executable = process.env.OMP_UPDATER_EXECUTABLE;
     expect(executable).toBeTruthy();
+    // Write the setting where the host itself says its profile config lives: the layout is
+    // host-version specific, and a hardcoded path would silently test "no roots configured".
+    const environment = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata") };
+    const path = Bun.spawnSync([executable!, "--profile", profile, "config", "path"], { stdout: "pipe", stderr: "pipe", timeout: 30000, env: environment });
+    expect(path.exitCode, path.stderr.toString()).toBe(0);
+    const agentDir = path.stdout.toString().trim();
+    expect(agentDir.length).toBeGreaterThan(0);
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "config.yml"), "extensions:\n  - ./src/index.ts\n");
     const result = Bun.spawnSync([process.execPath, script, "--home", home, "--profile", profile, "--executable", executable!, "--to", "marketplace", "--spec", "omp-settings-ru@omp-settings-ru", "--backup", join(parent, "backup.json"), "--apply"], { stdout: "pipe", stderr: "pipe", timeout: 60000, env: { ...process.env, OMP_PLUGIN_EXTENSIONS: undefined } });
+    const output = result.stdout.toString() + result.stderr.toString();
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout.toString() + result.stderr.toString()).toContain("extension-roots-present");
+    expect(output, output).toContain("extension-roots-present");
     expect(existsSync(join(parent, "backup.json"))).toBe(false);
   } finally {
     rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

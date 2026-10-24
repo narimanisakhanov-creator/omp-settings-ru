@@ -98,6 +98,21 @@ export function parseReleaseArtifactName(name: string, tag: string, runId: strin
 }
 
 /**
+ * Split the two attempts a prepublication proof depends on.
+ *
+ * `rerun --failed` moves the run's current attempt without rebuilding the artifact, so the
+ * artifact keeps the build attempt that produced its bytes. The artifact name and its `verify`
+ * job are proven at the build attempt; the sealed receipt binds the current run attempt, which
+ * is what the later promotion compares against. Conflating them made every rerun mismatch.
+ */
+export function planPrepublishAttempts(input: { readonly currentRunAttempt: string; readonly artifactName: string; readonly tag: string; readonly runId: string }): {
+  readonly artifactAttempt: string; readonly evidenceRunAttempt: string; readonly verifyRunAttempt: string;
+} {
+  const artifactAttempt = parseReleaseArtifactName(input.artifactName, input.tag, input.runId);
+  return { artifactAttempt, evidenceRunAttempt: input.currentRunAttempt, verifyRunAttempt: artifactAttempt };
+}
+
+/**
  * Bind the downloaded manifest to the artifact that carried it.
  *
  * The manifest's own `runAttempt` must equal the attempt embedded in the artifact name, and
@@ -885,14 +900,19 @@ async function prepublishSourceCommand(args: readonly string[]): Promise<void> {
   const source = {
     tag: parsed.tag,
     releaseRunId: run.id,
-    releaseRunAttempt: artifact.attempt,
+    // The receipt and promotion bind the run attempt that is current now; the artifact keeps
+    // the build attempt that produced the bytes. A partial `rerun --failed` moves only the
+    // former, so they are reported separately instead of being conflated.
+    releaseRunAttempt: run.attempt,
+    artifactAttempt: artifact.attempt,
     tagSha,
     artifactName: artifact.name,
     hostVersion: pkg.hostVersion,
   };
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, [
     `release-run-id=${run.id}`,
-    `release-run-attempt=${artifact.attempt}`,
+    `release-run-attempt=${run.attempt}`,
+    `artifact-attempt=${artifact.attempt}`,
     `tag-sha=${tagSha}`,
     `artifact-id=${artifact.id}`,
     `artifact-name=${artifact.name}`,
@@ -990,13 +1010,16 @@ async function prepublishCommand(args: readonly string[]): Promise<void> {
   const releaseRun = parseReleaseRun(ghJson([`repos/${repository}/actions/runs/${releaseRunId}`]), {
     repository, tag: parsed.tag, tagSha, runId: releaseRunId, requireSuccess: true,
   });
-  // The artifact's own name carries the attempt that produced these bytes. The caller's
-  // attempt must be that same attempt, never the environment's current one.
-  if (parseReleaseArtifactName(artifactName, parsed.tag, releaseRunId) !== releaseRunAttempt) throw new Error("release-run-attempt-mismatch");
-  // Prove the `verify` job of exactly that attempt: it is the job whose upload these bytes
-  // claim to be, so a manifest from another attempt can never be sealed as evidence.
-  parseBuildJob(ghJson([`repos/${repository}/actions/runs/${releaseRunId}/attempts/${releaseRunAttempt}/jobs?per_page=100`]), {
-    runId: releaseRunId, runAttempt: releaseRunAttempt, tagSha,
+  // The caller's attempt is the release run's current attempt and is what the receipt binds;
+  // the artifact's own name carries the build attempt that produced these bytes. After a
+  // partial `rerun --failed` those differ, and conflating them would make promotion
+  // permanently mismatch, so each is proven where it belongs.
+  if (releaseRunAttempt !== releaseRun.attempt) throw new Error("release-run-attempt-mismatch");
+  const { artifactAttempt } = planPrepublishAttempts({ currentRunAttempt: releaseRunAttempt, artifactName, tag: parsed.tag, runId: releaseRunId });
+  // Prove the `verify` job of exactly the build attempt: it is the job whose upload these
+  // bytes claim to be, so a manifest from another attempt can never be sealed as evidence.
+  parseBuildJob(ghJson([`repos/${repository}/actions/runs/${releaseRunId}/attempts/${artifactAttempt}/jobs?per_page=100`]), {
+    runId: releaseRunId, runAttempt: artifactAttempt, tagSha,
   });
   const manifest = bindReleaseArtifact(await jsonFile(join(assets, "release.json"), "release-manifest-invalid"), {
     repository, tag: parsed.tag, version: parsed.version, releaseSha: tagSha, runId: releaseRunId, artifactName,
