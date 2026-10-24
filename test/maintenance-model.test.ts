@@ -45,7 +45,7 @@ describe("strict model JSON client", () => {
   test("rejects refusal/tool calls, HTTP errors, redirects, and oversized responses", async () => {
     for (const response of [
       JSON.stringify({ choices: [{ message: { refusal: "no" } }] }),
-      JSON.stringify({ choices: [{ message: { content: "{}", tool_calls: [] } }] }),
+      JSON.stringify({ choices: [{ message: { content: "{}", tool_calls: [{ id: "call_1", type: "function", function: { name: "x", arguments: "{}" } }] } }] }),
     ]) {
       const { instance, url } = await server(response);
       try { configure(url); await expect(requestModelJSON(messages)).rejects.toThrow(); } finally { instance.stop(); }
