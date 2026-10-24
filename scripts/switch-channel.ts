@@ -171,9 +171,16 @@ async function run(): Promise<void> {
     const child = Bun.spawn([executable, "--profile", profile, "config", "get", "extensions", "--json"], { cwd, env, stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     if (code !== 0) throw new Error(`extension-roots-unverifiable:config:${err}`);
-    const value = JSON.parse(out) as { value?: unknown };
-    if (!Array.isArray(value.value)) throw new Error("extension-roots-unverifiable:config-shape");
-    return value.value;
+    // Host versions answer with either the bare array or a `{key,value,type}` envelope. Both are
+    // the same setting; an unknown shape stays unverifiable rather than "no roots configured".
+    const parsed = JSON.parse(out) as unknown;
+    const list = Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === "object" && parsed !== null && "value" in parsed && Array.isArray(parsed.value)
+        ? parsed.value
+        : undefined;
+    if (list === undefined) throw new Error("extension-roots-unverifiable:config-shape");
+    return list;
   };
   const configured = await configuredExtensions(process.cwd());
   if (configured.length > 0) throw new Error("extension-roots-present-remove-configured-roots-first");
