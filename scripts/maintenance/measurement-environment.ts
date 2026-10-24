@@ -444,6 +444,11 @@ export async function prepareToolRoot(input: {
     const acceptedLock = await readFile(join(root, "bun.lock"), "utf8").catch(() => undefined);
     if (acceptedManifest === undefined) return { failure: "accepted-manifest-unavailable" };
     if (acceptedLock === undefined) return { failure: "accepted-lock-unavailable" };
+    // Candidate data is a precondition of measurement, not of the install: refuse a missing
+    // catalog/review file or snapshot directory before paying for a full dependency install,
+    // so a real install failure can never masquerade as missing candidate data.
+    for (const path of DATA_FILES) if (!existsSync(join(checkout, path))) return { failure: `candidate-data-missing:${path}` };
+    if (!existsSync(join(checkout, SNAPSHOT_DIR))) return { failure: "candidate-baseline-missing" };
 
     const expectation = await expectedLock({
       acceptedManifest, acceptedLock, delta: input.delta,

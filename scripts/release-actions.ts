@@ -3,16 +3,14 @@ import { isAbsolute, join, resolve } from "node:path";
 import { asRecord, parseStrictJSON } from "./maintenance/json";
 import {
   catalogIdentity,
-  draftCatalogEvidence,
   findRelease,
-  loadVerifiedCatalog,
   readField,
   runGh,
   sha256Bytes,
   tagCommit,
-  validateMarketplaceCatalog,
   validatePrepublicationCatalog,
   waitForCheckRun,
+  type PrepublicationEvidence,
 } from "./marketplace-catalog";
 
 /**
@@ -20,9 +18,10 @@ import {
  * prepublication proof that must exist before the existing publisher is allowed to run.
  *
  * There is exactly one publisher (`marketplace-index.ts`); this module never writes a
- * catalog, never promotes a release and never creates/deletes tags. It only proves that
- * the bytes about to be promoted belong to the exact tag commit and to a successful
- * originating run, and it resumes a partially uploaded draft with the missing assets.
+ * catalog, never promotes a release and never creates/deletes tags. Prepublication evidence
+ * is taken from the successful release run's own artifact, so proving a draft never needs a
+ * token that can read or write a draft release. The draft job itself reads the release back
+ * and resumes a partially uploaded draft with the missing assets.
  */
 
 const SHA = /^[a-f0-9]{40}$/;
@@ -31,6 +30,7 @@ const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const RUN_ID = /^[1-9]\d{0,19}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const MAIN_BRANCH = "main";
 const RELEASE_WORKFLOW = ".github/workflows/release.yml";
 const MARKETPLACE_WORKFLOW = ".github/workflows/marketplace-index.yml";
@@ -182,22 +182,24 @@ export interface BuildJobProof {
  *
  * The draft job runs before the release run itself can be `completed`, so the build job's
  * own API record is the conclusion that authorises reading its artifact. A job from another
- * attempt, another head or a failed conclusion is not evidence.
+ * attempt, another head or a failed conclusion is not evidence. `name` selects which job of
+ * that attempt is proven; it defaults to the `verify` job that uploads the artifact.
  */
-export function parseBuildJob(raw: unknown, expected: { runId: string; runAttempt: string; tagSha: string }): BuildJobProof {
+export function parseBuildJob(raw: unknown, expected: { runId: string; runAttempt: string; tagSha: string; name?: string }): BuildJobProof {
+  const name = expected.name ?? "verify";
   const payload = asRecord(raw);
   const jobs = Array.isArray(raw) ? raw : payload?.jobs;
   if (!Array.isArray(jobs)) throw new Error("release-build-jobs-unreadable");
   const matches = jobs.filter(value => {
     const job = asRecord(value);
-    return job?.name === "verify" && String(job.run_id) === expected.runId && String(job.run_attempt) === expected.runAttempt && job.head_sha === expected.tagSha;
+    return job?.name === name && String(job.run_id) === expected.runId && String(job.run_attempt) === expected.runAttempt && job.head_sha === expected.tagSha;
   });
   if (matches.length === 0) throw new Error("release-build-job-missing");
   if (matches.length > 1) throw new Error("release-build-job-ambiguous");
   const job = matches[0]!;
   if (job.status !== "completed") throw new Error("release-build-job-pending");
   if (job.conclusion !== "success") throw new Error("release-build-job-not-successful");
-  return { id: String(job.id), name: "verify", conclusion: "success" };
+  return { id: String(job.id), name, conclusion: "success" };
 }
 
 export interface ArtifactProof {
@@ -228,6 +230,46 @@ export function parseArtifact(raw: unknown, expected: { name: string; id: number
   if (origin.id === undefined || String(origin.id) !== expected.runId) throw new Error("release-artifact-run-mismatch");
   if (origin.head_sha !== expected.headSha) throw new Error("release-artifact-head-mismatch");
   return { id, name: expected.name, runId: expected.runId, headSha: expected.headSha, headBranch: typeof origin.head_branch === "string" ? origin.head_branch : "" };
+}
+
+export interface ReleaseArtifactSelection {
+  readonly id: number;
+  readonly name: string;
+  readonly attempt: string;
+}
+
+/**
+ * Pick the release artifact this run uploaded, from the run's own artifact list.
+ *
+ * A rerun of only the privileged `draft` job increments the run attempt without re-running
+ * `verify`, so the artifact keeps the attempt that actually produced its bytes; the name,
+ * not the current environment, is the authority. Name, run, head and non-expiry are all
+ * re-proven, and between two genuine attempts the newest one wins, exactly like a rerun of
+ * the whole workflow. An absent artifact is refused rather than downloaded by a guessed name.
+ */
+export function selectReleaseArtifact(raw: unknown, expected: { tag: string; runId: string; headSha: string }): ReleaseArtifactSelection {
+  const payload = asRecord(raw);
+  const artifacts = Array.isArray(raw) ? raw : payload?.artifacts;
+  if (!Array.isArray(artifacts)) throw new Error("release-artifacts-unreadable");
+  const prefix = `release-${parseReleaseTag(expected.tag).tag}-${runId(expected.runId, "release-run-id-invalid")}-`;
+  const candidates = artifacts.flatMap(value => {
+    const row = asRecord(value);
+    const name = row?.name;
+    if (!row || typeof name !== "string" || !name.startsWith(prefix)) return [];
+    const attempt = name.slice(prefix.length);
+    if (!RUN_ID.test(attempt)) return [];
+    return [{ row, name, attempt }];
+  });
+  if (candidates.length === 0) throw new Error("release-artifact-missing");
+  const live = candidates.filter(candidate => candidate.row.expired === false);
+  if (live.length === 0) throw new Error("release-artifact-expired");
+  if (new Set(live.map(candidate => candidate.attempt)).size !== live.length) throw new Error("release-artifact-ambiguous");
+  live.sort((left, right) => Number(right.attempt) - Number(left.attempt));
+  const chosen = live[0]!;
+  const id = chosen.row.id;
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) throw new Error("release-artifact-id-invalid");
+  parseArtifact(chosen.row, { name: chosen.name, id, runId: expected.runId, headSha: expected.headSha });
+  return { id, name: chosen.name, attempt: chosen.attempt };
 }
 
 export interface ReleaseAssetSpec {
@@ -352,11 +394,11 @@ export interface PackageIdentity {
 export function packageIdentity(raw: unknown, expectedVersion: string): PackageIdentity {
   const pkg = record(raw, "release-package-unreadable");
   const version = pkg.version;
-  if (typeof version !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error("release-package-version-invalid");
+  if (typeof version !== "string" || !STABLE_VERSION.test(version)) throw new Error("release-package-version-invalid");
   if (version !== expectedVersion) throw new Error("release-package-version-mismatch");
   const dependencies = asRecord(pkg.devDependencies);
   const host = dependencies?.["@oh-my-pi/pi-coding-agent"];
-  if (typeof host !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(host)) throw new Error("release-host-version-invalid");
+  if (typeof host !== "string" || !STABLE_VERSION.test(host)) throw new Error("release-host-version-invalid");
   return { version, hostVersion: host };
 }
 
@@ -415,13 +457,14 @@ export interface PrepublishEvidence {
   readonly tag: string;
   readonly version: string;
   readonly tagSha: string;
-  readonly releaseState: "draft" | "published";
+  readonly releaseState: "draft";
   readonly releaseRunId: string;
   readonly releaseRunAttempt: string;
   readonly checkRunId: string;
   readonly catalogSha256: string;
   readonly archiveSha256: string;
   readonly sumsSha256: string;
+  readonly hostVersion: string;
 }
 
 export interface PrepublishReceipt extends PrepublishEvidence {
@@ -429,28 +472,32 @@ export interface PrepublishReceipt extends PrepublishEvidence {
   readonly smokePassed: true;
 }
 
-const EVIDENCE_KEYS = "archiveSha256,catalogSha256,checkRunId,releaseRunAttempt,releaseRunId,releaseState,repository,schemaVersion,sumsSha256,tag,tagSha,version";
-const RECEIPT_KEYS = "archiveSha256,catalogSha256,checkRunId,releaseRunAttempt,releaseRunId,releaseState,repository,schemaVersion,smoke,smokePassed,sumsSha256,tag,tagSha,version";
+const EVIDENCE_KEYS = "archiveSha256,catalogSha256,checkRunId,hostVersion,releaseRunAttempt,releaseRunId,releaseState,repository,schemaVersion,sumsSha256,tag,tagSha,version";
+const RECEIPT_KEYS = "archiveSha256,catalogSha256,checkRunId,hostVersion,releaseRunAttempt,releaseRunId,releaseState,repository,schemaVersion,smoke,smokePassed,sumsSha256,tag,tagSha,version";
 
 function evidenceFields(row: Record<string, unknown>): PrepublishEvidence {
   if (row.schemaVersion !== 1 || typeof row.repository !== "string" || typeof row.tag !== "string") throw new Error("prepublish-receipt-invalid");
   const repository = repositoryName(row.repository);
   const tag = parseReleaseTag(row.tag);
   if (row.version !== tag.version) throw new Error("prepublish-receipt-invalid");
-  if (row.releaseState !== "draft" && row.releaseState !== "published") throw new Error("prepublish-receipt-invalid");
+  // Prepublication evidence only ever describes a draft: the release state itself is
+  // re-observed by the privileged promotion job, never asserted by this receipt.
+  if (row.releaseState !== "draft") throw new Error("prepublish-receipt-invalid");
+  if (typeof row.hostVersion !== "string" || !STABLE_VERSION.test(row.hostVersion)) throw new Error("prepublish-receipt-invalid");
   return {
     schemaVersion: 1,
     repository,
     tag: tag.tag,
     version: tag.version,
     tagSha: sha256(typeof row.tagSha === "string" ? row.tagSha : "", "prepublish-receipt-invalid"),
-    releaseState: row.releaseState,
+    releaseState: "draft",
     releaseRunId: runId(row.releaseRunId, "prepublish-receipt-invalid"),
     releaseRunAttempt: runId(row.releaseRunAttempt, "prepublish-receipt-invalid"),
     checkRunId: runId(row.checkRunId, "prepublish-receipt-invalid"),
     catalogSha256: hash(row.catalogSha256, "prepublish-receipt-invalid"),
     archiveSha256: hash(row.archiveSha256, "prepublish-receipt-invalid"),
     sumsSha256: hash(row.sumsSha256, "prepublish-receipt-invalid"),
+    hostVersion: row.hostVersion,
   };
 }
 
@@ -458,6 +505,74 @@ export function parsePrepublishEvidence(raw: unknown): PrepublishEvidence {
   const row = record(raw, "prepublish-receipt-invalid");
   if (Object.keys(row).sort().join(",") !== EVIDENCE_KEYS) throw new Error("prepublish-receipt-invalid");
   return evidenceFields(row);
+}
+
+export interface ArtifactEvidenceSource {
+  readonly repository: string;
+  readonly tag: string;
+  readonly version: string;
+  readonly tagSha: string;
+  readonly checkRunId: string;
+  readonly runId: string;
+  readonly runAttempt: string;
+  readonly hostVersion: string;
+  readonly manifest: ReleaseManifest;
+  readonly files: ReadonlyMap<string, Uint8Array>;
+}
+
+/**
+ * Build the prepublication evidence from the release artifact's own bytes.
+ *
+ * The draft release API is never read here: the successful release run that produced this
+ * artifact is the authority, the manifest is bound to that run's exact repository, tag,
+ * commit, id and attempt, and every byte is re-hashed locally. The catalog that the native
+ * smoke will install is therefore exactly the catalog the sealed assets carry, not a copy
+ * that the release service happened to serve at read time.
+ */
+export function artifactEvidence(source: ArtifactEvidenceSource): { evidence: PrepublishEvidence; catalogBytes: Uint8Array } {
+  const { repository, tag, version, tagSha, manifest, files } = source;
+  verifyManifestAssets(manifest, files);
+  const archiveName = `omp-settings-ru-${version}.tgz`;
+  const archive = manifest.assets.find(asset => asset.name === archiveName);
+  if (!archive) throw new Error(`release-asset-missing:${archiveName}`);
+  const sums = files.get(SUMS_ASSET);
+  const catalogBytes = files.get(CATALOG_ASSET);
+  if (!sums || !catalogBytes) throw new Error("release-manifest-assets");
+  // The archive must be the one SHA256SUMS describes; the two artifacts cannot disagree.
+  const sumsArchiveSha256 = archiveChecksumFromSums(sums, archiveName);
+  if (sumsArchiveSha256 !== archive.sha256) throw new Error("release-checksums-mismatch");
+  const sumsSha256 = sha256Bytes(sums);
+  const catalogSha256 = sha256Bytes(catalogBytes);
+  const prepublication: PrepublicationEvidence = {
+    tag, version, targetCommitSha: tagSha, draft: true, prerelease: false, published: false,
+    checksPassed: true, checksHeadSha: tagSha,
+    assets: manifest.assets.map(asset => ({
+      name: asset.name,
+      digest: `sha256:${asset.sha256}`,
+      browserDownloadUrl: `https://github.com/${repository}/releases/download/${tag}/${asset.name}`,
+    })),
+    archiveSha256: archive.sha256,
+    sumsSha256,
+    sumsArchiveSha256,
+    catalogSha256,
+  };
+  const catalogText = new TextDecoder().decode(catalogBytes);
+  let catalog: unknown;
+  try {
+    catalog = parseStrictJSON(catalogText);
+  } catch {
+    throw new Error("marketplace-prepublication-rejected:marketplace-catalog-malformed");
+  }
+  const errors = validatePrepublicationCatalog(catalog, prepublication, repository);
+  if (errors.length > 0) throw new Error(`marketplace-prepublication-rejected:${errors.join(",")}`);
+  return {
+    catalogBytes,
+    evidence: {
+      schemaVersion: 1, repository, tag, version, tagSha,
+      releaseState: "draft", releaseRunId: source.runId, releaseRunAttempt: source.runAttempt, checkRunId: source.checkRunId,
+      catalogSha256, archiveSha256: archive.sha256, sumsSha256, hostVersion: source.hostVersion,
+    },
+  };
 }
 
 /**
@@ -490,6 +605,7 @@ export interface PromotionExpectation {
   readonly tagSha: string;
   readonly releaseRunId: string;
   readonly releaseRunAttempt: string;
+  readonly hostVersion: string;
 }
 
 /** Every identity the promotion job re-observed must equal the sealed receipt. */
@@ -499,6 +615,7 @@ export function promotionErrors(receipt: PrepublishReceipt, expected: PromotionE
   if (receipt.tag !== expected.tag) errors.push("promotion-tag-mismatch");
   if (receipt.tagSha !== expected.tagSha) errors.push("promotion-sha-mismatch");
   if (receipt.releaseRunId !== expected.releaseRunId || receipt.releaseRunAttempt !== expected.releaseRunAttempt) errors.push("promotion-release-run-mismatch");
+  if (receipt.hostVersion !== expected.hostVersion) errors.push("promotion-host-version-mismatch");
   return errors;
 }
 
@@ -730,25 +847,58 @@ async function fetchCatalog(repository: string, tag: string): Promise<Uint8Array
   return bytes;
 }
 
-async function publishedEvidence(tag: string, repository: string, checkRunId: string): Promise<{ evidence: PrepublishEvidence; catalogBytes: Uint8Array }> {
-  const { release } = await loadVerifiedCatalog(tag, checkRunId, undefined, repository);
-  const catalogBytes = await fetchCatalog(repository, tag);
-  const digest = sha256Bytes(catalogBytes);
-  const asset = release.assets.find(candidate => candidate.name === CATALOG_ASSET);
-  if (!asset || asset.digest !== `sha256:${digest}`) throw new Error("marketplace-catalog-asset-digest-mismatch");
-  const catalog = parseStrictJSON(new TextDecoder().decode(catalogBytes)) as unknown;
-  const errors = validateMarketplaceCatalog(catalog, release, repository);
-  if (errors.length > 0) throw new Error(`marketplace-prepublication-rejected:${errors.join(",")}`);
-  const identity = catalogIdentity(catalog, "marketplace-published");
-  if (identity.sha !== release.targetCommitSha || identity.version !== release.version) throw new Error("marketplace-published-identity-mismatch");
-  return {
-    catalogBytes,
-    evidence: {
-      schemaVersion: 1, repository, tag, version: tag.slice(1), tagSha: release.targetCommitSha,
-      releaseState: "published", releaseRunId: "", releaseRunAttempt: "", checkRunId,
-      catalogSha256: digest, archiveSha256: release.archiveSha256, sumsSha256: release.sumsSha256,
-    },
+/**
+ * Prove the read-only release run that produced the artifact this job may trust.
+ *
+ * Nothing is downloaded or written: this is the read-only half of the prepublication proof,
+ * and it exists so the parts of the job that open released bytes (native host, smoke) never
+ * need a token that can see or write a draft release. A successful run for any other commit,
+ * a failed or pending job, or an artifact this repository did not upload is not evidence.
+ */
+async function prepublishSourceCommand(args: readonly string[]): Promise<void> {
+  const parsed = parseReleaseTag(option(args, "--tag"));
+  const repository = repositoryName(option(args, "--repository"));
+  const checkout = resolve(option(args, "--checkout"));
+  assertTrustedMain(checkout);
+  const tagSha = tagCommit(repository, parsed.tag);
+  requireCommit(checkout, tagSha);
+  assertReleaseAncestor(checkout, tagSha);
+  const pkg = packageAtCommit(checkout, tagSha, parsed.version);
+  const run = parseReleaseRun(findSuccessfulReleaseRun(repository, { tag: parsed.tag, tagSha }), {
+    repository, tag: parsed.tag, tagSha, requireSuccess: true,
+  });
+  // The draft job that wrote this run's release must be green in the attempt this run is on.
+  const currentJobs = ghJson([`repos/${repository}/actions/runs/${run.id}/attempts/${run.attempt}/jobs?per_page=100`]);
+  parseBuildJob(currentJobs, { runId: run.id, runAttempt: run.attempt, tagSha, name: "draft" });
+  const artifact = selectReleaseArtifact(ghJson([`repos/${repository}/actions/runs/${run.id}/artifacts?per_page=100`]), {
+    tag: parsed.tag, runId: run.id, headSha: tagSha,
+  });
+  // A rerun of only the privileged job keeps the earlier build attempt, whose `verify` job
+  // is the one that actually produced these bytes; prove that attempt, not the environment.
+  if (artifact.attempt === run.attempt) {
+    parseBuildJob(currentJobs, { runId: run.id, runAttempt: run.attempt, tagSha });
+  } else {
+    parseBuildJob(ghJson([`repos/${repository}/actions/runs/${run.id}/attempts/${artifact.attempt}/jobs?per_page=100`]), {
+      runId: run.id, runAttempt: artifact.attempt, tagSha,
+    });
+  }
+  const source = {
+    tag: parsed.tag,
+    releaseRunId: run.id,
+    releaseRunAttempt: artifact.attempt,
+    tagSha,
+    artifactName: artifact.name,
+    hostVersion: pkg.hostVersion,
   };
+  if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, [
+    `release-run-id=${run.id}`,
+    `release-run-attempt=${artifact.attempt}`,
+    `tag-sha=${tagSha}`,
+    `artifact-id=${artifact.id}`,
+    `artifact-name=${artifact.name}`,
+    `host-version=${pkg.hostVersion}`,
+  ].join("\n") + "\n");
+  console.log(JSON.stringify({ ok: true, ...source }, null, 2));
 }
 
 async function draftCommand(args: readonly string[]): Promise<void> {
@@ -812,10 +962,22 @@ async function draftCommand(args: readonly string[]): Promise<void> {
   console.log(JSON.stringify({ decision: plan.action, uploaded: plan.upload.map(asset => asset.name), skipped: plan.skip, observed: settled.assets.map(asset => asset.name), tag: parsed.tag, releaseSha: tagSha, version: pkg.version, artifactId, waitMs }, null, 2));
 }
 
+/**
+ * Prove the draft from the release job's own artifact, never from the draft release API.
+ *
+ * A draft release is invisible to the read-only token this job holds, so the run-bound
+ * artifact is the evidence: the manifest binds these bytes to the repository, tag, commit,
+ * run and attempt, every asset is re-hashed here, the archive must equal SHA256SUMS, and the
+ * catalog handed to the native smoke is the catalog those hashes describe.
+ */
 async function prepublishCommand(args: readonly string[]): Promise<void> {
   const parsed = parseReleaseTag(option(args, "--tag"));
   const repository = repositoryName(option(args, "--repository"));
   const checkout = resolve(option(args, "--checkout"));
+  const assets = resolve(option(args, "--assets"));
+  const releaseRunId = runId(option(args, "--run-id"), "release-run-id-invalid");
+  const releaseRunAttempt = runId(option(args, "--run-attempt"), "release-run-attempt-invalid");
+  const artifactName = option(args, "--artifact-name");
   const output = resolve(option(args, "--output"));
   if (!isAbsolute(output)) throw new Error("prepublish-output-not-absolute");
   const timeout = Number(option(args, "--timeout-ms"));
@@ -825,41 +987,41 @@ async function prepublishCommand(args: readonly string[]): Promise<void> {
   requireCommit(checkout, tagSha);
   assertReleaseAncestor(checkout, tagSha);
   const pkg = packageAtCommit(checkout, tagSha, parsed.version);
-  const releaseRun = parseReleaseRun(findSuccessfulReleaseRun(repository, { tag: parsed.tag, tagSha }), {
-    repository, tag: parsed.tag, tagSha, requireSuccess: true,
+  const releaseRun = parseReleaseRun(ghJson([`repos/${repository}/actions/runs/${releaseRunId}`]), {
+    repository, tag: parsed.tag, tagSha, runId: releaseRunId, requireSuccess: true,
   });
-  const checkRunId = await waitForCheckRun(repository, tagSha, timeout);
-  const existing = readRelease(parsed.tag, repository);
-  if (!existing) throw new Error("marketplace-release-not-found");
-  const naming = releaseNamingErrors(existing, expectedAssetNames(parsed.version));
-  if (naming.length > 0) throw new Error(`marketplace-prepublication-rejected:${naming.join(",")}`);
-  let evidence: PrepublishEvidence;
-  let catalogBytes: Uint8Array;
-  if (existing.published) {
-    const published = await publishedEvidence(parsed.tag, repository, checkRunId);
-    evidence = { ...published.evidence, releaseRunId: releaseRun.id, releaseRunAttempt: releaseRun.attempt };
-    catalogBytes = published.catalogBytes;
-  } else {
-    const { evidence: draft, catalogBytes: bytes } = await draftCatalogEvidence(parsed.tag, checkRunId, repository);
-    const catalog = parseStrictJSON(new TextDecoder().decode(bytes)) as unknown;
-    const errors = validatePrepublicationCatalog(catalog, draft, repository);
-    if (errors.length > 0) throw new Error(`marketplace-prepublication-rejected:${errors.join(",")}`);
-    if (draft.targetCommitSha !== tagSha) throw new Error("release-tag-sha-mismatch");
-    evidence = {
-      schemaVersion: 1, repository, tag: parsed.tag, version: parsed.version, tagSha,
-      releaseState: "draft", releaseRunId: releaseRun.id, releaseRunAttempt: releaseRun.attempt, checkRunId,
-      catalogSha256: draft.catalogSha256, archiveSha256: draft.archiveSha256, sumsSha256: draft.sumsSha256,
-    };
-    catalogBytes = bytes;
+  // The artifact's own name carries the attempt that produced these bytes. The caller's
+  // attempt must be that same attempt, never the environment's current one.
+  if (parseReleaseArtifactName(artifactName, parsed.tag, releaseRunId) !== releaseRunAttempt) throw new Error("release-run-attempt-mismatch");
+  // Prove the `verify` job of exactly that attempt: it is the job whose upload these bytes
+  // claim to be, so a manifest from another attempt can never be sealed as evidence.
+  parseBuildJob(ghJson([`repos/${repository}/actions/runs/${releaseRunId}/attempts/${releaseRunAttempt}/jobs?per_page=100`]), {
+    runId: releaseRunId, runAttempt: releaseRunAttempt, tagSha,
+  });
+  const manifest = bindReleaseArtifact(await jsonFile(join(assets, "release.json"), "release-manifest-invalid"), {
+    repository, tag: parsed.tag, version: parsed.version, releaseSha: tagSha, runId: releaseRunId, artifactName,
+  });
+  const files = new Map<string, Uint8Array>();
+  for (const asset of manifest.assets) {
+    try {
+      files.set(asset.name, new Uint8Array(await readFile(join(assets, asset.name))));
+    } catch {
+      throw new Error(`release-asset-missing:${asset.name}`);
+    }
   }
+  const checkRunId = await waitForCheckRun(repository, tagSha, timeout);
+  const { evidence, catalogBytes } = artifactEvidence({
+    repository, tag: parsed.tag, version: parsed.version, tagSha, checkRunId,
+    runId: releaseRun.id, runAttempt: releaseRunAttempt, hostVersion: pkg.hostVersion, manifest, files,
+  });
   const catalogPath = join(output, CATALOG_ASSET);
   await mkdir(output, { recursive: true });
   await writeFile(catalogPath, catalogBytes);
   await writeFile(join(output, "evidence.json"), JSON.stringify(evidence, null, 2) + "\n", "utf8");
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, [
-    `catalog=${catalogPath}`, `host-version=${pkg.hostVersion}`,
+    `catalog=${catalogPath}`, `host-version=${evidence.hostVersion}`,
   ].join("\n") + "\n");
-  console.log(JSON.stringify({ ok: true, evidence, hostVersion: pkg.hostVersion, catalog: catalogPath }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, hostVersion: evidence.hostVersion, catalog: catalogPath }, null, 2));
 }
 
 async function sealCommand(args: readonly string[]): Promise<void> {
@@ -886,6 +1048,7 @@ async function verifyPromotionCommand(args: readonly string[]): Promise<void> {
   const tagSha = tagCommit(repository, parsed.tag);
   requireCommit(checkout, tagSha);
   assertReleaseAncestor(checkout, tagSha);
+  const pkg = packageAtCommit(checkout, tagSha, parsed.version);
   const releaseRun = parseReleaseRun(findSuccessfulReleaseRun(repository, { tag: parsed.tag, tagSha }), {
     repository, tag: parsed.tag, tagSha, requireSuccess: true,
   });
@@ -904,7 +1067,7 @@ async function verifyPromotionCommand(args: readonly string[]): Promise<void> {
     name: artifactName, id: artifactId, runId: currentRunId, headSha: origin.headSha,
   });
   const errors = promotionErrors(receipt, {
-    repository, tag: parsed.tag, tagSha, releaseRunId: releaseRun.id, releaseRunAttempt: releaseRun.attempt,
+    repository, tag: parsed.tag, tagSha, releaseRunId: releaseRun.id, releaseRunAttempt: releaseRun.attempt, hostVersion: pkg.hostVersion,
   });
   if (errors.length > 0) throw new Error(`marketplace-promotion-rejected:${errors.join(",")}`);
   const release = readRelease(parsed.tag, repository);
@@ -959,13 +1122,14 @@ async function main(): Promise<void> {
   const commands: Readonly<Record<string, (lines: readonly string[]) => Promise<void>>> = {
     manifest: manifestCommand,
     draft: draftCommand,
+    "prepublish-source": prepublishSourceCommand,
     prepublish: prepublishCommand,
     seal: sealCommand,
     "verify-promotion": verifyPromotionCommand,
     "prove-served": proveServedCommand,
   };
   const handler = command !== undefined && Object.hasOwn(commands, command) ? commands[command] : undefined;
-  if (!handler) throw new Error("usage: manifest|draft|prepublish|seal|verify-promotion|prove-served");
+  if (!handler) throw new Error("usage: manifest|draft|prepublish-source|prepublish|seal|verify-promotion|prove-served");
   await handler(args.slice(1));
 }
 

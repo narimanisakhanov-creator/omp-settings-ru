@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { buildMarketplaceCatalog, sha256Bytes } from "../scripts/marketplace-catalog";
 import {
   archiveChecksumFromSums,
+  artifactEvidence,
   assertReleaseAncestor,
   assertTrustedMain,
   bindReleaseArtifact,
@@ -28,6 +29,7 @@ import {
   promotionErrors,
   sealPrepublishReceipt,
   selectReleaseRun,
+  selectReleaseArtifact,
   servedProofErrors,
   verifyManifestAssets,
   type PrepublishEvidence,
@@ -81,7 +83,7 @@ function evidence(catalogBytes: Uint8Array): PrepublishEvidence {
   return {
     schemaVersion: 1, repository: REPOSITORY, tag: "v1.2.3", version: "1.2.3", tagSha: TAG_SHA,
     releaseState: "draft", releaseRunId: "1234", releaseRunAttempt: "2", checkRunId: "99",
-    catalogSha256: sha256Bytes(catalogBytes), archiveSha256: HASH, sumsSha256: OTHER_HASH,
+    catalogSha256: sha256Bytes(catalogBytes), archiveSha256: HASH, sumsSha256: OTHER_HASH, hostVersion: "18.8.7",
   };
 }
 
@@ -306,10 +308,161 @@ test("the seal exists only after a successful distribution smoke and proofs the 
   expect(refusal(() => sealPrepublishReceipt(evidence(catalog), catalog, { ...successfulSmoke, observations: [] }))).toBe("prepublish-smoke-unproven");
   expect(refusal(() => sealPrepublishReceipt(evidence(catalog), new TextEncoder().encode("changed"), successfulSmoke))).toBe("prepublish-catalog-changed");
   expect(refusal(() => parsePrepublishReceipt({ ...sealed, smokePassed: false }))).toBe("prepublish-smoke-unproven");
-  const expected = { repository: REPOSITORY, tag: "v1.2.3", tagSha: TAG_SHA, releaseRunId: "1234", releaseRunAttempt: "2" };
+  const expected = { repository: REPOSITORY, tag: "v1.2.3", tagSha: TAG_SHA, releaseRunId: "1234", releaseRunAttempt: "2", hostVersion: "18.8.7" };
   expect(promotionErrors(sealed, expected)).toEqual([]);
   expect(promotionErrors(sealed, { ...expected, tagSha: MAIN_SHA })).toEqual(["promotion-sha-mismatch"]);
   expect(promotionErrors(sealed, { ...expected, releaseRunAttempt: "1" })).toEqual(["promotion-release-run-mismatch"]);
+  expect(promotionErrors(sealed, { ...expected, hostVersion: "18.8.8" })).toEqual(["promotion-host-version-mismatch"]);
+});
+
+interface ArtifactFixture {
+  readonly files: Map<string, Uint8Array>;
+  readonly row: ReleaseManifest;
+  readonly catalogBytes: Uint8Array;
+  readonly archiveBytes: Uint8Array;
+  readonly archiveSha256: string;
+  readonly sumsBytes: Uint8Array;
+}
+
+function artifactFixture(catalog: unknown = buildMarketplaceCatalog({ version: "1.2.3", commitSha: TAG_SHA, repository: REPOSITORY, description: "Русский перевод панели /settings OMP" })): ArtifactFixture {
+  const archiveBytes = new TextEncoder().encode("archive-bytes");
+  const catalogBytes = new TextEncoder().encode(JSON.stringify(catalog, null, 2));
+  const archiveSha256 = sha256Bytes(archiveBytes);
+  const sumsBytes = new TextEncoder().encode(`${archiveSha256}  omp-settings-ru-1.2.3.tgz\n`);
+  const files = new Map<string, Uint8Array>([
+    ["omp-settings-ru-1.2.3.tgz", archiveBytes],
+    ["SHA256SUMS", sumsBytes],
+    ["marketplace.json", catalogBytes],
+  ]);
+  const row = manifest([
+    { name: "omp-settings-ru-1.2.3.tgz", sha256: archiveSha256 },
+    { name: "SHA256SUMS", sha256: sha256Bytes(sumsBytes) },
+    { name: "marketplace.json", sha256: sha256Bytes(catalogBytes) },
+  ]);
+  return { files, row, catalogBytes, archiveBytes, archiveSha256, sumsBytes };
+}
+
+function artifactSource(fixture: ArtifactFixture) {
+  return {
+    repository: REPOSITORY, tag: "v1.2.3", version: "1.2.3", tagSha: TAG_SHA, checkRunId: "99",
+    runId: "1234", runAttempt: "2", hostVersion: "18.8.7", manifest: fixture.row, files: fixture.files,
+  };
+}
+
+test("artifact-bound prepublication evidence is taken from the release artifact bytes", () => {
+  const fixture = artifactFixture();
+  const { evidence: bound, catalogBytes } = artifactEvidence(artifactSource(fixture));
+  expect(catalogBytes).toEqual(fixture.catalogBytes);
+  expect(bound).toEqual({
+    schemaVersion: 1, repository: REPOSITORY, tag: "v1.2.3", version: "1.2.3", tagSha: TAG_SHA,
+    releaseState: "draft", releaseRunId: "1234", releaseRunAttempt: "2", checkRunId: "99",
+    catalogSha256: sha256Bytes(fixture.catalogBytes), archiveSha256: fixture.archiveSha256,
+    sumsSha256: sha256Bytes(fixture.sumsBytes), hostVersion: "18.8.7",
+  });
+  // The receipt that leaves the job names the artifact-bound run and the exact native host.
+  const sealed = sealPrepublishReceipt(bound, catalogBytes, successfulSmoke);
+  expect(sealed).toMatchObject({ releaseState: "draft", releaseRunId: "1234", releaseRunAttempt: "2", hostVersion: "18.8.7" });
+  expect(parsePrepublishReceipt(sealed)).toEqual(sealed);
+});
+
+test("tampered bytes, mismatched checksums and foreign catalogs never become evidence", () => {
+  const fixture = artifactFixture();
+  const source = artifactSource(fixture);
+  const tamperedCatalog = new Map(fixture.files);
+  tamperedCatalog.set("marketplace.json", new TextEncoder().encode("{\"tampered\":true}"));
+  expect(refusal(() => artifactEvidence({ ...source, files: tamperedCatalog }))).toBe("release-asset-hash-mismatch:marketplace.json");
+  const tamperedArchive = new Map(fixture.files);
+  tamperedArchive.set("omp-settings-ru-1.2.3.tgz", new TextEncoder().encode("other-bytes"));
+  expect(refusal(() => artifactEvidence({ ...source, files: tamperedArchive }))).toBe("release-asset-hash-mismatch:omp-settings-ru-1.2.3.tgz");
+  const missingCatalog = new Map([...fixture.files].filter(([name]) => name !== "marketplace.json"));
+  expect(refusal(() => artifactEvidence({ ...source, files: missingCatalog }))).toBe("release-asset-missing:marketplace.json");
+  // SHA256SUMS must describe this archive; sums naming another hash are refused even though
+  // every manifest hash still matches the bytes that carry them.
+  const foreignSums = new TextEncoder().encode(`${OTHER_HASH}  omp-settings-ru-1.2.3.tgz\n`);
+  const filesWithForeignSums = new Map(fixture.files);
+  filesWithForeignSums.set("SHA256SUMS", foreignSums);
+  const manifestWithForeignSums = manifest(fixture.row.assets.map(asset => asset.name === "SHA256SUMS" ? { ...asset, sha256: sha256Bytes(foreignSums) } : asset));
+  expect(refusal(() => artifactEvidence({ ...source, manifest: manifestWithForeignSums, files: filesWithForeignSums }))).toBe("release-checksums-mismatch");
+  // A catalog built for another version or another commit is refused by the catalog proof.
+  const wrongVersion = artifactFixture(buildMarketplaceCatalog({ version: "1.2.4", commitSha: TAG_SHA, repository: REPOSITORY, description: "x" }));
+  expect(refusal(() => artifactEvidence({ ...source, manifest: wrongVersion.row, files: wrongVersion.files }))).toContain("marketplace-release-version-mismatch");
+  const wrongSha = artifactFixture(buildMarketplaceCatalog({ version: "1.2.3", commitSha: MAIN_SHA, repository: REPOSITORY, description: "x" }));
+  expect(refusal(() => artifactEvidence({ ...source, manifest: wrongSha.row, files: wrongSha.files }))).toContain("marketplace-release-sha-mismatch");
+  // A catalog that is not even JSON, or not a catalog object, is a refusal with a reason.
+  const invalidCatalog = new TextEncoder().encode("{not json");
+  const filesWithInvalidCatalog = new Map(fixture.files);
+  filesWithInvalidCatalog.set("marketplace.json", invalidCatalog);
+  const manifestWithInvalidCatalog = manifest(fixture.row.assets.map(asset => asset.name === "marketplace.json" ? { ...asset, sha256: sha256Bytes(invalidCatalog) } : asset));
+  expect(refusal(() => artifactEvidence({ ...source, manifest: manifestWithInvalidCatalog, files: filesWithInvalidCatalog }))).toBe("marketplace-prepublication-rejected:marketplace-catalog-malformed");
+  const notAnObject = artifactFixture("not-a-catalog");
+  expect(refusal(() => artifactEvidence({ ...source, manifest: notAnObject.row, files: notAnObject.files }))).toContain("marketplace-catalog-object-required");
+});
+
+test("the artifact manifest is bound to repository, tag, commit, run, attempt and its own name", () => {
+  const fixture = artifactFixture();
+  const raw = JSON.parse(JSON.stringify(fixture.row)) as unknown;
+  const expected = { repository: REPOSITORY, tag: "v1.2.3", version: "1.2.3", releaseSha: TAG_SHA, runId: "1234" };
+  expect(bindReleaseArtifact(raw, { ...expected, artifactName: "release-v1.2.3-1234-2" }).runAttempt).toBe("2");
+  // A missing or malformed manifest is not evidence at all: the download carried nothing.
+  for (const missing of [undefined, null, {}, "release.json", []]) {
+    expect(refusal(() => parseReleaseManifest(missing, { ...expected, runAttempt: "2" }))).toBe("release-manifest-invalid");
+  }
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, tag: "v1.2.4", artifactName: "release-v1.2.4-1234-2" }))).toBe("release-manifest-tag");
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, version: "1.2.4", artifactName: "release-v1.2.3-1234-2" }))).toBe("release-manifest-tag");
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, releaseSha: MAIN_SHA, artifactName: "release-v1.2.3-1234-2" }))).toBe("release-manifest-sha");
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, runId: "9999", artifactName: "release-v1.2.3-9999-2" }))).toBe("release-manifest-run");
+  // The attempt comes from the artifact's own name, so another attempt's download is refused.
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, artifactName: "release-v1.2.3-1234-1" }))).toBe("release-manifest-run");
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, artifactName: "release-v1.2.3-1234-2x" }))).toBe("release-artifact-name-mismatch");
+  expect(refusal(() => bindReleaseArtifact(raw, { ...expected, artifactName: "prepublish-v1.2.3-1234-2" }))).toBe("release-artifact-name-mismatch");
+});
+
+test("the release artifact source is the proven run, both its jobs and its own artifact", () => {
+  // Both jobs of the attempt must be green before its artifact may be trusted.
+  const jobs = { jobs: [
+    { id: 55, name: "verify", run_id: 1234, run_attempt: 2, head_sha: TAG_SHA, status: "completed", conclusion: "success" },
+    { id: 56, name: "draft", run_id: 1234, run_attempt: 2, head_sha: TAG_SHA, status: "completed", conclusion: "success" },
+  ] };
+  expect(parseBuildJob(jobs, { runId: "1234", runAttempt: "2", tagSha: TAG_SHA })).toEqual({ id: "55", name: "verify", conclusion: "success" });
+  expect(parseBuildJob(jobs, { runId: "1234", runAttempt: "2", tagSha: TAG_SHA, name: "draft" })).toEqual({ id: "56", name: "draft", conclusion: "success" });
+  const failedDraft = { jobs: [jobs.jobs[0]!, { ...jobs.jobs[1]!, conclusion: "failure" }] };
+  expect(refusal(() => parseBuildJob(failedDraft, { runId: "1234", runAttempt: "2", tagSha: TAG_SHA, name: "draft" }))).toBe("release-build-job-not-successful");
+  expect(refusal(() => parseBuildJob(jobs, { runId: "1234", runAttempt: "2", tagSha: TAG_SHA, name: "publish" }))).toBe("release-build-job-missing");
+  // The artifact is picked by its own attempt-bearing name and bound to this run and head.
+  const expected = { tag: "v1.2.3", runId: "1234", headSha: TAG_SHA };
+  expect(selectReleaseArtifact({ artifacts: [artifact()] }, expected)).toEqual({ id: 77, name: "release-v1.2.3-1234-2", attempt: "2" });
+  expect(selectReleaseArtifact([artifact()], expected).id).toBe(77);
+  // A rerun of only the privileged job increments the run attempt but keeps the earlier
+  // build attempt; that artifact is still the only evidence of the bytes.
+  expect(selectReleaseArtifact({ artifacts: [artifact({ name: "release-v1.2.3-1234-1" })] }, expected).attempt).toBe("1");
+  // A rerun of the whole workflow uploads a second attempt: the newest build wins.
+  expect(selectReleaseArtifact({ artifacts: [artifact({ id: 76, name: "release-v1.2.3-1234-1" }), artifact({ id: 79, name: "release-v1.2.3-1234-3" })] }, expected)).toEqual({ id: 79, name: "release-v1.2.3-1234-3", attempt: "3" });
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [] }, expected))).toBe("release-artifact-missing");
+  for (const foreign of ["release-v1.2.4-1234-2", "release-v1.2.3-9999-2", "release-v1.2.3-1234-", "release-v1.2.3-1234-2x", "prepublish-v1.2.3-1234-2"]) {
+    expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact({ name: foreign })] }, expected))).toBe("release-artifact-missing");
+  }
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact(), artifact({ id: 78 })] }, expected))).toBe("release-artifact-ambiguous");
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact({ expired: true })] }, expected))).toBe("release-artifact-expired");
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact({ workflow_run: { id: 9999, head_sha: TAG_SHA } })] }, expected))).toBe("release-artifact-run-mismatch");
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact({ workflow_run: { id: 1234, head_sha: MAIN_SHA } })] }, expected))).toBe("release-artifact-head-mismatch");
+  expect(refusal(() => selectReleaseArtifact({}, expected))).toBe("release-artifacts-unreadable");
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact()] }, { ...expected, tag: "1.2.3" }))).toBe("release-tag-invalid");
+  expect(refusal(() => selectReleaseArtifact({ artifacts: [artifact()] }, { ...expected, runId: "0" }))).toBe("release-run-id-invalid");
+});
+
+test("the sealed receipt can only be artifact-bound draft evidence with a real release run", () => {
+  const catalog = new TextEncoder().encode("{\"catalog\":true}");
+  const bound = evidence(catalog);
+  expect(parsePrepublishEvidence(bound)).toEqual(bound);
+  // The removed published-release branch invented an empty run id; that evidence is gone.
+  expect(refusal(() => parsePrepublishEvidence({ ...bound, releaseRunId: "" }))).toBe("prepublish-receipt-invalid");
+  expect(refusal(() => parsePrepublishEvidence({ ...bound, releaseRunAttempt: "0" }))).toBe("prepublish-receipt-invalid");
+  expect(refusal(() => parsePrepublishEvidence({ ...bound, releaseState: "published" }))).toBe("prepublish-receipt-invalid");
+  const withoutHost: Record<string, unknown> = { ...bound };
+  delete withoutHost.hostVersion;
+  expect(refusal(() => parsePrepublishEvidence(withoutHost))).toBe("prepublish-receipt-invalid");
+  expect(refusal(() => parsePrepublishEvidence({ ...bound, hostVersion: "^18.8.7" }))).toBe("prepublish-receipt-invalid");
+  expect(refusal(() => parsePrepublishEvidence({ ...bound, extra: true }))).toBe("prepublish-receipt-invalid");
 });
 
 test("marketplace promotion run origin distinguishes a tag-triggered run from a main dispatch", () => {

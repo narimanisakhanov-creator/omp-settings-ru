@@ -15,10 +15,11 @@ concurrency:
   group: marketplace-index
   cancel-in-progress: false
 jobs:
-  # Read-only proof. It resolves the successful release run for the exact tag commit,
-  # downloads and re-hashes every draft asset, prepares the native host for the tag's own
-  # package version, and exercises the draft catalog through the real distribution smoke.
-  # Only a sealed receipt produced after that smoke may leave this job.
+  # Read-only proof. It proves the successful release run for the exact tag commit and the
+  # artifact that run uploaded, downloads and re-hashes every asset from that artifact,
+  # prepares the native host for the tag's own package version, and exercises the proven
+  # catalog through the real distribution smoke. Only a sealed receipt produced after that
+  # smoke may leave this job, and no write-capable secret ever exists here.
   prepublish:
     if: |
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
@@ -55,31 +56,71 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
-      # Proves the successful release run, the dereferenced tag commit, the exact check run
-      # and every asset digest. Nothing is promoted here; there is no write token.
-      - name: Prove the draft release against the exact tag commit
-        id: prepublish
+      # Proves the successful release run at the dereferenced tag commit, the draft job of the
+      # run's current attempt, and the one artifact that run uploaded (selected by the build
+      # attempt embedded in its name, whose verify job is proven too). Read-only token only:
+      # this job also runs the released tag's native smoke, so no write-capable secret exists.
+      - name: Prove the release artifact source against the exact tag commit
+        id: source
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bun scripts/release-actions.ts prepublish-source \
+            --tag "$TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --checkout "$GITHUB_WORKSPACE"
+      # A draft release is invisible to this token by design, so the run-bound artifact the
+      # read-only release `verify` job uploaded is the evidence instead.
+      - name: Download the proven run's release artifact
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ steps.source.outputs.release-run-id }}
+          ARTIFACT_NAME: ${{ steps.source.outputs.artifact-name }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/release-draft"
+          gh run download "$RELEASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir "$RUNNER_TEMP/release-draft"
+      # Artifact-bound prepublication proof: the manifest is bound to the repository, tag,
+      # commit, run and attempt, every asset byte is re-hashed, the archive must equal
+      # SHA256SUMS, and the catalog comes from those exact bytes.
+      - name: Prove the draft release from the release artifact
+        id: prepublish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_RUN_ID: ${{ steps.source.outputs.release-run-id }}
+          RELEASE_RUN_ATTEMPT: ${{ steps.source.outputs.release-run-attempt }}
+          ARTIFACT_NAME: ${{ steps.source.outputs.artifact-name }}
         run: |
           set -euo pipefail
           bun scripts/release-actions.ts prepublish \
             --tag "$TAG" \
             --repository "$GITHUB_REPOSITORY" \
             --checkout "$GITHUB_WORKSPACE" \
+            --assets "$RUNNER_TEMP/release-draft" \
+            --run-id "$RELEASE_RUN_ID" \
+            --run-attempt "$RELEASE_RUN_ATTEMPT" \
+            --artifact-name "$ARTIFACT_NAME" \
             --output "$RUNNER_TEMP/prepublish" \
             --timeout-ms 1800000
-      # The host version is read from the tag commit's package.json, never from moving main.
+      # The host version comes from the tag commit's package.json as proven by the source
+      # step, never from moving main. The same value is sealed into the receipt.
       - name: Prepare the exact native host
         id: native-host
         env:
           GH_TOKEN: ${{ github.token }}
-          HOST_VERSION: ${{ steps.prepublish.outputs.host-version }}
+          HOST_VERSION: ${{ steps.source.outputs.host-version }}
         run: bun scripts/ci/prepare-host.ts "$HOST_VERSION" linux
-      # The draft catalog points at the already public tag/commit, so the real release can be
-      # installed before latest is moved. A failure blocks promotion.
+      # The proven catalog points at the already public tag/commit, so the real release can be
+      # installed before latest is moved. A failure blocks promotion. Tokenless on purpose.
       - name: Exercise the draft catalog through the native distribution smoke
         shell: bash
         run: |

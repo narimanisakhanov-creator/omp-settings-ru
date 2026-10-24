@@ -33,7 +33,7 @@ test("reverse npm target is refused before any option, home or backup exists", (
     expect(existsSync(backup)).toBe(false);
     expect(run.output).not.toMatch(/uv_spawn|ENOENT|native-executable-required|required:--home/);
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -45,7 +45,7 @@ test("reverse npm target is refused before required options are parsed", () => {
     expect(run.output).toContain("channel-target-unsupported");
     expect(run.output).not.toMatch(/required:--home|required:--profile|required:--spec/);
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -56,7 +56,7 @@ test("unknown target is not mistaken for the reverse migration", () => {
     expect(run.exitCode).not.toBe(0);
     expect(run.output).toMatch(/^error: channel-invalid\s*$/m);
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -74,6 +74,6 @@ test("configured extension roots are refused before migration", () => {
     expect(result.stdout.toString() + result.stderr.toString()).toContain("extension-roots-present");
     expect(existsSync(join(parent, "backup.json"))).toBe(false);
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

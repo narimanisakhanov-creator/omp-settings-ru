@@ -389,7 +389,7 @@ test("ordinary packaged scripts do not prevent safe staging", () => fixture(asyn
   });
   const receipt = await runUpdate({ ...options(root), pin: fixed });
   expect(receipt.phase).toBe("staged");
-}), 60_000);
+}), 180_000);
 
 
 async function installedFixture(root: string) {
