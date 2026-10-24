@@ -57,7 +57,10 @@ function contentFromResponse(text: string): string {
   const choices = root?.choices;
   if (!root || !Array.isArray(choices) || choices.length !== 1) throw new Error("model-response-choice-invalid");
   const message = asRecord(asRecord(choices[0])?.message);
-  if (!message || (message.refusal !== undefined && message.refusal !== null) || Object.hasOwn(message, "tool_calls") || Object.hasOwn(message, "function_call")) {
+  const toolCalls = message?.tool_calls;
+  const functionCall = message?.function_call;
+  const refused = typeof message?.refusal === "string" && message.refusal.trim() !== "";
+  if (!message || refused || (Array.isArray(toolCalls) && toolCalls.length > 0) || (functionCall !== undefined && functionCall !== null)) {
     throw new Error("model-response-not-content");
   }
   if (typeof message.content !== "string" || message.content.length === 0) throw new Error("model-response-content-invalid");
