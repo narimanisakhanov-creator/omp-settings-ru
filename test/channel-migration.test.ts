@@ -71,12 +71,13 @@ test("configured extension roots are refused before migration", () => {
     // Write the setting where the host itself says its profile config lives: the layout is
     // host-version specific, and a hardcoded path would silently test "no roots configured".
     const environment = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata") };
-    const path = Bun.spawnSync([executable!, "--profile", profile, "config", "path"], { stdout: "pipe", stderr: "pipe", timeout: 30000, env: environment });
-    expect(path.exitCode, path.stderr.toString()).toBe(0);
-    const agentDir = path.stdout.toString().trim();
-    expect(agentDir.length).toBeGreaterThan(0);
-    mkdirSync(agentDir, { recursive: true });
-    writeFileSync(join(agentDir, "config.yml"), "extensions:\n  - ./src/index.ts\n");
+    // Configure the root through the host CLI, so the layout stays the host's business and the
+    // guard is proved against a setting the host itself reports back.
+    const set = Bun.spawnSync([executable!, "--profile", profile, "config", "set", "extensions", '["./src/index.ts"]'], { stdout: "pipe", stderr: "pipe", timeout: 30000, env: environment });
+    expect(set.exitCode, set.stderr.toString()).toBe(0);
+    const read = Bun.spawnSync([executable!, "--profile", profile, "config", "get", "extensions", "--json"], { stdout: "pipe", stderr: "pipe", timeout: 30000, env: environment });
+    expect(read.exitCode, read.stderr.toString()).toBe(0);
+    expect(read.stdout.toString()).toContain("src/index.ts");
     const result = Bun.spawnSync([process.execPath, script, "--home", home, "--profile", profile, "--executable", executable!, "--to", "marketplace", "--spec", "omp-settings-ru@omp-settings-ru", "--backup", join(parent, "backup.json"), "--apply"], { stdout: "pipe", stderr: "pipe", timeout: 60000, env: { ...process.env, OMP_PLUGIN_EXTENSIONS: undefined } });
     const output = result.stdout.toString() + result.stderr.toString();
     expect(result.exitCode).not.toBe(0);
