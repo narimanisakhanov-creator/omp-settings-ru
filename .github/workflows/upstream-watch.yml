@@ -59,6 +59,10 @@ jobs:
           VERSION: ${{ needs.discover.outputs.version }}
           BASE: ${{ needs.discover.outputs.base }}
         run: bun scripts/maintenance-actions.ts prepare --version "$VERSION" --base "$BASE" --output "$RUNNER_TEMP/prepared"
+      - name: Keep the translate log with the blocked bundle
+        if: failure()
+        shell: bash
+        run: cp "$RUNNER_TEMP/translate.log" "$RUNNER_TEMP/prepared/translate.log" 2>/dev/null || true
       - id: upload
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
