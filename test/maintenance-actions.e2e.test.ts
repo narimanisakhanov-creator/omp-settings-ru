@@ -158,9 +158,13 @@ test("fresh translation CLI writes exact review proof from loopback API and reje
     await writeFile(join(bundle, "input.json"), "{model-fixture"); await writeBundleManifest(bundle, manifest(base));
     const broken = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
     const brokenStderr = await new Response(broken.stderr).text(); expect(await broken.exited).not.toBe(0);
-    expect(brokenStderr).toBe("translate-failed:SyntaxError\n");
+    expect(brokenStderr).toBe("translate-failed:input:SyntaxError\n");
     expect(brokenStderr.length).toBeLessThanOrEqual(120);
     expect(brokenStderr).not.toContain("maintenance-action-blocked"); expect(brokenStderr).not.toContain("model-fixture");
+    expect(count).toBe(4);
+    await rm(join(bundle, "input.json")); await writeBundleManifest(bundle, manifest(base));
+    const missing = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
+    expect(await new Response(missing.stderr).text()).toBe("translate-failed:input:ENOENT\n"); expect(await missing.exited).not.toBe(0);
     expect(count).toBe(4);
     rejected = false; let httpFailure = false;
     await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots })); await writeBundleManifest(bundle, manifest(base));

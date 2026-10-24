@@ -89,29 +89,35 @@ async function main(): Promise<void> {
   const { policy, baseSha } = accepted;
   if (command === "translate") {
     if (process.env.MAINTENANCE_GH_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) throw new Error("translation-github-secret-forbidden");
-    const root = resolve(option(args, "--bundle") ?? ""); const candidate = await validateBundle(root);
-    if (candidate.baseSha !== baseSha || candidate.repository !== policy.repository || candidate.runId !== process.env.GITHUB_RUN_ID || candidate.runAttempt !== process.env.GITHUB_RUN_ATTEMPT) throw new Error("translation-bundle-origin-mismatch");
-    const input = asRecord(parseStrictJSON(await Bun.file(join(root, "input.json")).text()));
-    if (!input || Object.keys(input).join(",") !== "snapshots" || !Array.isArray(input.snapshots)) throw new Error("translation-input-invalid");
-    const snapshots = input.snapshots.map(value => snapshotValue(value));
-    const catalog = parseCatalogJSON(await Bun.file(join(root, "data", CATALOG_PATH)).text());
+    const { root, candidate } = await translationStage("bundle", async () => {
+      const root = resolve(option(args, "--bundle") ?? ""); const candidate = await validateBundle(root);
+      if (candidate.baseSha !== baseSha || candidate.repository !== policy.repository || candidate.runId !== process.env.GITHUB_RUN_ID || candidate.runAttempt !== process.env.GITHUB_RUN_ATTEMPT) throw new Error("translation-bundle-origin-mismatch");
+      return { root, candidate };
+    });
+    const { snapshots, catalog } = await translationStage("input", async () => {
+      const input = asRecord(parseStrictJSON(await Bun.file(join(root, "input.json")).text()));
+      if (!input || Object.keys(input).join(",") !== "snapshots" || !Array.isArray(input.snapshots)) throw new Error("translation-input-invalid");
+      return { snapshots: input.snapshots.map(value => snapshotValue(value)), catalog: parseCatalogJSON(await Bun.file(join(root, "data", CATALOG_PATH)).text()) };
+    });
     const requests: { messages: readonly { role: string; content: string }[]; bytes: string; sha256: string }[] = [];
-    const result = await translateCandidate({ candidateVersion: candidate.upstreamVersion, baseSha, runId: candidate.runId, runAttempt: candidate.runAttempt, snapshots, catalog, request: async messages => {
+    const result = await translationStage("translate", () => translateCandidate({ candidateVersion: candidate.upstreamVersion, baseSha, runId: candidate.runId, runAttempt: candidate.runAttempt, snapshots, catalog, request: async messages => {
       const response = await requestModelJSON(messages);
       requests.push({ messages, bytes: response.bytes, sha256: response.sha256 });
-      await Bun.write(join(root, "requests.json"), JSON.stringify(requests, null, 2) + "\n");
+      await writeArtifact(join(root, "requests.json"), requests);
       return response;
-    } });
-    await Bun.write(join(root, "data", CATALOG_PATH), JSON.stringify(result.catalog, null, 2) + "\n");
-    const manifestPath = join(root, "data/src/translations/variant-review.json");
-    const manifest = asRecord(parseStrictJSON(await Bun.file(manifestPath).text()));
-    if (!manifest || !Array.isArray(manifest.variants)) throw new Error("variant-review-manifest-invalid");
-    const changed = new Set(result.reviews.map(row => `${row.path}:${row.sourceHash}`));
-    manifest.variants = [...manifest.variants.filter(row => { const entry = asRecord(row); return !changed.has(`${entry?.path}:${entry?.sourceHash}`); }), ...result.reviews];
-    await Bun.write(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-    await Bun.write(join(root, "responses.json"), JSON.stringify({ reviews: result.reviews, responses: result.responses }, null, 2) + "\n");
-    await Bun.write(join(root, "requests.json"), JSON.stringify(requests, null, 2) + "\n");
-    await writeBundleManifest(root, { ...candidate, reviewResponses: result.reviews.map(row => ({ path: row.path, sourceHash: row.sourceHash, sha256: row.evidence })) });
+    } }));
+    await translationStage("output", async () => {
+      await writeArtifact(join(root, "data", CATALOG_PATH), result.catalog);
+      const manifestPath = join(root, "data/src/translations/variant-review.json");
+      const manifest = asRecord(parseStrictJSON(await Bun.file(manifestPath).text()));
+      if (!manifest || !Array.isArray(manifest.variants)) throw new Error("variant-review-manifest-invalid");
+      const changed = new Set(result.reviews.map(row => `${row.path}:${row.sourceHash}`));
+      manifest.variants = [...manifest.variants.filter(row => { const entry = asRecord(row); return !changed.has(`${entry?.path}:${entry?.sourceHash}`); }), ...result.reviews];
+      await writeArtifact(manifestPath, manifest);
+      await writeArtifact(join(root, "responses.json"), { reviews: result.reviews, responses: result.responses });
+      await writeArtifact(join(root, "requests.json"), requests);
+      await writeBundleManifest(root, { ...candidate, reviewResponses: result.reviews.map(row => ({ path: row.path, sourceHash: row.sourceHash, sha256: row.evidence })) });
+    });
     return;
   }
   if (process.env.MAINTENANCE_API_KEY) throw new Error("model-secret-forbidden-in-nontranslation-command");
@@ -141,18 +147,41 @@ async function main(): Promise<void> {
   }
 }
 const REVIEW_PATH = /^[A-Za-z0-9_.-]{1,200}$/;
+type TranslationStage = "bundle" | "input" | "translate" | "output";
+/** Fixed stage wrapper: the CLI prints only the stage plus a fixed detail, never the cause. */
+class TranslationStageError extends Error {
+  readonly stage: TranslationStage;
+  readonly cause: unknown;
+  constructor(stage: TranslationStage, cause: unknown) { super("translation-stage-failed"); this.name = "TranslationStageError"; this.stage = stage; this.cause = cause; }
+}
+async function translationStage<T>(stage: TranslationStage, body: () => Promise<T> | T): Promise<T> {
+  try { return await body(); } catch (error) { throw error instanceof TranslationStageError ? error : new TranslationStageError(stage, error); }
+}
+async function writeArtifact(path: string, value: unknown): Promise<void> {
+  await translationStage("output", () => Bun.write(path, JSON.stringify(value, null, 2) + "\n"));
+}
+const TRANSLATION_SYSTEM_CODES: Readonly<Record<string, true>> = { ENOENT: true, EACCES: true, EPERM: true, EISDIR: true, ENOTDIR: true, EEXIST: true, ENOSPC: true, EMFILE: true, ENAMETOOLONG: true, EIO: true, ERR_INVALID_ARG_TYPE: true, ERR_OUT_OF_RANGE: true };
 function modelFailure(error: ModelRequestError): string {
   if (error.config !== undefined) return `${error.code}:${error.config}`;
   if (error.status !== undefined) return `${error.code}-${error.status}`;
   return error.code;
 }
+function translationDetail(error: unknown): string {
+  if (error instanceof Error) {
+    if ("code" in error && typeof error.code === "string" && Object.hasOwn(TRANSLATION_SYSTEM_CODES, error.code)) return error.code;
+    const name = error.constructor.name;
+    if (name === "SyntaxError") return "SyntaxError";
+    if (name === "Error") return "Error";
+  }
+  return "unclassified";
+}
 function translationFailure(error: unknown): string {
-  if (error instanceof ModelRequestError) return modelFailure(error);
-  if (error instanceof TranslationReviewRejected && REVIEW_PATH.test(error.path)) return `translation-review-rejected:${error.path}`;
-  const name = error instanceof Error ? error.constructor.name : "";
-  if (name === "SyntaxError") return "translate-failed:SyntaxError";
-  if (name === "Error") return "translate-failed:Error";
-  return "translate-failed:unclassified";
+  let cause: unknown = error;
+  while (cause instanceof TranslationStageError) cause = cause.cause;
+  if (cause instanceof ModelRequestError) return modelFailure(cause);
+  if (cause instanceof TranslationReviewRejected && REVIEW_PATH.test(cause.path)) return `translation-review-rejected:${cause.path}`;
+  const detail = translationDetail(cause);
+  return error instanceof TranslationStageError ? `translate-failed:${error.stage}:${detail}` : `translate-failed:${detail}`;
 }
 if (import.meta.main) await main().catch(async error => {
   const reason = process.argv[2] === "translate"
