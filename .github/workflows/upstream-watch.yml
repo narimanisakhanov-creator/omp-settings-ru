@@ -87,6 +87,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.prepare.outputs.artifact }}
           path: ${{ runner.temp }}/prepared
+          merge-multiple: true
       - env:
           MAINTENANCE_API_KEY: ${{ secrets.MAINTENANCE_API_KEY }}
           MAINTENANCE_BASE_URL: ${{ vars.MAINTENANCE_BASE_URL }}
@@ -132,6 +133,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.translate.outputs.artifact }}
           path: ${{ runner.temp }}/candidate
+          merge-multiple: true
       - env:
           GIT_AUTHOR_NAME: omp maintenance
           GIT_AUTHOR_EMAIL: maintenance@users.noreply.github.com
@@ -173,6 +175,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.verify.outputs.artifact }}
           path: ${{ runner.temp }}/candidate
+          merge-multiple: true
       - if: needs.discover.outputs.mode == 'prepare'
         env:
           MAINTENANCE_GH_TOKEN: ${{ secrets.MAINTENANCE_GH_TOKEN }}
