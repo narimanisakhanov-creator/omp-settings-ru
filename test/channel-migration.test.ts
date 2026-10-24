@@ -64,6 +64,7 @@ test("configured extension roots are refused before migration", () => {
   const parent = mkdtempSync(join(tmpdir(), "omp-channel-target-"));
   const home = join(parent, "home");
   const profile = "proof";
+  mkdirSync(home, { recursive: true });
   try {
     const executable = process.env.OMP_UPDATER_EXECUTABLE;
     expect(executable).toBeTruthy();
