@@ -129,7 +129,26 @@ jobs:
           bun scripts/distribution-smoke.ts \
             --executable "${{ steps.native-host.outputs.executable }}" \
             --catalog "${{ steps.prepublish.outputs.catalog }}" \
+            --home "$RUNNER_TEMP/smoke-home" \
             | tee "$RUNNER_TEMP/prepublish/smoke.json"
+      # A failing native smoke must say who asked for the dependency graph it could not load:
+      # the profile's shared plugins lock is the installer's own resolution, not ours.
+      - name: Capture the installer dependency graph on smoke failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prepublish/graph"
+          find "$RUNNER_TEMP/smoke-home" -maxdepth 6 \
+            \( -name package.json -o -name bun.lock \) -path "*plugins*" \
+            -exec cp --parents {} "$RUNNER_TEMP/prepublish/graph" \; || true
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        if: failure()
+        with:
+          name: prepublish-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepublish
+          if-no-files-found: warn
+          retention-days: 7
       # The receipt is written only after the smoke step succeeded and only for the exact
       # catalog bytes that were proven above.
       - name: Seal the prepublication receipt
