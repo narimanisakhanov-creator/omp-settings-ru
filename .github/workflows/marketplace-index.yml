@@ -119,15 +119,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HOST_VERSION: ${{ steps.source.outputs.host-version }}
         run: bun scripts/ci/prepare-host.ts "$HOST_VERSION" linux
-      # The proven catalog points at the already public tag/commit, so the real release can be
-      # installed before latest is moved. A failure blocks promotion. Tokenless on purpose.
-      - name: Exercise the draft catalog through the native distribution smoke
+      # The exact tag tree is exercised natively before latest moves. It is checked out from the
+      # proven tag commit and installed from its committed lockfile, so the dependency graph is
+      # the one the release actually pins (the draft-catalog channel install resolves peer
+      # ranges from the registry and pulled an unrelated native build on this runner). The
+      # draft catalog itself is still proven byte-for-byte above and revalidated at promotion.
+      - name: Check out the proven tag commit for the native smoke
         shell: bash
+        env:
+          TAG_SHA: ${{ steps.source.outputs.tag-sha }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
+          git fetch --no-tags --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$TAG_SHA"
+          git worktree add --detach "$RUNNER_TEMP/tag-tree" "$TAG_SHA"
+      - name: Exercise the proven tag tree through the native distribution smoke
+        shell: bash
+        working-directory: ${{ runner.temp }}/tag-tree
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
           bun scripts/distribution-smoke.ts \
             --executable "${{ steps.native-host.outputs.executable }}" \
-            --catalog "${{ steps.prepublish.outputs.catalog }}" \
+            --source \
             | tee "$RUNNER_TEMP/prepublish/smoke.json"
       # The receipt is written only after the smoke step succeeded and only for the exact
       # catalog bytes that were proven above.
