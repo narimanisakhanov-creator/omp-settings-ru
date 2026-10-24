@@ -152,9 +152,25 @@ test("fresh translation CLI writes exact review proof from loopback API and reje
     expect(count).toBe(2);
     await writeFile(join(bundle, "data/src/translations/ru-catalog.json"), original); await writeBundleManifest(bundle, manifest(base)); rejected = true;
     const failed = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
-    await new Response(failed.stderr).text(); expect(await failed.exited).not.toBe(0);
+    expect(await new Response(failed.stderr).text()).toBe("translation-review-rejected:fixture\n"); expect(await failed.exited).not.toBe(0);
     expect(await Bun.file(join(bundle, "data/src/translations/ru-catalog.json")).text()).toBe(original);
     expect(await Bun.file(join(root, ".git")).exists()).toBe(false);
+    await writeFile(join(bundle, "input.json"), "{model-fixture"); await writeBundleManifest(bundle, manifest(base));
+    const broken = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
+    const brokenStderr = await new Response(broken.stderr).text(); expect(await broken.exited).not.toBe(0);
+    expect(brokenStderr).toBe("translate-failed:SyntaxError\n");
+    expect(brokenStderr.length).toBeLessThanOrEqual(120);
+    expect(brokenStderr).not.toContain("maintenance-action-blocked"); expect(brokenStderr).not.toContain("model-fixture");
+    expect(count).toBe(4);
+    rejected = false; let httpFailure = false;
+    await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots })); await writeBundleManifest(bundle, manifest(base));
+    server.stop(true);
+    const failingServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { httpFailure = true; return new Response("refused", { status: 503 }); } });
+    try {
+      const failedRequest = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: { ...environment, MAINTENANCE_BASE_URL: failingServer.url.href + "v1" }, stdout: "pipe", stderr: "pipe" });
+      expect(await new Response(failedRequest.stderr).text()).toBe("model-http-503\n"); expect(await failedRequest.exited).not.toBe(0);
+      expect(httpFailure).toBe(true);
+    } finally { failingServer.stop(true); }
   } finally { server.stop(true); }
 }, 30000);
 

@@ -27,6 +27,19 @@ export interface TranslationResult {
   readonly responses: readonly TranslationResponse[];
 }
 
+/**
+ * Independent reviewer refused a translated identity. Only the source path is
+ * carried; the CLI prints it after re-validating the path shape.
+ */
+export class TranslationReviewRejected extends Error {
+  readonly path: string;
+  constructor(path: string) {
+    super(`translation-review-rejected:${path}`);
+    this.name = "TranslationReviewRejected";
+    this.path = path;
+  }
+}
+
 type Source = BaselineSnapshot["settings"][string];
 type TranslationBody = { readonly label: string; readonly description: string; readonly warning?: string; readonly options?: Readonly<Record<string, OptionTranslation>> };
 const GLOSSARY_URL = new URL("../../docs/glossary.md", import.meta.url);
@@ -150,7 +163,7 @@ export async function translateCandidate(input: TranslationInput): Promise<Trans
       const reviewed = await input.request(reviewMessages(item.path, item.source, body!, glossary));
       const verdict = reviewerBody(reviewed.value, item.path);
       responses.push({ path: item.path, sourceHash: item.sourceHash, bytes: reviewed.bytes, sha256: reviewed.sha256, comparison: verdict.comparison });
-      if (verdict.verdict !== "approved") throw new Error(`translation-review-rejected:${item.path}`);
+      if (verdict.verdict !== "approved") throw new TranslationReviewRejected(item.path);
       reviews.push({ path: item.path, sourceHash: item.sourceHash, translationHash: translationFieldsHash(variant), reviewedAtVersion: input.candidateVersion, platforms, review: "independently-confirmed", comparison: verdict.comparison, reviewTask: `${input.runId}:${input.runAttempt}`, evidence: reviewed.sha256 });
     }
     settings[item.path] ??= { variants: [] };

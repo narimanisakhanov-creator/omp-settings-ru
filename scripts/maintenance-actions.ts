@@ -9,8 +9,8 @@ import { verifyCandidate } from "./maintenance/actions-verify";
 import { publishCandidate, finalizeCandidate } from "./maintenance/actions-publish";
 import { parseCatalogJSON, CATALOG_PATH } from "./maintenance/catalog";
 import type { ControllerPolicy } from "./maintenance/contracts";
-import { translateCandidate } from "./maintenance/translate";
-import { requestModelJSON } from "./maintenance/model";
+import { translateCandidate, TranslationReviewRejected } from "./maintenance/translate";
+import { requestModelJSON, ModelRequestError } from "./maintenance/model";
 import { selectFixedHostAsset } from "./ci/prepare-host";
 import { SUPPORTED_HOSTS } from "./maintenance/paths";
 
@@ -140,8 +140,24 @@ async function main(): Promise<void> {
     else await finalizeCandidate(checkout, option(args, "--version") ?? "", github);
   }
 }
+const REVIEW_PATH = /^[A-Za-z0-9_.-]{1,200}$/;
+function modelFailure(error: ModelRequestError): string {
+  if (error.config !== undefined) return `${error.code}:${error.config}`;
+  if (error.status !== undefined) return `${error.code}-${error.status}`;
+  return error.code;
+}
+function translationFailure(error: unknown): string {
+  if (error instanceof ModelRequestError) return modelFailure(error);
+  if (error instanceof TranslationReviewRejected && REVIEW_PATH.test(error.path)) return `translation-review-rejected:${error.path}`;
+  const name = error instanceof Error ? error.constructor.name : "";
+  if (name === "SyntaxError") return "translate-failed:SyntaxError";
+  if (name === "Error") return "translate-failed:Error";
+  return "translate-failed:unclassified";
+}
 if (import.meta.main) await main().catch(async error => {
-  const reason = error instanceof Error && /^[A-Za-z0-9:._/-]{1,300}$/.test(error.message) ? error.message : "maintenance-action-blocked";
+  const reason = process.argv[2] === "translate"
+    ? translationFailure(error)
+    : error instanceof Error && /^[A-Za-z0-9:._/-]{1,300}$/.test(error.message) ? error.message : "maintenance-action-blocked";
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `\nBlocked: ${reason}\n`);
   console.error(reason); process.exitCode = 1;
 });
