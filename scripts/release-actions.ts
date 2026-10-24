@@ -638,6 +638,37 @@ export function releaseDigestMatches(release: ReleaseRow, wanted: readonly Relea
   return errors;
 }
 
+export const DRAFT_OBSERVABILITY_TIMEOUT_MS = 60_000;
+const DRAFT_OBSERVABILITY_INTERVAL_MS = 2_000;
+
+/**
+ * Prove the draft by reading it back, not by trusting the write's exit code.
+ *
+ * GitHub's release write is not immediately readable on the follow-up GET, so a single read
+ * after `gh release create` reports a release that exists as missing. The re-read loop is
+ * bounded: a draft that never becomes visible fails the job instead of hanging, a draft that
+ * is still missing assets reports which ones, and a draft that is already published is a
+ * foreign write rather than a slow read.
+ */
+export async function observeDraftRelease(
+  read: () => ReleaseRow | undefined,
+  wanted: readonly ReleaseAssetSpec[],
+  timeoutMs: number = DRAFT_OBSERVABILITY_TIMEOUT_MS,
+  sleep: (ms: number) => Promise<void> = ms => Bun.sleep(ms),
+  now: () => number = Date.now,
+): Promise<ReleaseRow> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new Error("release-wait-invalid");
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const release = read();
+    if (release?.published) throw new Error("release-draft-not-observable");
+    const remaining = release ? releaseDigestMatches(release, wanted) : [];
+    if (release && remaining.length === 0) return release;
+    if (now() >= deadline) throw new Error(release ? `release-resume-incomplete:${remaining.join(",")}` : "release-draft-not-observable");
+    await sleep(Math.min(DRAFT_OBSERVABILITY_INTERVAL_MS, deadline - now()));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 
@@ -730,6 +761,8 @@ async function draftCommand(args: readonly string[]): Promise<void> {
   const artifactName = option(args, "--artifact-name");
   const assets = resolve(option(args, "--assets"));
   const checkout = resolve(option(args, "--checkout"));
+  const waitMs = args.includes("--wait-ms") ? Number(option(args, "--wait-ms")) : DRAFT_OBSERVABILITY_TIMEOUT_MS;
+  if (!Number.isSafeInteger(waitMs) || waitMs < 0) throw new Error("release-wait-invalid");
   const tagSha = tagCommit(repository, parsed.tag);
   requireCommit(checkout, tagSha);
   assertTrustedMain(checkout);
@@ -773,11 +806,10 @@ async function draftCommand(args: readonly string[]): Promise<void> {
   } else if (plan.upload.length > 0) {
     ghMutation(["release", "upload", parsed.tag, ...plan.upload.map(asset => join(assets, asset.name)), "--repo", repository]);
   }
-  const settled = readRelease(parsed.tag, repository);
-  if (!settled || settled.published) throw new Error("release-draft-not-observable");
-  const remaining = releaseDigestMatches(settled, manifest.assets);
-  if (remaining.length > 0) throw new Error(`release-resume-incomplete:${remaining.join(",")}`);
-  console.log(JSON.stringify({ decision: plan.action, uploaded: plan.upload.map(asset => asset.name), skipped: plan.skip, tag: parsed.tag, releaseSha: tagSha, version: pkg.version, artifactId }, null, 2));
+  // The write just happened, but GitHub's read side is eventually consistent: prove the
+  // draft (and every expected asset) by re-reading it within the bounded deadline.
+  const settled = await observeDraftRelease(() => readRelease(parsed.tag, repository), manifest.assets, waitMs);
+  console.log(JSON.stringify({ decision: plan.action, uploaded: plan.upload.map(asset => asset.name), skipped: plan.skip, observed: settled.assets.map(asset => asset.name), tag: parsed.tag, releaseSha: tagSha, version: pkg.version, artifactId, waitMs }, null, 2));
 }
 
 async function prepublishCommand(args: readonly string[]): Promise<void> {

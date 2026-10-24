@@ -14,6 +14,11 @@ export interface UpdateOptions {
   readonly activate: boolean;
   readonly accepted: boolean;
   readonly targetProfile?: string;
+  /**
+   * Test seam for activation liveness only. Production never sets it: the default is the
+   * machine sampler, so a busy or unverifiable machine still ends in `safe-pending`.
+   */
+  readonly livenessProbe?: (profile: string) => Promise<LivenessVerdict>;
 }
 
 async function inspectHost(executable: string): Promise<InstalledHost> {
@@ -284,8 +289,8 @@ async function activatePackage(options: UpdateOptions, host: InstalledHost, entr
   let previousEntries: Map<string, Buffer> | undefined;
   let previousVersion: string | undefined;
   try {
-    const liveness = await profileLiveness(profile);
-    if (liveness.status !== "idle") return result("safe-pending", liveness.refusal!);
+    const liveness = await (options.livenessProbe ?? profileLiveness)(profile);
+    if (liveness.status !== "idle") return result("safe-pending", liveness.refusal ?? LIVENESS_UNKNOWN);
     const currentHost = await inspectHost(options.executable);
     if (JSON.stringify(currentHost) !== JSON.stringify(host)) return result("safe-pending", "host-changed-before-activation");
     const listed = await nativeCommand(options.executable, ["--profile", profile, "plugin", "list", "--json"]);

@@ -17,7 +17,7 @@ const pin: ReleasePin = {
   supportedPairs: [{ hostVersion, platform: process.platform as "win32" | "linux" | "darwin" }],
 };
 async function removeOwnedFixture(root: string): Promise<void> {
-  if (resolve(root, "..") !== resolve(tmpdir()) || !basename(root).startsWith("omp-updater-test-")) throw new Error("refusing-unowned-fixture");
+  if (resolve(root, "..") !== resolve(tmpdir()) || !basename(root).startsWith("ompu-")) throw new Error("refusing-unowned-fixture");
   const files: { path: string; mode: number }[] = [];
   const directories: string[] = [];
   const visit = async (path: string): Promise<void> => {
@@ -49,7 +49,10 @@ async function removeOwnedFixture(root: string): Promise<void> {
   for (const directory of directories) await rmdir(directory);
 }
 async function fixture(run: (root: string) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "omp-updater-test-"));
+  // The owned root is deliberately short: a real native panel session writes deep
+  // `run/daemons/<hash>/clients/*.json` paths beneath it, and a long TEMP would push
+  // those past the Windows MAX_PATH limit for reasons unrelated to the updater.
+  const root = await mkdtemp(join(tmpdir(), "ompu-"));
   try {
     await mkdir(join(root, "home"));
     await mkdir(join(root, "temp"));
@@ -70,18 +73,43 @@ const ownedEnvironment = (root: string) => {
   for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"]) if (process.env[key]) env[key] = process.env[key]!;
   return { ...env, HOME: join(root, "home"), USERPROFILE: join(root, "home"), APPDATA: join(root, "home", "appdata"), LOCALAPPDATA: join(root, "home", "localappdata"), TEMP: join(root, "temp"), TMP: join(root, "temp") };
 };
-async function updateInOwnedHome(method: "runUpdate" | "runManualUpdate", input: UpdateOptions): Promise<UpdateReceipt> {
+/**
+ * Activation liveness is the one thing the tests cannot take from the machine: production
+ * only samples it on Windows, and a sampling machine is by definition busy. The integration
+ * tests therefore inject the typed `livenessProbe` seam, which answers idle only for the
+ * profiles this fixture recorded and fails closed for everything else. The seam exists only
+ * for tests; `runUpdate` without it still calls the real sampler.
+ */
+type LivenessSeam = "owned" | "default";
+const probeSource = `
+const ownedProbe = async (profile) => {
+  let spec;
+  try { spec = JSON.parse(await readFile(join(input.stateDirectory, "owned-liveness.json"), "utf8")); } catch { spec = undefined; }
+  const profiles = Array.isArray(spec?.profiles) ? spec.profiles : [];
+  if (!/^omp-updater-(?:test|target)-[0-9a-f-]{36}$/.test(profile) || !profiles.includes(profile)) return { status: "failed", refusal: "liveness-query-unverifiable" };
+  if (spec.verdict === "busy") return { status: "busy", refusal: "active-session-or-liveness-unverifiable" };
+  if (spec.verdict === "failed") return { status: "failed", refusal: "liveness-query-unverifiable" };
+  return { status: "idle" };
+};
+if (process.argv[3] === "owned") input.livenessProbe = ownedProbe;
+`;
+async function updateInOwnedHome(method: "runUpdate" | "runManualUpdate", input: UpdateOptions, liveness: LivenessSeam = "owned"): Promise<UpdateReceipt> {
   const root = input.stateDirectory;
   await mkdir(join(root, "home"), { recursive: true });
   await mkdir(join(root, "temp"), { recursive: true });
-  const source = 'import {runUpdate} from "./scripts/maintenance/updater.ts"; import {runManualUpdate} from "./scripts/maintenance.ts"; const input = JSON.parse(process.argv[2]); console.log(JSON.stringify(await (process.argv[1] === "runUpdate" ? runUpdate : runManualUpdate)(input)));';
-  const child = Bun.spawn([process.execPath, "-e", source, method, JSON.stringify(input)], { env: ownedEnvironment(root), stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000 });
+  const source = `import {readFile} from "node:fs/promises"; import {join} from "node:path"; import {runUpdate} from "./scripts/maintenance/updater.ts"; import {runManualUpdate} from "./scripts/maintenance.ts"; const input = JSON.parse(process.argv[2]);${probeSource}console.log(JSON.stringify(await (process.argv[1] === "runUpdate" ? runUpdate : runManualUpdate)(input)));`;
+  const child = Bun.spawn([process.execPath, "-e", source, method, JSON.stringify(input), liveness], { env: ownedEnvironment(root), stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000 });
   const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (exit !== 0) throw new Error(`owned updater ${method} failed (${exit}): ${stderr}\n${stdout}`);
   return JSON.parse(stdout);
 }
-const runUpdate = (input: UpdateOptions) => updateInOwnedHome("runUpdate", input);
-const runManualUpdate = (input: UpdateOptions) => updateInOwnedHome("runManualUpdate", input);
+const runUpdate = (input: UpdateOptions, liveness: LivenessSeam = "owned") => updateInOwnedHome("runUpdate", input, liveness);
+const runManualUpdate = (input: UpdateOptions, liveness: LivenessSeam = "owned") => updateInOwnedHome("runManualUpdate", input, liveness);
+
+/** Record which profiles this fixture owns, so the injected probe can answer for them only. */
+async function ownProfiles(root: string, profiles: readonly string[], verdict: "idle" | "busy" | "failed" = "idle"): Promise<void> {
+  await writeFile(join(root, "owned-liveness.json"), JSON.stringify({ profiles, verdict }));
+}
 
 const livenessProfile = "omp-updater-target-abc";
 const busy = { status: "busy", refusal: "active-session-or-liveness-unverifiable" } as const;
@@ -271,18 +299,9 @@ test("accepted activation installs durable version in disposable profile", () =>
   const fixed = await packageFixture(root);
   const targetProfile = `omp-updater-target-${crypto.randomUUID()}`;
   await writeFile(join(root, "activation-target.json"), JSON.stringify({ profile: targetProfile }));
+  await ownProfiles(root, [targetProfile]);
   const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile });
-  if (process.platform !== "win32") {
-    expect(receipt.phase).toBe("safe-pending");
-    expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
-    expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
-    const listed = Bun.spawnSync([executable, "--profile", targetProfile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
-    expect(listed.exitCode).toBe(0);
-    expect(JSON.parse(listed.stdout.toString()).npm).toEqual([]);
-    console.log("activation boundary: safe-pending; non-Windows liveness unsupported; native target unchanged");
-    return;
-  }
-  expect(receipt.phase).toBe("activated");
+  expect(receipt.phase, JSON.stringify(receipt)).toBe("activated");
   const activated = JSON.parse(await readFile(join(root, "activation.json"), "utf8"));
   expect(activated.profile).toBe(targetProfile);
   const child = Bun.spawn([executable, "--profile", activated.profile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
@@ -294,6 +313,38 @@ test("accepted activation installs durable version in disposable profile", () =>
   expect(activated.target.startsWith(join(root, "temp"))).toBe(false);
   expect(JSON.parse(await readFile(join(activated.target, "package.json"), "utf8")).version).toBe("0.2.1");
   console.log("activation verdict: activated; native list version: " + plugin.version + "; durable target: isolated home outside process temp");
+}), 120_000);
+
+test("a busy or unverifiable liveness verdict defers without touching the target profile", () => fixture(async root => {
+  const fixed = await packageFixture(root);
+  for (const [verdict, refusal] of [["busy", "active-session-or-liveness-unverifiable"], ["failed", "liveness-query-unverifiable"]] as const) {
+    const targetProfile = `omp-updater-target-${crypto.randomUUID()}`;
+    await rm(join(root, "activation-target.json"), { force: true });
+    await writeFile(join(root, "activation-target.json"), JSON.stringify({ profile: targetProfile }));
+    await ownProfiles(root, [targetProfile], verdict);
+    const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile });
+    expect(receipt.phase).toBe("safe-pending");
+    expect(receipt.refusal).toBe(refusal);
+    expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
+    const listed = Bun.spawnSync([executable, "--profile", targetProfile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout.toString()).npm).toEqual([]);
+  }
+}), 120_000);
+
+// Without the seam the real sampler runs. Off Windows it can never establish liveness, so
+// the production default stays fail-closed; on Windows the sampler would read this machine,
+// which is exactly the ambient dependency these tests must not have.
+test("the production liveness default still fails closed when no probe is injected", () => fixture(async root => {
+  if (process.platform === "win32") return;
+  const fixed = await packageFixture(root);
+  const targetProfile = `omp-updater-target-${crypto.randomUUID()}`;
+  await writeFile(join(root, "activation-target.json"), JSON.stringify({ profile: targetProfile }));
+  await ownProfiles(root, [targetProfile]);
+  const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile }, "default");
+  expect(receipt.phase).toBe("safe-pending");
+  expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
+  expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
 }), 120_000);
 
 test("archive traversal refuses before extraction", () => fixture(async root => {
@@ -384,17 +435,10 @@ test("controller trusted target captures actual previous install and activates",
   await rm(join(root, "installed.json"));
   await rm(join(root, "previous.tgz"));
   await rm(join(root, "activation-target.json"));
+  await ownProfiles(root, [old.profile]);
   const receipt = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("controller activation receipt: " + JSON.stringify(receipt) + " root=" + root + " profile=" + old.profile);
-  if (process.platform !== "win32") {
-    expect(receipt.phase).toBe("safe-pending");
-    expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
-    expect(await readFile(old.registry)).toEqual(old.snapshot);
-    expect(JSON.parse(await readFile(join(root, "installed.json"), "utf8")).profile).toBe(old.profile);
-    expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
-    return;
-  }
-  expect(receipt.phase).toBe("activated");
+  expect(receipt.phase, JSON.stringify(receipt)).toBe("activated");
   const captured = JSON.parse(await readFile(join(root, "installed.json"), "utf8"));
   expect(captured.profile).toBe(old.profile);
   expect(captured.enabled).toBe(false);
@@ -413,13 +457,10 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   await rm(join(root, "installed.json"));
   await rm(join(root, "previous.tgz"));
   await rm(join(root, "activation-target.json"));
+  await ownProfiles(root, [old.profile]);
   const first = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation first receipt: " + JSON.stringify(first) + " root=" + root + " profile=" + old.profile);
-  if (process.platform !== "win32") {
-    expect(first.phase).toBe("safe-pending");
-    return;
-  }
-  expect(first.phase).toBe("activated");
+  expect(first.phase, JSON.stringify(first)).toBe("activated");
   const receiptPath = join(root, "activation.json");
   const activatedBytes = await readFile(receiptPath);
   const activated = JSON.parse(activatedBytes.toString());
@@ -428,6 +469,8 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   const lock = join(dirname(old.registry), "updater-activation.lock");
   await writeFile(lock, JSON.stringify({ pid: process.pid }));
   await writeFile(join(root, "before-session.lease"), JSON.stringify({ pid: process.pid, profile: old.profile }));
+  // A busy liveness verdict is irrelevant once the receipt exists: the replay never re-asks.
+  await ownProfiles(root, [old.profile], "busy");
   const repeated = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("replay activation repeat receipt: " + JSON.stringify(repeated));
   expect(repeated.phase).toBe("activated");
@@ -435,25 +478,6 @@ test("completed activation replay ignores a held lock and lease and refuses drif
   expect(await readFile(old.registry)).toEqual(registryBytes);
   expect(await readFile(receiptPath)).toEqual(activatedBytes);
   expect(await readFile(lock, "utf8")).toBe(JSON.stringify({ pid: process.pid }));
-  // A genuinely active session on the target profile must not re-open the activation path either.
-  const child = Bun.spawn([executable, "--profile", old.profile, "--mode", "rpc", "--no-session", "--no-tools", "--no-skills", "--no-rules", "--no-title", "--model", "openai/gpt-4o", "--cwd", root], { env: ownedEnvironment(root), stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  try {
-    child.stdin.write('{"id":"ready","type":"get_state"}\n');
-    const reader = child.stdout.getReader();
-    let response = "";
-    while (!response.includes('"id":"ready"')) {
-      const chunk = await reader.read();
-      if (chunk.done) throw new Error("owned RPC target exited before readiness");
-      response += new TextDecoder().decode(chunk.value);
-    }
-    reader.releaseLock();
-    const activeRegistry = await readFile(old.registry);
-    const activeSession = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
-    console.log("replay activation active-session receipt: " + JSON.stringify(activeSession));
-    expect(activeSession.phase).toBe("activated");
-    expect(activeSession.refusal).toBeUndefined();
-    expect(await readFile(old.registry)).toEqual(activeRegistry);
-  } finally { child.kill(); await child.exited; }
   // Drift in the activated profile registry is a package conflict, never a fresh activation.
   await writeFile(old.registry, registryBytes.toString().replace('"omp-settings-ru"', '"omp-settings-ru-drifted"'));
   const drifted = await runManualUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
@@ -494,16 +518,10 @@ test("completed activation replay ignores a held lock and lease and refuses drif
 test("activation preserves disabled feature metadata and sibling registry", () => fixture(async root => {
   const old = await installedFixture(root);
   const fixed = await packageFixture(root);
+  await ownProfiles(root, [old.profile]);
   const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("registry activation receipt: " + JSON.stringify(receipt));
-  if (process.platform !== "win32") {
-    expect(receipt.phase).toBe("safe-pending");
-    expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
-    expect(await readFile(old.registry)).toEqual(old.snapshot);
-    expect(await readFile(join(old.target, "src", "index.ts"), "utf8")).toBe('export default function() {}');
-    return;
-  }
-  expect(receipt.phase).toBe("activated");
+  expect(receipt.phase, JSON.stringify(receipt)).toBe("activated");
   const config = JSON.parse(await readFile(old.registry, "utf8"));
   expect(config).toEqual({ ...old.config, plugins: { ...old.config.plugins, "omp-settings-ru": { ...old.config.plugins["omp-settings-ru"], version: "0.2.1" } } });
   expect(await readFile(join(old.target, "src", "index.ts"), "utf8")).toBe('export default function() {}');
@@ -513,22 +531,14 @@ test("activation preserves disabled feature metadata and sibling registry", () =
 test("failed real activation rolls back exact registry and previous package", () => fixture(async root => {
   const old = await installedFixture(root);
   const fixed = await packageFixture(root);
+  await ownProfiles(root, [old.profile]);
   // Exclusive registry replacement fails after the real native link switch.
   await writeFile(`${old.registry}.new`, "existing replacement must not be overwritten");
   const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
   console.log("rollback activation receipt: " + JSON.stringify(receipt) + " root=" + root + " profile=" + old.profile);
-  if (process.platform !== "win32") {
-    expect(receipt.phase).toBe("safe-pending");
-    expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
-    expect(await readFile(old.registry)).toEqual(old.snapshot);
-    expect(await readFile(`${old.registry}.new`, "utf8")).toBe("existing replacement must not be overwritten");
-    expect(await Bun.file(join(root, "activation-rollback.json")).exists()).toBe(false);
-    await rm(`${old.registry}.new`);
-    return;
-  }
   const rollbackFailure = await Bun.file(join(root, "activation-rollback-failure.json")).json().catch(() => undefined);
   console.log("rollback failure proof: " + JSON.stringify(rollbackFailure ?? { missing: true }));
-  expect(receipt.phase).toBe("rolled-back");
+  expect(receipt.phase, JSON.stringify(receipt)).toBe("rolled-back");
   await rm(`${old.registry}.new`);
   expect(await readFile(old.registry)).toEqual(old.snapshot);
   expect(await readFile(join(root, "previous.tgz"))).toEqual(Buffer.from(old.oldBytes));
@@ -557,39 +567,21 @@ test("held before-session lease defers activation without touching registry", ()
   expect(await readFile(old.registry)).toEqual(old.snapshot);
 }), 180_000);
 
-test("matching active target process defers with unchanged previous registry", () => fixture(async root => {
+test("a busy target defers with unchanged previous registry and resumes once idle", () => fixture(async root => {
   const old = await installedFixture(root);
   const fixed = await packageFixture(root);
-  const env = ownedEnvironment(root);
-  const child = Bun.spawn([executable, "--profile", old.profile, "--mode", "rpc", "--no-session", "--no-tools", "--no-skills", "--no-rules", "--no-title", "--model", "openai/gpt-4o", "--cwd", root], { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  try {
-    child.stdin.write('{"id":"ready","type":"get_state"}\n');
-    const reader = child.stdout.getReader();
-    let response = "";
-    while (!response.includes('"id":"ready"')) {
-      const chunk = await reader.read();
-      if (chunk.done) throw new Error("owned RPC target exited before readiness");
-      response += new TextDecoder().decode(chunk.value);
-    }
-    reader.releaseLock();
-    const receipt = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
-    expect(receipt.phase).toBe("safe-pending");
-    expect(receipt.refusal).toBe("active-session-or-liveness-unverifiable");
-    expect(await readFile(old.registry)).toEqual(old.snapshot);
-    child.kill();
-    await child.exited;
-    const resumed = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
-    if (process.platform !== "win32") {
-      expect(resumed.phase).toBe("safe-pending");
-      expect(resumed.refusal).toBe("active-session-or-liveness-unverifiable");
-      expect(await readFile(old.registry)).toEqual(old.snapshot);
-      expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
-      return;
-    }
-    expect(resumed.phase).toBe("activated");
-    const installed = Bun.spawn([executable, "--profile", old.profile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
-    const listing = JSON.parse(await new Response(installed.stdout).text());
-    expect(await installed.exited).toBe(0);
-    expect(listing.npm.find((p: { name: string }) => p.name === "omp-settings-ru").version).toBe("0.2.1");
-  } finally { child.kill(); await child.exited; }
+  await ownProfiles(root, [old.profile], "busy");
+  const deferred = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  expect(deferred.phase).toBe("safe-pending");
+  expect(deferred.refusal).toBe("active-session-or-liveness-unverifiable");
+  expect(await readFile(old.registry)).toEqual(old.snapshot);
+  expect(await Bun.file(join(root, "activation.json")).exists()).toBe(false);
+  expect(await Bun.file(join(root, "activation-intent.json")).exists()).toBe(false);
+  await ownProfiles(root, [old.profile]);
+  const resumed = await runUpdate({ ...options(root), pin: fixed, activate: true, accepted: true, targetProfile: old.profile });
+  expect(resumed.phase, JSON.stringify(resumed)).toBe("activated");
+  const installed = Bun.spawn([executable, "--profile", old.profile, "plugin", "list", "--json"], { env: ownedEnvironment(root), stdout: "pipe", stderr: "pipe" });
+  const listing = JSON.parse(await new Response(installed.stdout).text());
+  expect(await installed.exited).toBe(0);
+  expect(listing.npm.find((p: { name: string }) => p.name === "omp-settings-ru").version).toBe("0.2.1");
 }), 180_000);

@@ -8,6 +8,8 @@ import {
   assertReleaseAncestor,
   assertTrustedMain,
   bindReleaseArtifact,
+  DRAFT_OBSERVABILITY_TIMEOUT_MS,
+  observeDraftRelease,
   packageAtCommit,
   packageIdentity,
   parseArtifact,
@@ -378,4 +380,67 @@ test("a release row refuses foreign and duplicate assets by name", () => {
   expect(releaseNamingErrors(row([...names, "foreign.txt"]), names)).toEqual(["release-asset-foreign:foreign.txt"]);
   expect(releaseNamingErrors(row(["SHA256SUMS", "SHA256SUMS"]), names)).toEqual(["release-assets-ambiguous:SHA256SUMS", "release-asset-missing:omp-settings-ru-1.2.3.tgz", "release-asset-missing:marketplace.json"]);
   expect(releaseNamingErrors(row([]), names)).toEqual(names.map(name => `release-asset-missing:${name}`));
+});
+
+function draftRow(assets: readonly { name: string; digest: string | null }[], patch: Record<string, unknown> = {}): ReleaseRow {
+  return parseReleaseRow({
+    tag_name: "v1.2.3", draft: true, published_at: null,
+    assets: assets.map((asset, index) => ({ id: index + 1, ...asset })), ...patch,
+  }, "v1.2.3");
+}
+
+const completeDraft = () => draftRow(wanted.map(asset => ({ name: asset.name, digest: `sha256:${asset.sha256}` })));
+
+/** A deterministic clock: `sleep` advances time, so the bounded wait never sleeps for real. */
+function fakeClock(start = 1_000) {
+  let time = start;
+  const sleeps: number[] = [];
+  return {
+    now: () => time,
+    sleep: async (ms: number) => { sleeps.push(ms); time += ms; },
+    elapsed: () => time - start,
+    sleeps,
+  };
+}
+
+test("a draft that GitHub only reports on a later read is accepted within the bound", async () => {
+  expect(DRAFT_OBSERVABILITY_TIMEOUT_MS).toBe(60_000);
+  const complete = completeDraft();
+  const reads: (ReleaseRow | undefined)[] = [undefined, undefined, complete];
+  let calls = 0;
+  const clock = fakeClock();
+  const settled = await observeDraftRelease(() => reads[Math.min(calls++, reads.length - 1)], wanted, DRAFT_OBSERVABILITY_TIMEOUT_MS, clock.sleep, clock.now);
+  expect(settled).toEqual(complete);
+  expect(calls).toBe(3);
+  expect(clock.elapsed()).toBeLessThanOrEqual(DRAFT_OBSERVABILITY_TIMEOUT_MS);
+  // A draft whose assets lag behind the release itself is the same slow read, not a failure.
+  const assetsLag = fakeClock();
+  const lagging: (ReleaseRow | undefined)[] = [draftRow([{ name: "SHA256SUMS", digest: `sha256:${OTHER_HASH}` }]), complete];
+  let laggedCalls = 0;
+  expect(await observeDraftRelease(() => lagging[Math.min(laggedCalls++, 1)], wanted, 60_000, assetsLag.sleep, assetsLag.now)).toEqual(complete);
+  expect(laggedCalls).toBe(2);
+});
+
+test("a draft that never becomes observable fails inside the bound instead of hanging", async () => {
+  const missing = fakeClock();
+  let calls = 0;
+  const read = () => { calls += 1; return undefined; };
+  await expect(observeDraftRelease(read, wanted, 30_000, missing.sleep, missing.now)).rejects.toThrow("release-draft-not-observable");
+  expect(missing.elapsed()).toBeLessThanOrEqual(30_000);
+  expect(calls).toBeGreaterThan(1);
+  // A visible draft that permanently misses assets reports exactly which ones.
+  const partial = fakeClock();
+  const short = () => draftRow([{ name: "SHA256SUMS", digest: null }]);
+  await expect(observeDraftRelease(short, wanted, 10_000, partial.sleep, partial.now)).rejects.toThrow("release-resume-incomplete:release-asset-missing:omp-settings-ru-1.2.3.tgz,release-asset-conflict:SHA256SUMS,release-asset-missing:marketplace.json");
+  expect(partial.elapsed()).toBeLessThanOrEqual(10_000);
+  // A release that is already published was written by someone else: waiting cannot fix it.
+  const published = fakeClock();
+  let publishedCalls = 0;
+  const readPublished = () => { publishedCalls += 1; return draftRow([], { draft: false, published_at: "2026-10-24T00:00:00Z" }); };
+  await expect(observeDraftRelease(readPublished, wanted, 60_000, published.sleep, published.now)).rejects.toThrow("release-draft-not-observable");
+  expect(publishedCalls).toBe(1);
+  expect(published.sleeps).toEqual([]);
+  for (const invalid of [-1, 1.5, Number.NaN]) {
+    await expect(observeDraftRelease(() => completeDraft(), wanted, invalid, published.sleep, published.now)).rejects.toThrow("release-wait-invalid");
+  }
 });
