@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { SNAPSHOT_DIR } from "./paths";
 
@@ -462,7 +463,20 @@ export async function prepareToolRoot(input: {
 
     const installArgs = ["install", "--frozen-lockfile", "--ignore-scripts", "--cache-dir", cacheDir];
     if (input.registry) installArgs.push(`--registry=${input.registry}`);
-    const installResult = spawnBun(root, installArgs, deadline);
+    // The package manager is a machine-wide shared resource: two measurement roots installing at
+    // the same time (parallel test files, or a real run beside one) make Bun fail intermittently.
+    // Serialize just this external step with a bounded wait; a timeout is its own refusal.
+    const installLock = join(tmpdir(), "omp-measurement-install.lock");
+    const lockDeadline = Date.now() + 120_000;
+    let locked = false;
+    while (!locked && Date.now() < lockDeadline) {
+      try { await writeFile(installLock, String(process.pid), { flag: "wx" }); locked = true; }
+      catch { await Bun.sleep(50); }
+    }
+    if (!locked) return { failure: "tools-install-busy" };
+    let installResult: { code: number };
+    try { installResult = spawnBun(root, installArgs, deadline); }
+    finally { await rm(installLock, { force: true }); }
     if (installResult.code !== 0) return { failure: "tools-install-failed" };
 
     // Inject JSON catalog/review data and snapshots, never candidate executable modules.

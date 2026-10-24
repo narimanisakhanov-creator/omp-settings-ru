@@ -1,5 +1,11 @@
 # изменения
 
+## [0.6.1](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.6.1) — 2026-10-24
+
+- хост-пакеты объявлены необязательными peer-зависимостями: плагин больше не тянет в свой payload копию хоста и её нативные модули, а использует штатный runtime-реестр OMP; это убирает разрешение `@oh-my-pi/pi-natives` из реестра в свежем home, из-за которого prepublication smoke падал на Linux без prebuilt-бинаря.
+- prepublication gate снова устанавливает именно проверенный draft-каталог (`--catalog`) нативным хостом до promote; source-режим как замена убран.
+- тест configured extension roots конфигурирует корень через CLI хоста и читает настройку в обеих формах ответа (`array` и `{value}`), поэтому матрица 18.8.0/18.8.4 снова зелёная.
+
 ## [0.6.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.6.0) — 2026-10-24
 
 - стабильность проверок: устранены гонки в тестовых фикстурах измерения (общий cleanup удалял чужие root/registry), liveness-сэмплинг больше не смешивает argv завершившегося процесса с переиспользованным PID, а `prepareToolRoot` выполняет ровно одну установку без маскирующих повторов; полный `bun run check` проходит подряд без флаки.
