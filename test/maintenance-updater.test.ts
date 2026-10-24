@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, readlink, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { parseLivenessSample, selectLiveOmpRows, type UpdateOptions } from "../scripts/maintenance/updater.ts";
+import { resolveLiveness, selectLiveOmpRows, type UpdateOptions } from "../scripts/maintenance/updater.ts";
 import type { ReleasePin, UpdateReceipt } from "../scripts/maintenance/contracts.ts";
 import { updaterTestExecutable } from "../scripts/ci/prepare-host.ts";
 
@@ -83,69 +83,85 @@ async function updateInOwnedHome(method: "runUpdate" | "runManualUpdate", input:
 const runUpdate = (input: UpdateOptions) => updateInOwnedHome("runUpdate", input);
 const runManualUpdate = (input: UpdateOptions) => updateInOwnedHome("runManualUpdate", input);
 
-// Creation time disambiguates reused pids across the native snapshots.
-const firstBirth = "20261024120000.000001";
-const secondBirth = "20261024120000.000002";
 const livenessProfile = "omp-updater-target-abc";
 const busy = { status: "busy", refusal: "active-session-or-liveness-unverifiable" } as const;
-const identity = (pid: number, startedAt = firstBirth) => ({ pid, startedAt });
-const argv = (pid: number, line: string, startedAt = firstBirth) => ({ pid, startedAt, line });
-const livenessSample = (stdout: string, exit = 0) => ({ exit, stdout, stderr: "" });
-const verdict = (live: unknown[], cim: unknown[], resolved: unknown[] = []) => parseLivenessSample(livenessProfile, livenessSample(JSON.stringify({ live, cim, resolved })));
-test("activation liveness ignores an exited CIM row for a just-finished native helper", () => {
-  const cim = [argv(4242, `omp.exe --profile ${livenessProfile} plugin list --json`)];
-  expect(selectLiveOmpRows([], cim, [])).toEqual([]);
-  expect(verdict([], cim)).toEqual({ status: "idle" });
+const unverifiable = { status: "failed", refusal: "liveness-query-unverifiable" } as const;
+const row = (pid: unknown, line: string) => ({ pid, line });
+const sample = (live: unknown[], cim: unknown[]) => JSON.stringify({ live, cim });
+const scripted = (...samples: string[]) => {
+  let calls = 0;
+  const query = async () => {
+    const stdout = samples[Math.min(calls, samples.length - 1)]!;
+    calls += 1;
+    return { exit: 0, stdout, stderr: "" };
+  };
+  return { query, calls: () => calls };
+};
+const verdict = (live: unknown[], cim: unknown[]) => resolveLiveness(livenessProfile, scripted(sample(live, cim)).query);
+test("activation liveness ignores an exited helper that CIM still reports", async () => {
+  const cim = [{ pid: 4242, line: `omp.exe --profile ${livenessProfile} plugin list --json` }];
+  expect(selectLiveOmpRows({ live: [], cim })).toEqual([]);
+  expect(await verdict([], cim)).toEqual({ status: "idle" });
 });
-test("activation liveness defers for a live process on the target profile", () => {
-  expect(verdict([identity(7)], [argv(7, `omp.exe --profile ${livenessProfile} --mode rpc`)])).toEqual(busy);
-  expect(verdict([identity(7)], [argv(7, "omp.exe --profile other-profile --mode rpc")])).toEqual({ status: "idle" });
+test("activation liveness defers for a live process on the target profile", async () => {
+  const target = scripted(sample([7], [row(7, `omp.exe --profile ${livenessProfile} --mode rpc`)]));
+  expect(await resolveLiveness(livenessProfile, target.query)).toEqual(busy);
+  // Known argv never costs a second sample.
+  expect(target.calls()).toBe(1);
+  const unrelated = scripted(sample([7], [row(7, "omp.exe --profile other-profile --mode rpc")]));
+  expect(await resolveLiveness(livenessProfile, unrelated.query)).toEqual({ status: "idle" });
+  expect(unrelated.calls()).toBe(1);
 });
-test("activation liveness resolves an unrelated process born between snapshots without resampling", () => {
-  expect(verdict([identity(9)], [], [{ ...argv(9, "omp.exe --profile unrelated plugin list --json"), status: "live" }])).toEqual({ status: "idle" });
+test("activation liveness resolves a helper that started between snapshots with one re-query", async () => {
+  const helper = scripted(
+    sample([8, 9], [row(9, "omp.exe --profile unrelated plugin list --json")]),
+    sample([8, 9], [row(9, "omp.exe --profile unrelated plugin list --json"), row(8, "omp.exe --profile unrelated --mode rpc")]),
+  );
+  expect(await resolveLiveness(livenessProfile, helper.query)).toEqual({ status: "idle" });
+  expect(helper.calls()).toBe(2);
 });
-test("activation liveness resolves a helper exiting during its exact identity query", () => {
-  expect(verdict([identity(9)], [], [{ ...identity(9), status: "exited" }])).toEqual({ status: "idle" });
+test("activation liveness keeps a target session that only the re-query reveals", async () => {
+  const helper = scripted(sample([8], []), sample([8], [row(8, `omp.exe --profile ${livenessProfile} --mode rpc`)]));
+  expect(await resolveLiveness(livenessProfile, helper.query)).toEqual(busy);
+  expect(helper.calls()).toBe(2);
 });
-test("activation liveness preserves a target born while an unrelated helper exits", () => {
-  const live = [identity(8), identity(9)];
-  const cim = [argv(7, "omp.exe --profile unrelated plugin list --json")];
-  const resolved = [{ ...identity(8), status: "exited" }, { ...argv(9, `omp.exe --profile ${livenessProfile} --mode rpc`), status: "live" }];
-  expect(verdict(live, cim, resolved)).toEqual(busy);
+test("activation liveness keeps a persistently unknown live process busy", async () => {
+  const absent = scripted(sample([9], []));
+  expect(await resolveLiveness(livenessProfile, absent.query)).toEqual(busy);
+  expect(absent.calls()).toBe(2);
+  const unreadable = scripted(sample([9], []), sample([9], [row(9, "")]));
+  expect(await resolveLiveness(livenessProfile, unreadable.query)).toEqual(busy);
+  expect(unreadable.calls()).toBe(2);
 });
-test("activation liveness never borrows argv from an exited process with a reused pid", () => {
-  const stale = [argv(7, "omp.exe --profile unrelated plugin list --json")];
-  expect(verdict([identity(7, secondBirth)], stale)).toEqual(busy);
-  expect(verdict([identity(7, secondBirth)], stale, [{ ...argv(7, `omp.exe --profile ${livenessProfile} --mode rpc`, secondBirth), status: "live" }])).toEqual(busy);
-  // A resolution for the old incarnation cannot clear the replacement session.
-  expect(verdict([identity(7, secondBirth)], stale, [{ ...identity(7), status: "exited" }])).toEqual(busy);
+test("activation liveness treats a successful no-process sample as idle", async () => {
+  expect(await verdict([], [])).toEqual({ status: "idle" });
 });
-test("activation liveness keeps a persistently live process with unknown argv busy", () => {
-  expect(verdict([identity(7)], [argv(7, "")], [{ ...argv(7, ""), status: "live" }])).toEqual(busy);
-  expect(verdict([identity(9)], [])).toEqual(busy);
-  expect(verdict([{ pid: 9, startedAt: "" }], [])).toEqual(busy);
-  expect(verdict([{ pid: 7, startedAt: "" }], [argv(7, "omp.exe --profile unrelated")], [{ ...argv(7, "omp.exe --profile unrelated", ""), status: "live" }])).toEqual(busy);
+test("activation liveness is fail-closed for every unverifiable sample", async () => {
+  for (const stdout of [
+    "", "   ", "{ malformed", '["live","cim"]', '{"live":[]}', '{"cim":[]}',
+    '{"live":"7","cim":[]}', '{"live":7,"cim":[]}', '{"live":[7],"cim":"none"}',
+    ...[0, -7, 7.5, 9007199254740993, "7", null].map(pid => sample([pid], [])),
+    ...[0, -7, 7.5, 9007199254740993, "7", null].map(pid => sample([7], [row(pid, "")])),
+    sample([7, 7], []),
+    sample([7], [row(7, ""), row(7, "different")]),
+    sample([7], [null]),
+    sample([7], [7]),
+    sample([7], [{ pid: 7 }]),
+    sample([7], [{ pid: 7, line: 7 }]),
+  ]) {
+    const query = scripted(stdout);
+    expect(await resolveLiveness(livenessProfile, query.query)).toEqual(unverifiable);
+    // A malformed sample is never repaired by sampling again.
+    expect(query.calls()).toBe(1);
+  }
+  const exitFailure = async () => ({ exit: 1, stdout: sample([], []), stderr: "denied" });
+  expect(await resolveLiveness(livenessProfile, exitFailure)).toEqual(unverifiable);
 });
-test("activation liveness treats a successful no-process sample as idle", () => {
-  expect(verdict([], [])).toEqual({ status: "idle" });
-});
-test("activation liveness is fail-closed for every unverifiable sample", () => {
-  const failed = { status: "failed", refusal: "liveness-query-unverifiable" } as const;
-  for (const sample of ["", "   ", "{ malformed", '["live","cim"]', '{"live":[]}', '{"live":[],"cim":[]}', ...[
-    { live: "7", cim: [], resolved: [] },
-    { live: [identity(7)], cim: "none", resolved: [] },
-    { live: [identity(7)], cim: [], resolved: "none" },
-    ...[0, -7, 9007199254740993, "7"].map(pid => ({ live: [{ pid, startedAt: firstBirth }], cim: [], resolved: [] })),
-    ...[0, -7, 9007199254740993, "7"].map(pid => ({ live: [identity(7)], cim: [{ pid, startedAt: firstBirth, line: "" }], resolved: [] })),
-    { live: [identity(7)], cim: [{ pid: 7, line: "" }], resolved: [] },
-    { live: [identity(7)], cim: [null], resolved: [] },
-    { live: [identity(7)], cim: [], resolved: [{ ...identity(7), status: "missing" }] },
-    { live: [identity(7)], cim: [], resolved: [{ ...identity(7), status: "live" }] },
-    { live: [identity(7), identity(7, secondBirth)], cim: [], resolved: [] },
-    { live: [identity(7)], cim: [argv(7, ""), argv(7, "different")], resolved: [] },
-    { live: [identity(7)], cim: [], resolved: [{ ...argv(7, ""), status: "live" }, { ...identity(7), status: "exited" }] },
-  ].map(value => JSON.stringify(value))]) expect(parseLivenessSample(livenessProfile, livenessSample(sample))).toEqual(failed);
-  expect(parseLivenessSample(livenessProfile, livenessSample("", 1))).toEqual(failed);
+test("activation liveness treats a failed re-query as unverifiable, never idle", async () => {
+  let calls = 0;
+  const query = async () => (++calls === 1 ? { exit: 0, stdout: sample([9], []), stderr: "" } : { exit: 1, stdout: "", stderr: "denied" });
+  expect(await resolveLiveness(livenessProfile, query)).toEqual(unverifiable);
+  expect(calls).toBe(2);
 });
 
 test("owned readonly fixture teardown unlinks both junctions without touching external target", async () => {

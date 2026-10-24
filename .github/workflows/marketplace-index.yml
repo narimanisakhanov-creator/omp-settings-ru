@@ -126,8 +126,9 @@ jobs:
           bun-version: 1.4.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          artifact-ids: ${{ needs.prepublish.outputs.artifact-id }}
+          name: ${{ needs.prepublish.outputs.artifact-name }}
           path: ${{ runner.temp }}/prepublish
+          merge-multiple: true
       - name: Verify provenance and the sealed artifact
         env:
           GH_TOKEN: ${{ github.token }}
