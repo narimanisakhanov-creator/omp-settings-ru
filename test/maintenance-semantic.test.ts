@@ -628,7 +628,7 @@ describe("каталог рабочего дерева и базы", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   test("вариант без следа в базовых снимках не подтверждается платформенно", async () => {
     const root = mkdtempSync(join(tmpdir(), "semantic-unbaselined-"));

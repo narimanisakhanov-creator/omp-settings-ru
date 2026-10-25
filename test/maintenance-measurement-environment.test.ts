@@ -91,10 +91,10 @@ function integrity(bytes: Uint8Array): { sha512: string; sha1: string } {
 const FIXTURE_REGISTRY = `
 const { appendFileSync, existsSync, readFileSync } = require("node:fs");
 const { join } = require("node:path");
-const [logPath, dataDir, port] = process.argv.slice(2);
-Bun.serve({
+const [logPath, dataDir] = process.argv.slice(2);
+const server = Bun.serve({
   hostname: "127.0.0.1",
-  port: Number(port),
+  port: 0,
   fetch(request) {
     const pathname = decodeURIComponent(new URL(request.url).pathname);
     appendFileSync(logPath, \`\${request.method} \${pathname}\\n\`);
@@ -111,7 +111,7 @@ Bun.serve({
       : new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
   },
 });
-console.log("ready");
+console.log(\`ready \${server.port}\`);
 `;
 
 interface Registry {
@@ -123,12 +123,9 @@ interface Registry {
 async function startRegistry(dataDir: string): Promise<Registry> {
   const logPath = join(dataDir, "requests.log");
   await writeFile(logPath, "");
-  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
-  const port = probe.port;
-  probe.stop(true);
   const script = join(dataDir, "registry.ts");
   await writeFile(script, FIXTURE_REGISTRY);
-  const child = Bun.spawn(["bun", script, logPath, dataDir, String(port)], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", script, logPath, dataDir], { stdout: "pipe", stderr: "pipe" });
   let stopped = false;
   onTestFinished(async () => {
     if (stopped) return;
@@ -136,12 +133,11 @@ async function startRegistry(dataDir: string): Promise<Registry> {
     child.kill("SIGKILL");
     await child.exited;
   });
-  // Готовность — сигнал процесса, а не выдержка времени: сервер пишет `ready`, когда начал слушать порт.
-  const url = `http://127.0.0.1:${port}/`;
+  // Готовность — сигнал процесса: сервер сам выбирает свободный порт и сообщает его, исключая гонку probe→bind.
   const decoder = new TextDecoder();
   const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
   let announced = "";
-  while (!announced.includes("ready")) {
+  while (!/ready \d+/.test(announced)) {
     const chunk = await reader.read();
     if (chunk.done) {
       const stderr = await new Response(child.stderr as ReadableStream).text().catch(() => "");
@@ -149,6 +145,8 @@ async function startRegistry(dataDir: string): Promise<Registry> {
     }
     announced += decoder.decode(chunk.value, { stream: true });
   }
+  const port = Number(announced.match(/ready (\d+)/)![1]);
+  const url = `http://127.0.0.1:${port}/`;
   return {
     url,
     requests: async () => (await readFile(logPath, "utf8")).split("\n").map(line => line.trim()).filter(Boolean),

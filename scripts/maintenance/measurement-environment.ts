@@ -474,10 +474,15 @@ export async function prepareToolRoot(input: {
       catch { await Bun.sleep(50); }
     }
     if (!locked) return { failure: "tools-install-busy" };
-    let installResult: { code: number };
-    try { installResult = spawnBun(root, installArgs, deadline); }
-    finally { await rm(installLock, { force: true }); }
-    if (installResult.code !== 0) return { failure: "tools-install-failed" };
+    let installResult: { code: number } | undefined;
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        installResult = spawnBun(root, installArgs, deadline);
+        if (installResult.code === 0) break;
+        if (attempt < 2) await Bun.sleep(250);
+      }
+    } finally { await rm(installLock, { force: true }); }
+    if (!installResult || installResult.code !== 0) return { failure: "tools-install-failed" };
 
     // Inject JSON catalog/review data and snapshots, never candidate executable modules.
     // Snapshot deletion must remain observable rather than falling back to accepted copies.
