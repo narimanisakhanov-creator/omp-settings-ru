@@ -135,6 +135,7 @@ jobs:
           path: ${{ runner.temp }}/candidate
           merge-multiple: true
       - env:
+          GH_TOKEN: ${{ github.token }}
           GIT_AUTHOR_NAME: omp maintenance
           GIT_AUTHOR_EMAIL: maintenance@users.noreply.github.com
           GIT_COMMITTER_NAME: omp maintenance

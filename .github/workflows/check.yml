@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bun scripts/ci/prepare-host.ts ${{ matrix.version }} ${{ matrix.platform }}
-      - run: bun test
+      - run: bun run test
         env:
           OMP_UPDATER_EXECUTABLE: ${{ steps.updater-host.outputs.executable }}
           OMP_UPDATER_HOST_VERSION: ${{ matrix.version }}

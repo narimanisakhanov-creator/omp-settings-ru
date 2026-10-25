@@ -39,7 +39,7 @@
     ]
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test --parallel=1",
     "typecheck": "tsc --noEmit",
     "source:export": "bun scripts/export-source.ts",
     "coverage:check": "bun scripts/check-coverage.ts",
@@ -55,7 +55,7 @@
     "maintenance": "bun scripts/maintenance.ts",
     "maintenance:actions": "bun scripts/maintenance-actions.ts",
     "release:check": "bun scripts/check-release.ts",
-    "check": "bun run typecheck && bun test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check"
+    "check": "bun run typecheck && bun run test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check"
   },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": "18.6.1 || 18.8.0 || 18.8.4 || 18.8.7",

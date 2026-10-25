@@ -9,6 +9,7 @@
 - при fail-closed остановке перевода `translate.log` вкладывается в blocked-артефакт вместе с причиной; successful candidate bundle по-прежнему не содержит файлов вне манифеста.
 - глоссарий различает уровни заметок советника: `concern` переводится как «замечание», а не «проблема»; translator prompt требует использовать глоссы без замены синонимами.
 - independent reviewer отключён: модель-ревьюер не вызывается, `semanticReview` фиксируется как `disabled` в `candidate.json`, `proof.json` и `variant-review.json`, новые варианты не получают verdict и comparison, а `unreviewed-*` для них не считается провалом. Исторические `independently-confirmed` строки сохраняют свои comparison/evidence и продолжают проверяться; строгая схема, hashes, provenance и native gates не меняются. Semantic-ошибка нового перевода может уйти в выпуск.
+- verify использует read-only `GITHUB_TOKEN` только для metadata OMP release, поэтому анонимный GitHub API rate limit больше не блокирует проверку; candidate subprocess получают secret-free окружение.
 
 ## [0.6.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.6.0) — 2026-10-24
 

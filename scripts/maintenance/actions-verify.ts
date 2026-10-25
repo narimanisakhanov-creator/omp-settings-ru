@@ -10,7 +10,7 @@ import { changedEntries, planPaths, intendedTree, commitApproved } from "./tree"
 import { CATALOG_PATH } from "./catalog";
 import { selectFixedHostAsset, verifyFixedHostBytes } from "../ci/prepare-host";
 
-export async function verifyCandidate(checkout: string, root: string, policy: ControllerPolicy): Promise<Candidate> {
+export async function verifyCandidate(checkout: string, root: string, policy: ControllerPolicy, readToken?: string): Promise<Candidate> {
   const candidate = await validateBundle(root);
   if (candidate.headSha) throw new Error("candidate-already-verified");
   const worktree = await createCandidateWorktree(checkout, candidate.baseSha);
@@ -29,7 +29,7 @@ export async function verifyCandidate(checkout: string, root: string, policy: Co
     if ("failure" in semantic) throw new Error(semantic.failure);
     const verdict = validateSemantic(semantic, policy, undefined, true);
     if (!verdict.ok) throw new Error(verdict.reason);
-    const releaseResponse = await fetch(`https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v${candidate.upstreamVersion}`, { headers: { Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(policy.deadlinesMs.command), redirect: "error" });
+    const releaseResponse = await fetch(`https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v${candidate.upstreamVersion}`, { headers: { Accept: "application/vnd.github+json", ...(readToken ? { Authorization: `Bearer ${readToken}` } : {}) }, signal: AbortSignal.timeout(policy.deadlinesMs.command), redirect: "error" });
     if (!releaseResponse.ok) throw new Error("native-release-unavailable");
     const asset = selectFixedHostAsset(await releaseResponse.json(), candidate.upstreamVersion, process.platform, process.arch);
     const response = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(policy.deadlinesMs.verification) });

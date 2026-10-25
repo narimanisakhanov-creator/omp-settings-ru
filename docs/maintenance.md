@@ -80,7 +80,7 @@ bun scripts/maintenance.ts --pin <release-pin.json> --package <archive.tgz> --st
 
 ### настройка hosted pipeline
 
-Владелец задаёт Secrets `MAINTENANCE_API_KEY`, `MAINTENANCE_GH_TOKEN` и Variables `MAINTENANCE_BASE_URL`, `MAINTENANCE_MODEL`. API — OpenAI-compatible HTTPS root (включая `/v1`, если нужен провайдеру). Translation step делает только stateless translator-запросы, не запускает subprocess и не получает GitHub token. Independent reviewer не вызывается вовсе: второй модели, verdict и comparison в pipeline нет. Ни один другой step не получает model key.
+Владелец задаёт Secrets `MAINTENANCE_API_KEY`, `MAINTENANCE_GH_TOKEN` и Variables `MAINTENANCE_BASE_URL`, `MAINTENANCE_MODEL`. API — OpenAI-compatible HTTPS root (включая `/v1`, если нужен провайдеру). Translation step делает только stateless translator-запросы, не запускает subprocess и не получает GitHub token. Independent reviewer не вызывается вовсе: второй модели, verdict и comparison в pipeline нет. Ни один другой step не получает model key. Verify получает read-only `GITHUB_TOKEN` только для metadata публичного OMP release; candidate subprocess запускаются через `secretFreeEnvironment` и этого токена не видят.
 
 Fine-grained PAT принадлежит закреплённому `controllerLogin` типа User и ограничен этим репозиторием: Contents RW, Pull requests RW, Actions RW, Checks Read. Он доступен только publish/finalize; git использует временный askpass вне checkout, gh получает token только в собственном env. Checkout всегда `persist-credentials: false`.
 

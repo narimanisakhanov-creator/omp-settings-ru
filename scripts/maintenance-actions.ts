@@ -132,10 +132,10 @@ async function main(): Promise<void> {
     const candidate: Candidate = { schemaVersion: 1, repository: policy.repository, runId: process.env.GITHUB_RUN_ID ?? "", runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? "", baseSha, upstreamVersion: version, releaseVersion: `${parts[0]}.${parts[1]! + 1}.0`, semanticReview: "disabled", files: [] };
     await prepareCandidate(checkout, root, candidate, policy);
   } else if (command === "verify") {
-    if (readToken || maintenanceToken) throw new Error("verification-secret-forbidden");
+    if (maintenanceToken) throw new Error("verification-secret-forbidden");
     const root = resolve(option(args, "--bundle") ?? ""); const candidate = await validateBundle(root);
     if (candidate.baseSha !== baseSha || candidate.runId !== process.env.GITHUB_RUN_ID || candidate.runAttempt !== process.env.GITHUB_RUN_ATTEMPT) throw new Error("verification-origin-mismatch");
-    await verifyCandidate(checkout, root, policy);
+    await verifyCandidate(checkout, root, policy, readToken);
   } else {
     const token = maintenanceToken;
     if (!token) throw new Error("maintenance-pat-required");
