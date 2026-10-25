@@ -1,3 +1,7 @@
+## 0.7.0
+
+- Добавлена проверенная поддержка OMP 18.12.6; исторические переводы сохранены.
+
 # изменения
 
 ## [0.6.1](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.6.1) — 2026-10-24
