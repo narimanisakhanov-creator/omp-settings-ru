@@ -128,7 +128,7 @@ function translationMessages(path: string, source: Source, glossary: string, pre
 }
 function reviewMessages(path: string, source: Source, body: TranslationBody, glossary: string): ModelMessage[] {
   return [
-    { role: "system", content: "Review this proposed translation independently. Return only strict JSON with verdict approved or rejected and a non-empty comparison. Check meaning, glossary, placeholders, numbers, commands, paths, technical names, and option keys." },
+    { role: "system", content: "Review this proposed translation independently. Return only strict JSON with verdict approved or rejected and a non-empty comparison. Check meaning, glossary, placeholders, numbers, commands, paths, technical names, and option keys. Apply the glossary verbatim, including inflected forms specified for the source context; reject any glossary violation or unexplained synonym substitution." },
     { role: "user", content: JSON.stringify({ path, source: sourceFields(source), translation: body, glossary }) },
   ];
 }
