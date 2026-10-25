@@ -19,9 +19,10 @@ type Source = BaselineSnapshot["settings"][string];
 type TranslationBody = { readonly label: string; readonly description: string; readonly warning?: string; readonly options?: Readonly<Record<string, OptionTranslation>> };
 const GLOSSARY_URL = new URL("../../docs/glossary.md", import.meta.url);
 const PLATFORMS: readonly SourcePlatform[] = ["darwin", "linux", "win32"];
-const TECHNICAL_LITERAL = /`[^`]+`|\b\d+(?:\.\d+)?[A-Za-z]*\b|(?<![A-Za-z0-9])--?[A-Za-z0-9][A-Za-z0-9-]*|\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+|\b[A-Z][A-Z0-9_]{2,}\b/g;
+const TECHNICAL_LITERAL = /`[^`]+`|\b\d+(?:\.\d+)?[A-Za-z]*\b|(?<![A-Za-z0-9])--?[A-Za-z0-9][A-Za-z0-9-]*|\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]*[A-Za-z0-9_/-]|\b[A-Z][A-Z0-9_]{2,}\b/g;
+const PROSE_SLASH_PAIR = /^[a-z]+(?:\/[a-z]+)+$/;
 function technicalLiterals(text: string): readonly string[] {
-  return [...(text.match(TECHNICAL_LITERAL) ?? [])].sort();
+  return [...(text.match(TECHNICAL_LITERAL) ?? [])].filter(literal => !PROSE_SLASH_PAIR.test(literal)).sort();
 }
 function assertPreserved(source: string, translation: string, path: string): void {
   const sourceMarkers = markers(source);
