@@ -63,13 +63,16 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     await writeFile(join(pkg, "package.json"), JSON.stringify({name,version,type:"module",main:"index.js"}));
     for (const [path, text] of Object.entries(files)) { await mkdir(join(pkg,path,".."),{recursive:true}); await writeFile(join(pkg,path),text); }
     const file = `${name.split("/").pop()}-${version}.tgz`;
-    const tar = Bun.spawnSync(["tar","-czf",join(registryDir,file),"-C",stage,"package"],{stdout:"pipe",stderr:"pipe"});
+    const archive = join(registryDir, "package.tar");
+    const tar = Bun.spawnSync(["tar","--mtime=@0","--owner=0","--group=0","--numeric-owner","-cf",archive,"-C",stage,"package"],{stdout:"pipe",stderr:"pipe"});
     if (tar.exitCode !== 0) throw new Error(tar.stderr.toString());
     await rm(pkg,{recursive:true,force:true});
-    const bytes = await readFile(join(registryDir,file));
+    const bytes = Bun.gzipSync(await readFile(archive), { level: 9 });
+    await writeFile(join(registryDir,file), bytes);
+    await rm(archive,{force:true});
     const packumentPath = join(registryDir,`${name.replaceAll("/","%2F")}.json`);
     const packument = await Bun.file(packumentPath).json().catch(() => ({name,"dist-tags":{},versions:{}}));
-    packument.versions[version] = {name,version,dist:{tarball:`${registry}${file}?nonce=${crypto.randomUUID()}`,integrity:`sha512-${createHash("sha512").update(bytes).digest("base64")}`}};
+    packument.versions[version] = {name,version,dist:{tarball:`${registry}${file}`,integrity:`sha512-${createHash("sha512").update(bytes).digest("base64")}`}};
     packument["dist-tags"].latest = version;
     await writeFile(packumentPath,JSON.stringify(packument));
   }

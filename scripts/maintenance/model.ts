@@ -115,6 +115,22 @@ function contentFromResponse(text: string): string {
 }
 
 export async function requestModelJSON(messages: readonly ModelMessage[]): Promise<ModelJSONResponse> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await requestModelJSONOnce(messages);
+    } catch (error) {
+      if (!(error instanceof ModelRequestError) || attempt >= 2 || !retryableModelFailure(error)) throw error;
+      await Bun.sleep(attempt === 0 ? 1_000 : 2_000);
+    }
+  }
+}
+
+function retryableModelFailure(error: ModelRequestError): boolean {
+  if (error.code === "model-timeout" || error.code === "model-request-failed") return true;
+  return error.code === "model-http" && (error.status === 404 || error.status === 429 || (error.status ?? 0) >= 500);
+}
+
+async function requestModelJSONOnce(messages: readonly ModelMessage[]): Promise<ModelJSONResponse> {
   const apiKey = configuration("MAINTENANCE_API_KEY");
   const model = configuration("MAINTENANCE_MODEL");
   const url = endpoint(configuration("MAINTENANCE_BASE_URL"));

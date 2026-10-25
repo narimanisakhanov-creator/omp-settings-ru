@@ -479,6 +479,7 @@ export async function prepareToolRoot(input: {
       for (let attempt = 0; attempt < 20; attempt++) {
         installResult = spawnBun(root, installArgs, deadline);
         if (installResult.code === 0) break;
+        await rm(cacheDir, { recursive: true, force: true });
         if (attempt < 19) await Bun.sleep(250);
       }
     } finally { await rm(installLock, { force: true }); }

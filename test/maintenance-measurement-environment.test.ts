@@ -68,9 +68,13 @@ async function tarball(root: string, name: string, version: string, files: Recor
     await writeFile(join(directory, path), content);
   }
   const out = join(stage, `${name.replaceAll(/[^\w.-]/g, "_")}-${version}.tgz`);
-  const child = Bun.spawnSync(["tar", "-czf", out, "-C", stage, "package"], { stdout: "pipe", stderr: "pipe" });
-  if (child.exitCode !== 0) throw new Error(`tar: ${child.stderr.toString()}`);
+  const archive = join(stage, "package.tar");
+  const tar = Bun.spawnSync(["tar", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-cf", archive, "-C", stage, "package"], { stdout: "pipe", stderr: "pipe" });
+  if (tar.exitCode !== 0) throw new Error(`tar: ${tar.stderr.toString()}`);
+  const bytes = Bun.gzipSync(await readFile(archive), { level: 9 });
+  await writeFile(out, bytes);
   await rm(directory, { recursive: true, force: true });
+  await rm(archive, { force: true });
   return out;
 }
 
@@ -157,7 +161,7 @@ async function startRegistry(dataDir: string): Promise<Registry> {
 async function publish(dataDir: string, tarballPath: string, name: string, version: string, registry: Registry): Promise<void> {
   const bytes = await readFile(tarballPath);
   const sums = integrity(bytes);
-  const file = `${name.split("/").pop()}-${version}.tgz`;
+  const file = `${name.split("/").pop()}-${version}-${crypto.randomUUID()}.tgz`;
   await mkdir(join(dataDir, "tarballs"), { recursive: true });
   await writeFile(join(dataDir, "tarballs", file), bytes);
   await mkdir(join(dataDir, "packuments"), { recursive: true });
@@ -167,7 +171,7 @@ async function publish(dataDir: string, tarballPath: string, name: string, versi
     versions: {
       [version]: {
         name, version, dependencies: {},
-        dist: { tarball: `${registry.url}${name}/-/${file}?nonce=${crypto.randomUUID()}`, integrity: sums.sha512, shasum: sums.sha1 },
+        dist: { tarball: `${registry.url}${name}/-/${file}`, integrity: sums.sha512, shasum: sums.sha1 },
       },
     },
   }));
@@ -191,13 +195,12 @@ const RELEASE_VERSION = "0.6.0";
 const ALLOWED_REQUESTS: Record<string, true> = {
   "GET /@oh-my-pi/pi-base-helper": true,
   "GET /@oh-my-pi/pi-coding-agent": true,
-  "GET /@oh-my-pi/pi-base-helper/-/pi-base-helper-1.0.0.tgz": true,
-  [`GET /@oh-my-pi/pi-coding-agent/-/pi-coding-agent-${HOST_VERSION}.tgz`]: true,
 };
+const ALLOWED_TARBALL = /^GET \/@oh-my-pi\/(?:pi-base-helper|pi-coding-agent)\/-\/[A-Za-z0-9_.-]+\.tgz$/;
 
 /** Ни один запрос не вышел за объявленный набор пакетов: посторонняя зависимость не запрашивалась. */
 async function assertNoUnexpectedRequests(fixtureValue: Fixture): Promise<void> {
-  const unexpected = (await fixtureValue.requests()).filter(line => ALLOWED_REQUESTS[line] !== true);
+  const unexpected = (await fixtureValue.requests()).filter(line => ALLOWED_REQUESTS[line] !== true && !ALLOWED_TARBALL.test(line));
   expect(unexpected).toEqual([]);
 }
 
@@ -268,7 +271,7 @@ async function fixture(): Promise<Fixture> {
   await mkdir(join(checkout, SNAPSHOT_DIR), { recursive: true });
   await writeFile(join(checkout, snapshotPath(HOST_VERSION, "win32")), JSON.stringify({ settings: {} }));
   // Базовый lock-файл — настоящий: его считает Bun по ответу реестра-фикстуры, а не тест.
-  await install(["install", "--lockfile-only", "--ignore-scripts", `--registry=${registry.url}`], checkout);
+  await install(["install", "--lockfile-only", "--ignore-scripts", "--cache-dir", join(parent, "cache"), `--registry=${registry.url}`], checkout);
 
   git(["init", "-q", "-b", "main"], checkout);
   git(["add", "-A"], checkout);
