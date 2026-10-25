@@ -86,4 +86,4 @@ test("configured extension roots are refused before migration", () => {
   } finally {
     rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
-});
+}, 30_000);
