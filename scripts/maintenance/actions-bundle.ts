@@ -17,7 +17,7 @@ export interface Candidate {
   readonly files: readonly { path: string; sha256: string }[];
 }
 export const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-export const candidatePaths = (version: string): readonly string[] => ["src/translations/ru-catalog.json", "src/translations/variant-review.json", ...SNAPSHOT_PLATFORMS.map(platform => snapshotPath(version, platform)), SUPPORTED_HOSTS, "package.json", "bun.lock", "upgrade-report.md", "CHANGELOG.md"];
+export const candidatePaths = (version: string): readonly string[] => ["src/translations/ru-catalog.json", "src/translations/variant-review.json", ...SNAPSHOT_PLATFORMS.map(platform => snapshotPath(version, platform)), SUPPORTED_HOSTS, "package.json", "bun.lock", "upgrade-report.md", "CHANGELOG.md", "README.md"];
 export function parseCandidate(raw: unknown): Candidate {
   const row = asRecord(raw);
   const keys = ["schemaVersion", "repository", "runId", "runAttempt", "baseSha", "upstreamVersion", "releaseVersion", "semanticReview", "headSha", "files"];
@@ -64,14 +64,24 @@ export async function validateBundle(root: string): Promise<Candidate> {
   }
   return candidate;
 }
-export function git(cwd: string, args: readonly string[], env = process.env): string {
-  const sanitized = { ...env };
+function gitBytes(cwd: string, args: readonly string[]): Uint8Array {
+  const sanitized = { ...process.env };
   for (const key of Object.keys(sanitized)) if (/TOKEN|SECRET|PASSWORD|API_KEY|AUTHORIZATION|CREDENTIAL/i.test(key) || key.startsWith("GIT_CONFIG_")) delete sanitized[key];
   delete sanitized.GIT_ASKPASS; delete sanitized.SSH_ASKPASS;
   sanitized.GIT_TERMINAL_PROMPT = "0";
   const child = Bun.spawnSync(["git", ...args], { cwd, env: sanitized, stdout: "pipe", stderr: "pipe" });
   if (child.exitCode !== 0) throw new Error(`git-operation-refused:${args[0]}`);
-  return child.stdout.toString().trim();
+  return child.stdout;
+}
+export function git(cwd: string, args: readonly string[]): string {
+  return Buffer.from(gitBytes(cwd, args)).toString().trim();
+}
+/**
+ * Содержимое файла из коммита без обрезки: пользовательские документы сравниваются побайтово, поэтому
+ * завершающий перевод строки — часть содержимого, а не форматирование вывода git.
+ */
+export function gitFile(cwd: string, revision: string, path: string): string {
+  return Buffer.from(gitBytes(cwd, ["show", `${revision}:${path}`])).toString();
 }
 export function validateCandidateTree(checkout: string, root: string, candidate: Candidate, allowed = candidatePaths(candidate.upstreamVersion)): readonly string[] {
   if (!candidate.headSha) throw new Error("candidate-head-missing");

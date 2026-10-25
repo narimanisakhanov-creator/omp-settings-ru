@@ -21,7 +21,8 @@
       "package.json",
       "bun.lock",
       "upgrade-report.md",
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "README.md"
     ],
     "requiredCheckTemplate": "check ({os}, {version})",
     "additionalRequiredChecks": ["hygiene"],

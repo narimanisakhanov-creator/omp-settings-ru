@@ -56,3 +56,19 @@ test("канонический каталог не игнорируется, а 
   expect(ignored(snapshotPath("18.8.7", "win32"))).toBe(false);
   expect(ignored("baseline/18.8.7-win32.json")).toBe(true);
 });
+
+/**
+ * README — представление того же манифеста, поэтому новая поддержанная версия обязана появиться в нём в том же
+ * изменении. Проверяется связь «манифест ↔ опубликованная таблица», а не её формулировки: таблица, отставшая
+ * от манифеста, вводит читателя в заблуждение молча.
+ */
+test("управляемый блок README перечисляет ровно версии манифеста", () => {
+  const readme = readFileSync(join(root, "README.md"), "utf8");
+  const start = "<!-- omp-supported:start -->";
+  const end = "<!-- omp-supported:end -->";
+  expect(readme.split(start)).toHaveLength(2);
+  expect(readme.split(end)).toHaveLength(2);
+  const block = readme.slice(readme.indexOf(start) + start.length, readme.indexOf(end));
+  const rows = block.split("\n").map(line => /^\| (\d+\.\d+\.\d+) \|(?: [^\n|]+ \|)+$/.exec(line)).filter(match => match !== null);
+  expect(rows.map(match => match[1])).toEqual(manifest.versions.map(row => row.version));
+});

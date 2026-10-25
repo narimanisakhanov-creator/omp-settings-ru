@@ -3,13 +3,17 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { parseCandidate, validateBundle, validateCandidateTree, writeBundleManifest } from "../scripts/maintenance/actions-bundle";
+import { candidatePaths, gitFile, parseCandidate, validateBundle, validateCandidateTree, writeBundleManifest, type Candidate } from "../scripts/maintenance/actions-bundle";
 import { HostedGitHub, parseMaintenanceBlock, maintenanceBody, validateOrigin } from "../scripts/maintenance/actions-github";
 import { compareVersions, validatePolicy } from "../scripts/maintenance/policy";
 import { parseStrictJSON } from "../scripts/maintenance/json";
 import rawPolicy from "../maintenance.config.json";
 import { finalizeCandidate } from "../scripts/maintenance/actions-publish";
-import { snapshotValue } from "../scripts/maintenance/actions-candidate";
+import { snapshotValue } from "../scripts/maintenance/snapshots";
+import { validatePublishedCandidate, verifyCommittedArtifacts } from "../scripts/maintenance/actions-candidate";
+import { identitiesOf, markerPairsOf, readCatalogAtCommit, translationIdentitiesOf } from "../scripts/maintenance/semantic";
+import type { BaselineSnapshot } from "../src/report";
+import { trustedReleaseDocuments, verifyReleaseDocuments } from "../scripts/maintenance/release-documents";
 import { computeSourceHash } from "../src/source";
 import { recoveryFixture } from "./maintenance-actions-fixture";
 
@@ -82,6 +86,275 @@ test("snapshot input validates full normalized source and rejects hash tampering
   expect(snapshotValue(snapshot).settings.fixture?.label).toBe("Label");
   expect(() => snapshotValue({ ...snapshot, settings: { fixture: { ...snapshot.settings.fixture, label: "Changed" } } })).toThrow("snapshot-source-hash-mismatch");
 });
+
+describe("release documents travel through the candidate commit", () => {
+  const PREVIOUS = "18.8.7";
+  const UPSTREAM = "18.9.0";
+  const VERSIONS = [PREVIOUS, UPSTREAM] as const;
+  const PLATFORMS = ["win32", "linux", "darwin"] as const;
+  const README_BASE = [
+    "# omp-settings-ru", "", "## установка", "", "```text", "omp plugin install omp-settings-ru@omp-settings-ru", "```", "",
+    "<!-- omp-supported:start -->", "## устаревшая таблица", "", "| OMP | настройки |", "| --- | ---: |", "| 18.8.4 | 404/404 |",
+    "<!-- omp-supported:end -->", "", "## подробнее", "", "[FAQ](docs/faq.md).", "",
+  ].join("\n");
+  const CHANGELOG_BASE = "# изменения\n\n## [0.5.0](https://example.invalid/v0.5.0) — 2026-10-10\n\n- прошлый выпуск\n";
+  const source = (label: string) => ({ tab: "General", group: null, label, description: `${label} description`, warning: null, options: null });
+  const settings = (version: string) => version === UPSTREAM
+    ? { "theme.dark": source("Dark theme"), "composer.predictions": source("Predictions") }
+    : { "theme.dark": source("Dark theme") };
+  const snapshotOf = (version: string, platform: string) => ({
+    version, platform,
+    settings: Object.fromEntries(Object.entries(settings(version)).map(([path, value]) => [path, { sourceHash: computeSourceHash(value), ...value }])),
+  });
+  const catalog = (includeCandidate: boolean) => JSON.stringify({ locale: "ru", settings: {
+    "theme.dark": { variants: [{ sourceHash: computeSourceHash(source("Dark theme")), label: "Тёмная тема", description: "Тёмный фон", platforms: [...PLATFORMS], observedIn: [PREVIOUS] }] },
+    ...(includeCandidate ? { "composer.predictions": { variants: [{ sourceHash: computeSourceHash(source("Predictions")), label: "Предсказания", description: "Подсказки ввода", platforms: [...PLATFORMS], observedIn: [UPSTREAM] }] } } : {}),
+  } }, null, 2) + "\n";
+  const coverage = VERSIONS.flatMap(version => PLATFORMS.map(platform => ({
+    version, platform, complete: version === UPSTREAM ? 2 : 1, total: version === UPSTREAM ? 2 : 1,
+  })));
+  const candidateFor = (baseSha: string, headSha?: string) => ({ ...manifest(baseSha, headSha), upstreamVersion: UPSTREAM, releaseVersion: "0.6.0" });
+
+  /** База поддержки 18.8.7 и рабочие данные кандидата 18.9.0; README базы уже содержит управляемый блок. */
+  async function fixture() {
+    const root = await directory(); const repo = join(root, "repo"); await mkdir(join(repo, "test/fixtures/host-snapshots"), { recursive: true });
+    git(repo, "init", "-b", "main");
+    const write = async (path: string, text: string) => { await mkdir(join(repo, path, ".."), { recursive: true }); await writeFile(join(repo, path), text); };
+    const base = {
+      "README.md": README_BASE,
+      "CHANGELOG.md": CHANGELOG_BASE,
+      "package.json": JSON.stringify({ name: "omp-settings-ru", version: "0.5.0", devDependencies: { "@oh-my-pi/pi-coding-agent": PREVIOUS } }, null, 2) + "\n",
+      "src/translations/ru-catalog.json": catalog(false),
+    };
+    for (const [path, text] of Object.entries(base)) await write(path, text);
+    for (const platform of PLATFORMS) await write(`test/fixtures/host-snapshots/${PREVIOUS}-${platform}.json`, JSON.stringify(snapshotOf(PREVIOUS, platform), null, 2) + "\n");
+    git(repo, "add", "."); git(repo, "commit", "-m", "base");
+    const baseSha = git(repo, "rev-parse", "HEAD");
+    const head = {
+      "src/translations/ru-catalog.json": catalog(true),
+      "package.json": JSON.stringify({ name: "omp-settings-ru", version: "0.6.0", devDependencies: { "@oh-my-pi/pi-coding-agent": UPSTREAM } }, null, 2) + "\n",
+    };
+    for (const [path, text] of Object.entries(head)) await write(path, text);
+    for (const platform of PLATFORMS) await write(`test/fixtures/host-snapshots/${UPSTREAM}-${platform}.json`, JSON.stringify(snapshotOf(UPSTREAM, platform), null, 2) + "\n");
+    return { repo, baseSha, write };
+  }
+
+  test("generated README, CHANGELOG and report match the commit bytes and keep the install instruction", async () => {
+    const { repo, baseSha, write } = await fixture();
+    const documents = await trustedReleaseDocuments({
+      candidate: candidateFor(baseSha), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo },
+    });
+    // Установочная инструкция и всё вне управляемого блока сохранены байт в байт.
+    expect(documents.readme).toContain("omp plugin install omp-settings-ru@omp-settings-ru");
+    expect(documents.readme).toContain("[FAQ](docs/faq.md).");
+    expect(documents.readme).not.toContain("устаревшая таблица");
+    expect(documents.readme).toContain("Поддержка в этом checkout: OMP 18.8.7, 18.9.0.");
+    expect(documents.changelog.startsWith("## 0.6.0\n")).toBe(true);
+    expect(documents.changelog).toContain(CHANGELOG_BASE.trimEnd());
+    expect(documents.report).toContain("Предсказания");
+    for (const [path, text] of [["README.md", documents.readme], ["CHANGELOG.md", documents.changelog], ["upgrade-report.md", documents.report]] as const) await write(path, text);
+    git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+    const headSha = git(repo, "rev-parse", "HEAD");
+    expect(await verifyReleaseDocuments(repo, candidateFor(baseSha, headSha), [...VERSIONS], coverage)).toEqual(documents);
+    // Окончательный набор путей доказательства — ровно diff коммита, включая три пользовательских документа.
+    const committed = git(repo, "diff", "--name-only", baseSha, headSha).split("\n").filter(Boolean).sort();
+    expect(committed).toEqual([
+      "CHANGELOG.md", "README.md", "package.json", "src/translations/ru-catalog.json",
+      "test/fixtures/host-snapshots/18.9.0-darwin.json", "test/fixtures/host-snapshots/18.9.0-linux.json",
+      "test/fixtures/host-snapshots/18.9.0-win32.json", "upgrade-report.md",
+    ]);
+    // Повторная генерация на том же входе даёт те же байты.
+    expect(await trustedReleaseDocuments({ candidate: candidateFor(baseSha), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } })).toEqual(documents);
+  }, 30000);
+
+  test("README text substituted outside the managed block is refused even after the commit is rebuilt", async () => {
+    const { repo, baseSha, write } = await fixture();
+    const documents = await trustedReleaseDocuments({ candidate: candidateFor(baseSha), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } });
+    for (const [path, text] of [["README.md", documents.readme], ["CHANGELOG.md", documents.changelog], ["upgrade-report.md", documents.report]] as const) await write(path, text);
+    git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+    // Подмена установочной инструкции вне управляемого блока: байты README пересчитаны вместе с новым коммитом.
+    await write("README.md", documents.readme.replace("omp plugin install omp-settings-ru@omp-settings-ru", "omp plugin install attacker/marketplace"));
+    git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+    const tampered = git(repo, "rev-parse", "HEAD");
+    await expect(verifyReleaseDocuments(repo, candidateFor(baseSha, tampered), [...VERSIONS], coverage))
+      .rejects.toThrow("candidate-release-content-mismatch:README.md");
+    // Управляемый блок вне доверенного пересчёта тоже не принимается: правка таблицы руками — не документ выпуска.
+    await write("README.md", documents.readme.replace("| 18.9.0 | 2/2 | 2/2 | 2/2 |", "| 18.9.0 | 999/999 | 999/999 | 999/999 |"));
+    git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+    await expect(verifyReleaseDocuments(repo, candidateFor(baseSha, git(repo, "rev-parse", "HEAD")), [...VERSIONS], coverage))
+      .rejects.toThrow("candidate-release-content-mismatch:README.md");
+  }, 30000);
+
+  test("a release section already present in the accepted CHANGELOG blocks generation instead of rewriting history", async () => {
+    const { repo, baseSha, write } = await fixture();
+    // CHANGELOG в рабочем дереве не участвует: документы базы читаются из коммита, поэтому присланная
+    // кандидатом секция не может ни попасть в выпуск, ни выдать себя за принятую.
+    await write("CHANGELOG.md", `## 0.6.0\n\n- секция, написанная кандидатом\n\n${CHANGELOG_BASE}`);
+    const documents = await trustedReleaseDocuments({ candidate: candidateFor(baseSha), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } });
+    expect(documents.changelog).not.toContain("написанная кандидатом");
+    // Принятая база с уже существующим заголовком версии — отказ: история не переписывается и не дублируется.
+    git(repo, "add", "."); git(repo, "commit", "-m", "human changelog");
+    const conflicting = git(repo, "rev-parse", "HEAD");
+    await expect(trustedReleaseDocuments({ candidate: candidateFor(conflicting), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } }))
+      .rejects.toThrow("release-changelog-version-conflict");
+  }, 30000);
+  test("recomputed artifact hashes cannot authorize a README edit outside the managed block", async () => {
+    const root = await directory(); const { repo, baseSha, write } = await fixture();
+    const documents = await trustedReleaseDocuments({ candidate: candidateFor(baseSha), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } });
+    for (const [path, text] of [["README.md", documents.readme], ["CHANGELOG.md", documents.changelog], ["upgrade-report.md", documents.report]] as const) await write(path, text);
+    git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+    const headSha = git(repo, "rev-parse", "HEAD");
+    const bundle = join(root, "artifact"); await mkdir(join(bundle, "data"), { recursive: true });
+    const stage = async (readme: string) => {
+      await mkdir(join(bundle, "data/src/translations"), { recursive: true });
+      await writeFile(join(bundle, "data/README.md"), readme);
+      await writeFile(join(bundle, "data/CHANGELOG.md"), documents.changelog);
+      await writeFile(join(bundle, "data/upgrade-report.md"), documents.report);
+      await writeFile(join(bundle, "data/src/translations/ru-catalog.json"), catalog(true));
+      await writeBundleManifest(bundle, candidateFor(baseSha, headSha));
+    };
+    // Честные байты проходят и по манифесту артефакта, и по сверке с коммитом.
+    await stage(documents.readme);
+    expect((await validateBundle(bundle)).headSha).toBe(headSha);
+    expect((await verifyReleaseDocuments(repo, await validateBundle(bundle), [...VERSIONS], coverage)).readme).toBe(documents.readme);
+    // Подмена вне блока с пересчитанным манифестом артефакта: хэши артефакта сходятся, а с коммитом — нет.
+    await stage(documents.readme.replace("omp plugin install omp-settings-ru@omp-settings-ru", "omp plugin install attacker/marketplace"));
+    const tampered = await validateBundle(bundle);
+    expect(tampered.files.some(file => file.path === "data/README.md")).toBe(true);
+    await expect(verifyCommittedArtifacts(repo, bundle, tampered, ["README.md", "CHANGELOG.md", "upgrade-report.md"]))
+      .rejects.toThrow("candidate-data-commit-mismatch:README.md");
+    // Доверенная сверка читает коммит, поэтому подмена в артефакте до неё не доходит и коммит остаётся валидным.
+    expect((await verifyReleaseDocuments(repo, tampered, [...VERSIONS], coverage)).readme).toBe(documents.readme);
+  }, 30000);
+
+  test("a missing snapshot of the new version blocks document generation", async () => {
+    const { repo, baseSha } = await fixture();
+    // Снимок удалён из рабочего дерева: неполная платформенная сетка — отказ генерации, а не пустая ячейка.
+    await rm(join(repo, `test/fixtures/host-snapshots/${UPSTREAM}-win32.json`));
+    await expect(trustedReleaseDocuments({ candidate: candidateFor(baseSha), versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } }))
+      .rejects.toThrow("release-content-invalid:snapshot-missing:18.9.0-win32");
+  }, 30000);
+
+  test("README is the only user document added to the candidate allowlist", async () => {
+    const paths = candidatePaths(UPSTREAM);
+    expect(paths).toContain("README.md");
+    expect(paths.filter(path => path.endsWith(".md"))).toEqual(["upgrade-report.md", "CHANGELOG.md", "README.md"]);
+    const root = await directory(); await mkdir(join(root, "data/docs"), { recursive: true });
+    await writeFile(join(root, "data/docs/faq.md"), "manual\n");
+    await writeBundleManifest(root, manifest("a".repeat(40)));
+    await expect(validateBundle(root)).rejects.toThrow("artifact-path-forbidden:data/docs/faq.md");
+  });
+});
+
+/**
+ * Полный кандидат в форме, которую принимает публикация: bundle, patch, артефакт и proof.json.
+ *
+ * Проверяется именно то, что нельзя увидеть в одном документе: окончательный `proof.semantic.changedPaths`
+ * обязан совпасть с diff коммита, включая README/CHANGELOG/upgrade-report, а сами документы — с доверенным
+ * пересчётом. Никакого сетевого или нативного шага здесь нет: это границы артефакта и коммита.
+ */
+test("candidate proof carries README, CHANGELOG and report as the exact commit diff", async () => {
+  const root = await directory(); const repo = join(root, "repo"); const artifact = join(root, "artifact");
+  await mkdir(repo); await mkdir(artifact);
+  git(repo, "init", "-b", "main");
+  const BASE = "18.8.7"; const UPSTREAM = "18.9.0"; const VERSIONS = [BASE, UPSTREAM] as const;
+  const PLATFORMS = ["win32", "darwin", "linux"] as const;
+  const catalogPath = "src/translations/ru-catalog.json";
+  const write = async (target: string, path: string, text: string) => { await mkdir(join(target, path, ".."), { recursive: true }); await writeFile(join(target, path), text); };
+  const source = (label: string) => ({ tab: "General", group: null, label, description: `${label} description`, warning: null, options: null });
+  const settings = (version: string) => version === UPSTREAM ? { "theme.dark": source("Dark theme"), "composer.predictions": source("Predictions") } : { "theme.dark": source("Dark theme") };
+  const snapshot = (version: string, platform: string) => JSON.stringify({ version, platform, settings: Object.fromEntries(Object.entries(settings(version)).map(([path, value]) => [path, { sourceHash: computeSourceHash(value), ...value }])) });
+  const catalogText = (includeCandidate: boolean) => JSON.stringify({ locale: "ru", settings: {
+    "theme.dark": { variants: [{ sourceHash: computeSourceHash(source("Dark theme")), label: "Тёмная тема", description: "Тёмный фон", platforms: [...PLATFORMS], observedIn: [BASE] }] },
+    ...(includeCandidate ? { "composer.predictions": { variants: [{ sourceHash: computeSourceHash(source("Predictions")), label: "Предсказания", description: "Подсказки ввода", platforms: [...PLATFORMS], observedIn: [UPSTREAM] }] } } : {}),
+  } }, null, 2) + "\n";
+  /** Покрытие точных пар «версия × платформа»: доказательство требует полного и совпадающего измерения. */
+  const coverage = [...VERSIONS].flatMap(version => PLATFORMS.map(platform => ({ version, platform, complete: version === UPSTREAM ? 2 : 1, total: version === UPSTREAM ? 2 : 1 })));
+  const README = "# omp-settings-ru\n\n## установка\n\n```text\nomp plugin install omp-settings-ru@omp-settings-ru\n```\n\n<!-- omp-supported:start -->\n## старая таблица\n<!-- omp-supported:end -->\n\n## подробнее\n\n[FAQ](docs/faq.md).\n";
+  const CHANGELOG = "# изменения\n\n## [0.5.0](https://example.invalid/v0.5.0) — 2026-10-10\n\n- прошлый выпуск\n";
+  const peer = VERSIONS.join(" || ");
+  /** Манифест сохраняет исторические пины хостов: новая версия добавляет алиас, старые остаются. */
+  const manifestText = (hostVersions: readonly string[], release: string) => JSON.stringify({
+    name: "omp-settings-ru", version: release,
+    peerDependencies: { "@oh-my-pi/pi-coding-agent": peer, "@oh-my-pi/pi-utils": peer },
+    devDependencies: {
+      "@oh-my-pi/pi-coding-agent": hostVersions.at(-1),
+      ...Object.fromEntries(hostVersions.map(hostVersion => [`omp-host-${hostVersion.replaceAll(".", "")}`, `npm:@oh-my-pi/pi-coding-agent@${hostVersion}`])),
+    },
+  }, null, 2) + "\n";
+  const supportText = (versions: readonly string[]) => JSON.stringify({ schemaVersion: 1, versions: versions.map(version => ({
+    version, package: `omp-host-${version.replaceAll(".", "")}`, platforms: [...PLATFORMS],
+    baselines: Object.fromEntries(PLATFORMS.map(platform => [platform, createHash("sha256").update(snapshot(version, platform)).digest("hex")])),
+  })) }, null, 2) + "\n";
+
+  const base = {
+    "README.md": README, "CHANGELOG.md": CHANGELOG, [catalogPath]: catalogText(false),
+    "src/translations/variant-review.json": JSON.stringify({ schemaVersion: 1, variants: [], semanticReview: "disabled" }),
+    "package.json": manifestText([BASE], "0.5.0"), "test/fixtures/host-snapshots/supported-hosts.json": supportText([BASE]),
+  };
+  for (const [path, text] of Object.entries(base)) await write(repo, path, text);
+  for (const platform of PLATFORMS) await write(repo, `test/fixtures/host-snapshots/${BASE}-${platform}.json`, snapshot(BASE, platform));
+  git(repo, "add", "."); git(repo, "commit", "-m", "base");
+  const baseSha = git(repo, "rev-parse", "HEAD");
+
+  const candidate: Candidate = { ...manifest(baseSha) as Candidate, upstreamVersion: UPSTREAM, releaseVersion: "0.6.0" };
+  // Данные кандидата пишутся до генерации: документы строятся из фактических снимков рабочего дерева.
+  for (const [path, text] of Object.entries({
+    [catalogPath]: catalogText(true), "package.json": manifestText([BASE, UPSTREAM], "0.6.0"),
+    "test/fixtures/host-snapshots/supported-hosts.json": supportText([BASE, UPSTREAM]),
+  })) await write(repo, path, text);
+  for (const platform of PLATFORMS) await write(repo, `test/fixtures/host-snapshots/${UPSTREAM}-${platform}.json`, snapshot(UPSTREAM, platform));
+  const documents = await trustedReleaseDocuments({ candidate, versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } });
+  for (const [path, text] of Object.entries({ "README.md": documents.readme, "CHANGELOG.md": documents.changelog, "upgrade-report.md": documents.report })) await write(repo, path, text);
+  git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+  const headSha = git(repo, "rev-parse", "HEAD");
+  const committed = git(repo, "diff", "--name-only", baseSha, headSha).split("\n").filter(Boolean).sort();
+  // Доказательство строится теми же функциями, что и в проверке: набор путей — окончательный, уже с документами.
+  const before = readCatalogAtCommit(repo, baseSha);
+  const after = readCatalogAtCommit(repo, headSha);
+  const snapshots = [...VERSIONS].flatMap(version => PLATFORMS.map(platform => JSON.parse(git(repo, "show", `${headSha}:test/fixtures/host-snapshots/${version}-${platform}.json`)) as BaselineSnapshot));
+  const evidence = {
+    candidateVersion: UPSTREAM, supportedVersions: [...VERSIONS], coverage,
+    drift: [...VERSIONS].flatMap(version => PLATFORMS.map(platform => ({ version, platform, added: 0, removed: 0, changed: 0 }))),
+    reviewRows: [], reviewRequired: false, changedPaths: committed,
+    changedCatalogVariants: after.filter(entry => !before.some(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash && entry.platforms.every(platform => old.platforms.includes(platform))))
+      .map(entry => ({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms: [...entry.platforms].sort() })),
+    identities: identitiesOf(after), identitiesBefore: identitiesOf(before),
+    translationIdentities: translationIdentitiesOf(after), translationIdentitiesBefore: translationIdentitiesOf(before),
+    markerPairs: markerPairsOf(after, snapshots),
+  };
+  // Все три пользовательских документа входят в доказательство: это и есть «README/CHANGELOG/report в выпуске».
+  expect(evidence.changedPaths).toEqual(expect.arrayContaining(["README.md", "CHANGELOG.md", "upgrade-report.md"]));
+  const bundlePath = join(artifact, "candidate.bundle");
+  git(repo, "update-ref", "refs/heads/maintenance-candidate", headSha);
+  git(repo, "bundle", "create", bundlePath, "refs/heads/maintenance-candidate", `^${baseSha}`);
+  await writeFile(join(artifact, "candidate.patch"), Bun.spawnSync(["git", "diff", "--binary", "--full-index", "--no-renames", baseSha, headSha], { cwd: repo, stdout: "pipe" }).stdout);
+  // Байты артефакта — ровно байты коммита: снимки фикстуры не завершаются переводом строки, а README — да.
+  for (const path of committed) await write(artifact, `data/${path}`, gitFile(repo, headSha, path));
+  const digest = (path: string) => createHash("sha256").update(git(repo, "show", `${headSha}:${path}`) + "\n").digest("hex");
+  await writeFile(join(artifact, "proof.json"), JSON.stringify({
+    baseSha, upstreamVersion: UPSTREAM, releaseVersion: "0.6.0", semanticReview: "disabled", nativeSmoke: "passed",
+    catalogSha256: digest(catalogPath), manifestSha256: digest("src/translations/variant-review.json"), semantic: evidence,
+  }, null, 2) + "\n");
+  await writeBundleManifest(artifact, { ...candidate, headSha });
+  const published = await validatePublishedCandidate(repo, artifact, validatePolicy(rawPolicy));
+  expect(published.headSha).toBe(headSha);
+  // Окончательные пути доказательства — ровно diff коммита, без лишних и без пропущенных документов.
+  const proof = await Bun.file(join(artifact, "proof.json")).json();
+  expect(proof.semantic.changedPaths).toEqual(committed);
+  // Доказательство, потерявшее пользовательский документ, не принимается: README не «вне» выпуска.
+  await writeFile(join(artifact, "proof.json"), JSON.stringify({ ...proof, semantic: { ...proof.semantic, changedPaths: committed.filter(path => path !== "README.md") } }, null, 2) + "\n");
+  await writeBundleManifest(artifact, { ...candidate, headSha });
+  await expect(validatePublishedCandidate(repo, artifact, validatePolicy(rawPolicy))).rejects.toThrow("candidate-verification-paths-mismatch");
+  await writeFile(join(artifact, "proof.json"), JSON.stringify(proof, null, 2) + "\n");
+  await writeBundleManifest(artifact, { ...candidate, headSha });
+  // Подмена README вне блока после пересчёта proof, patch и bundle отвергается финальной сверкой документа.
+  await write(repo, "README.md", documents.readme.replace("omp plugin install omp-settings-ru@omp-settings-ru", "omp plugin install attacker/marketplace"));
+  git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
+  const tampered = git(repo, "rev-parse", "HEAD");
+  await expect(verifyReleaseDocuments(repo, { ...published, headSha: tampered }, [...VERSIONS], coverage))
+    .rejects.toThrow("candidate-release-content-mismatch:README.md");
+}, 60000);
 
 test("expired owned candidate is closed and exact bare remote branch retired without mutating main", async () => {
   const root = await directory(); const repo = join(root, "repo"); const bare = join(root, "origin.git"); await mkdir(repo);

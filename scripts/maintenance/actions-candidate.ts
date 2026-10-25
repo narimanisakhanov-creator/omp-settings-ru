@@ -2,15 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { computeSourceHash } from "../../src/source";
 import type { BaselineSnapshot } from "../../src/report";
 import { asRecord, parseStrictJSON } from "./json";
 import { parseCatalogJSON, CATALOG_PATH } from "./catalog";
 import { SNAPSHOT_PLATFORMS, SUPPORTED_HOSTS, snapshotPath } from "./paths";
-import { candidatePaths, git, stableVersion, validateBundle, validateCandidateTree, writeBundleManifest, type Candidate } from "./actions-bundle";
+import { candidatePaths, git, validateBundle, validateCandidateTree, writeBundleManifest, type Candidate } from "./actions-bundle";
+import { verifyReleaseDocuments } from "./release-documents";
 import { secretFreeEnvironment } from "./actions-github";
 import { approvedDelta, hostAliasOf } from "./measurement-environment";
 import { catalogEntries, identitiesOf, translationIdentitiesOf, markerPairsOf, validateSemantic, type SemanticEvidence } from "./semantic";
+import { snapshotValue } from "./snapshots";
 import type { ControllerPolicy } from "./contracts";
 
 const platforms = SNAPSHOT_PLATFORMS;
@@ -24,27 +25,6 @@ export async function runTrusted(cwd: string, args: readonly string[], timeout: 
     if (stdout.length > 32 * 1024 * 1024) throw new Error("trusted-output-too-large");
     return stdout;
   } finally { clearTimeout(timer); }
-}
-export function snapshotValue(value: unknown, version?: string, platform?: string): BaselineSnapshot {
-  const snapshot = asRecord(value);
-  if (!snapshot || Object.keys(snapshot).sort().join(",") !== "platform,settings,version" || typeof snapshot.version !== "string" || !stableVersion.test(snapshot.version) || !platforms.includes(snapshot.platform as typeof platforms[number]) || (version && snapshot.version !== version) || (platform && snapshot.platform !== platform)) throw new Error("snapshot-identity-invalid");
-  const settings = asRecord(snapshot.settings);
-  if (!settings || !Object.keys(settings).length || Object.keys(settings).length > 10000) throw new Error("snapshot-settings-invalid");
-  for (const [path, raw] of Object.entries(settings)) {
-    const source = asRecord(raw);
-    if (!path || !source || Object.keys(source).sort().join(",") !== "description,group,label,options,sourceHash,tab,warning" || typeof source.tab !== "string" || (source.group !== null && typeof source.group !== "string") || typeof source.label !== "string" || typeof source.description !== "string" || (source.warning !== null && typeof source.warning !== "string") || !(source.options === null || source.options === "runtime" || Array.isArray(source.options))) throw new Error("snapshot-source-invalid");
-    if (Array.isArray(source.options)) {
-      const values = new Set<string>();
-      for (const rawOption of source.options) {
-        const option = asRecord(rawOption);
-        if (!option || Object.keys(option).sort().join(",") !== "description,label,value" || typeof option.value !== "string" || typeof option.label !== "string" || (option.description !== null && typeof option.description !== "string") || values.has(option.value)) throw new Error("snapshot-option-invalid");
-        values.add(option.value);
-      }
-    }
-    const { sourceHash, ...metadata } = source;
-    if (sourceHash !== computeSourceHash(metadata as unknown as BaselineSnapshot["settings"][string])) throw new Error("snapshot-source-hash-mismatch");
-  }
-  return snapshot as unknown as BaselineSnapshot;
 }
 export async function saveCandidateData(worktree: string, output: string, candidate: Candidate): Promise<void> {
   for (const path of candidatePaths(candidate.upstreamVersion)) {
@@ -114,15 +94,19 @@ export async function completeSupport(worktree: string, candidate: Candidate): P
   await Bun.write(join(worktree, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
   return versions;
 }
-export async function validatePublishedCandidate(checkout: string, root: string, policy: ControllerPolicy): Promise<Candidate> {
-  const candidate = await validateBundle(root);
-  if (candidate.repository !== policy.repository) throw new Error("candidate-repository-mismatch");
-  const paths = validateCandidateTree(checkout, root, candidate);
+/** Байты артефакта обязаны совпасть с коммитом: манифест артефакта сверяет хэши, а не смысл файла. */
+export async function verifyCommittedArtifacts(checkout: string, root: string, candidate: Candidate, paths: readonly string[]): Promise<void> {
   for (const path of paths) {
     const committed = Bun.spawnSync(["git", "show", `${candidate.headSha}:${path}`], { cwd: checkout, stdout: "pipe", stderr: "pipe" });
     const artifact = Bun.file(join(root, "data", path));
     if (committed.exitCode || !await artifact.exists() || !Buffer.from(committed.stdout).equals(Buffer.from(await artifact.arrayBuffer()))) throw new Error(`candidate-data-commit-mismatch:${path}`);
   }
+}
+export async function validatePublishedCandidate(checkout: string, root: string, policy: ControllerPolicy): Promise<Candidate> {
+  const candidate = await validateBundle(root);
+  if (candidate.repository !== policy.repository) throw new Error("candidate-repository-mismatch");
+  const paths = validateCandidateTree(checkout, root, candidate);
+  await verifyCommittedArtifacts(checkout, root, candidate, paths);
   const before = parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:package.json`]));
   const after = parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:package.json`]));
   const approved = approvedDelta(before, after, candidate.upstreamVersion);
@@ -157,6 +141,10 @@ export async function validatePublishedCandidate(checkout: string, root: string,
   const snapshots: BaselineSnapshot[] = [];
   for (const version of versions) for (const platform of platforms) snapshots.push(snapshotValue(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:${snapshotPath(version, platform)}`])), version, platform));
   if (!same(evidence.markerPairs, markerPairsOf(currentEntries, snapshots)) || !same(evidence.supportedVersions, versions)) throw new Error("candidate-semantic-source-mismatch");
+  // Пользовательские документы пересчитываются доверенным генератором из базы и проверенных данных головы и
+  // сверяются с байтами коммита: расширенный allowlist README не должен разрешать произвольную замену
+  // установочной инструкции, ссылок или истории CHANGELOG.
+  await verifyReleaseDocuments(checkout, candidate, versions, evidence.coverage);
   const requirements = currentEntries.filter(entry => !baseEntries.some(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash && entry.platforms.every(platform => old.platforms.includes(platform)))).map(entry => ({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms: [...entry.platforms].sort() }));
   if (!same(evidence.changedCatalogVariants, requirements)) throw new Error("candidate-semantic-delta-mismatch");
   const manifest = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:src/translations/variant-review.json`])));
