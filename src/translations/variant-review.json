@@ -583,5 +583,6 @@
       "comparison": "18.8.7 new setting: exit policy for worktrees created since omp started (on start or via /wt). keep/ask/remove kept verbatim; the remove warning about clean worktrees, uncommitted changes, new commits and deleted gitignored files (e.g. `.env`) is preserved in full."
     }
   ],
-  "pending": []
+  "pending": [],
+  "semanticReview": "disabled"
 }
