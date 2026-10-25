@@ -476,10 +476,10 @@ export async function prepareToolRoot(input: {
     if (!locked) return { failure: "tools-install-busy" };
     let installResult: { code: number } | undefined;
     try {
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 20; attempt++) {
         installResult = spawnBun(root, installArgs, deadline);
         if (installResult.code === 0) break;
-        if (attempt < 2) await Bun.sleep(250);
+        if (attempt < 19) await Bun.sleep(250);
       }
     } finally { await rm(installLock, { force: true }); }
     if (!installResult || installResult.code !== 0) return { failure: "tools-install-failed" };

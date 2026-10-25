@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { buildSourceSnapshot } from "../src/report";
 import { hostAliasOf } from "../scripts/maintenance/measurement-environment";
 import { SNAPSHOT_DIR, SUPPORTED_HOSTS, snapshotPath } from "../scripts/maintenance/paths";
+import { withInstallLock } from "./bun-install-lock";
 
 export const FIXTURE_PLATFORMS = ["win32", "linux", "darwin"] as const;
 export const FIXTURE_ADDED = ["terminal.programStatus", "tts.localSpeed", "speech.speed", "bash.gitGuard", "worktree.onStart", "worktree.onExit"] as const;
@@ -18,13 +19,13 @@ export function fixtureGit(root: string, args: readonly string[]): string {
 const serverSource = `
 const { appendFileSync, existsSync, readFileSync } = require("node:fs");
 const { join } = require("node:path");
-const [directory, port] = process.argv.slice(2);
-Bun.serve({ hostname: "127.0.0.1", port: Number(port), fetch(request) {
+const [directory] = process.argv.slice(2);
+const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
  const path = decodeURIComponent(new URL(request.url).pathname);
  appendFileSync(join(directory, "requests.log"), path + "\\n");
  const file = path.endsWith(".tgz") ? join(directory, path.split("/").pop()) : join(directory, path.slice(1).replaceAll("/", "%2F") + ".json");
  return existsSync(file) ? new Response(readFileSync(file)) : new Response("missing", {status:404});
-}}); console.log("ready");
+}}); console.log("ready " + server.port);
 `;
 function schema(candidate: boolean, platform: string) {
   return Object.fromEntries(["theme.dark", ...(candidate ? FIXTURE_ADDED : [])].map(path => [path, {
@@ -48,15 +49,14 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
   const checkout = join(root, "checkout");
   const registryDir = join(root, "registry");
   await mkdir(checkout); await mkdir(registryDir);
-  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
-  const port = probe.port; probe.stop(true);
-  const registry = `http://127.0.0.1:${port}/`;
   await writeFile(join(registryDir, "requests.log"), "");
   await writeFile(join(registryDir, "server.ts"), serverSource);
-  const child = Bun.spawn(["bun", join(registryDir, "server.ts"), registryDir, String(port)], {stdout:"pipe",stderr:"pipe"});
+  const child = Bun.spawn(["bun", join(registryDir, "server.ts"), registryDir], {stdout:"pipe",stderr:"pipe"});
   const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
   let ready = "";
-  while (!ready.includes("ready")) { const chunk = await reader.read(); if (chunk.done) throw new Error("registry-start-failed"); ready += new TextDecoder().decode(chunk.value); }
+  while (!/ready \d+/.test(ready)) { const chunk = await reader.read(); if (chunk.done) throw new Error("registry-start-failed"); ready += new TextDecoder().decode(chunk.value); }
+  const port = Number(ready.match(/ready (\d+)/)![1]);
+  const registry = `http://127.0.0.1:${port}/`;
   async function publish(name: string, version: string, files: Record<string,string>) {
     const stage = join(root, "stage"); const pkg = join(stage, "package");
     await mkdir(pkg, {recursive:true});
@@ -69,7 +69,7 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     const bytes = await readFile(join(registryDir,file));
     const packumentPath = join(registryDir,`${name.replaceAll("/","%2F")}.json`);
     const packument = await Bun.file(packumentPath).json().catch(() => ({name,"dist-tags":{},versions:{}}));
-    packument.versions[version] = {name,version,dist:{tarball:`${registry}${file}`,integrity:`sha512-${createHash("sha512").update(bytes).digest("base64")}`}};
+    packument.versions[version] = {name,version,dist:{tarball:`${registry}${file}?nonce=${crypto.randomUUID()}`,integrity:`sha512-${createHash("sha512").update(bytes).digest("base64")}`}};
     packument["dist-tags"].latest = version;
     await writeFile(packumentPath,JSON.stringify(packument));
   }
@@ -105,17 +105,19 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     writeFileSync(join(target,"src/translations/variant-review.json"),JSON.stringify({variants:[]}));
     writeFileSync(join(target,"package.json"),JSON.stringify(manifest(included),null,2));
   }
-  function install() {
-    const run = Bun.spawnSync(["bun","install","--ignore-scripts",`--registry=${registry}`,"--cache-dir",join(root,"cache")],{cwd:checkout,stdout:"pipe",stderr:"pipe",timeout:30_000});
-    if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+  async function install() {
+    await withInstallLock(() => {
+      const run = Bun.spawnSync(["bun","install","--ignore-scripts",`--registry=${registry}`,"--cache-dir",join(root,"cache")],{cwd:checkout,stdout:"pipe",stderr:"pipe",timeout:30_000});
+      if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+    });
   }
-  data(checkout,false); install();
+  data(checkout,false); await install();
   writeFileSync(join(checkout,".gitignore"),"node_modules/\n");
   fixtureGit(checkout,["init","-q","-b","main"]);
   fixtureGit(checkout,["config","core.autocrlf","false"]);
   fixtureGit(checkout,["add","-A"]); fixtureGit(checkout,["commit","-q","-m","accepted base"]);
   const base = fixtureGit(checkout,["rev-parse","HEAD"]);
-  data(checkout,true); install(); const candidateLock = readFileSync(join(checkout,"bun.lock"),"utf8");
+  data(checkout,true); await install(); const candidateLock = readFileSync(join(checkout,"bun.lock"),"utf8");
   // Restore only this freshly-created fixture to its accepted tree.
   fixtureGit(checkout,["restore","--source=HEAD","--worktree","."]);
   for (const platform of FIXTURE_PLATFORMS) await rm(join(checkout,snapshotPath(candidate,platform)),{force:true});

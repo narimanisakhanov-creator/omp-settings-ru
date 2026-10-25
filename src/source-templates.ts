@@ -7,4 +7,5 @@ export const descriptionTemplates: Readonly<Record<string, string>> = {
   "retry.waitForUsageReset": "When a provider reports usage-limit exhaustion with a reset time (5-hour or weekly quota windows on any provider), sleep until the reset instead of failing fast past retry.maxDelayMs. Waits are abortable ({escape}) but also hold subagents, so leave off for unattended runs.",
   "tui.vimMode": "Modal prompt editing. {escape} leaves Insert mode; Normal mode has hjkl, 0, $, ^, w, b, e, gg, G, counts, x/D/C, dd/yy, p and u; operators take motions or text objects (diw, ca(, dap); v/V start a Visual selection that y copies and d deletes",
   "composer.recallClearedDrafts": "Keep drafts cleared with {clear} in local {history} history until exit; disabling affects future clears",
+  "composer.predictions": "After a completed turn, ask the active model to predict your next message and show it as ghost text in the empty composer; Tab or Right inserts it without sending. Extra usage: every completed turn sends one more billed request over the whole conversation (counted in /stats)",
 };

@@ -9,6 +9,7 @@ import {
   lockVerdict, manifestWithDelta, parseLock, prepareToolRoot,
 } from "../scripts/maintenance/measurement-environment";
 import { SNAPSHOT_DIR, snapshotPath } from "../scripts/maintenance/paths";
+import { withInstallLock } from "./bun-install-lock";
 
 /**
  * Среда измерения: проверяется на настоящем Bun и настоящих пакетах.
@@ -42,8 +43,8 @@ function run(args: readonly string[], cwd: string, timeout = INSTALL_DEADLINE): 
 }
 
 /** Установка обязана завершиться успешно, иначе тест показывает фактический код и stderr, а не «что-то не так». */
-function install(args: readonly string[], cwd: string, timeout = INSTALL_DEADLINE): void {
-  const result = run(args, cwd, timeout);
+async function install(args: readonly string[], cwd: string, timeout = INSTALL_DEADLINE): Promise<void> {
+  const result = await withInstallLock(() => run(args, cwd, timeout));
   if (result.code !== 0) throw new Error(`bun ${args.join(" ")}: код ${result.code}, stderr: ${result.stderr.trim()}`);
 }
 
@@ -166,7 +167,7 @@ async function publish(dataDir: string, tarballPath: string, name: string, versi
     versions: {
       [version]: {
         name, version, dependencies: {},
-        dist: { tarball: `${registry.url}${name}/-/${file}`, integrity: sums.sha512, shasum: sums.sha1 },
+        dist: { tarball: `${registry.url}${name}/-/${file}?nonce=${crypto.randomUUID()}`, integrity: sums.sha512, shasum: sums.sha1 },
       },
     },
   }));
@@ -267,7 +268,7 @@ async function fixture(): Promise<Fixture> {
   await mkdir(join(checkout, SNAPSHOT_DIR), { recursive: true });
   await writeFile(join(checkout, snapshotPath(HOST_VERSION, "win32")), JSON.stringify({ settings: {} }));
   // Базовый lock-файл — настоящий: его считает Bun по ответу реестра-фикстуры, а не тест.
-  install(["install", "--lockfile-only", "--ignore-scripts", `--registry=${registry.url}`], checkout);
+  await install(["install", "--lockfile-only", "--ignore-scripts", `--registry=${registry.url}`], checkout);
 
   git(["init", "-q", "-b", "main"], checkout);
   git(["add", "-A"], checkout);
