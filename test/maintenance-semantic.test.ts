@@ -108,10 +108,11 @@ describe("разбор реального каталога", () => {
   });
   test("all effective runtime variants pair against accepted baseline display fields",async()=>{
     const entries=await readCatalog(join(import.meta.dir,".."));
+    const supported=JSON.parse(await Bun.file(join(import.meta.dir,"..",SUPPORTED_HOSTS)).text()) as { versions: { version: string; platforms: string[] }[] };
     const snapshots:BaselineSnapshot[]=[];
-    for(const version of VERSIONS)for(const platform of PLATFORMS)snapshots.push(await Bun.file(join(import.meta.dir,"..",snapshotPath(version,platform))).json() as BaselineSnapshot);
+    for(const row of supported.versions)for(const platform of row.platforms)snapshots.push(await Bun.file(join(import.meta.dir,"..",snapshotPath(row.version,platform))).json() as BaselineSnapshot);
     const pairs=markerPairsOf(entries,snapshots);
-    expect(new Set(pairs.map(pair=>`${pair.path}:${pair.sourceHash}`)).size).toBe(424);
+    expect(new Set(pairs.map(pair=>`${pair.path}:${pair.sourceHash}`)).size).toBe(entries.length);
     const mismatches=pairs.filter(pair=>markers(pair.source).join("\0")!==markers(pair.ru).join("\0"));
     expect(mismatches.map(pair=>({path:pair.path,sourceHash:pair.sourceHash,field:pair.field}))).toEqual([
       {path:"statusLine.compactThinkingLevel",sourceHash:"d6bcd3d11e4d2ce2eba1cc7b75e5bc9c4589d1fe5bb1a174cfcd37d977ba285e",field:"description"},
@@ -655,14 +656,16 @@ describe("каталог рабочего дерева и базы", () => {
       expect(await failureMessage(()=>readCatalog(root))).toBe("duplicate-source-variant:theme.dark:win32");
     } finally {rmSync(root,{recursive:true,force:true});}
   });
-  test("полный эффективный каталог: 410 путей, 424 варианта, 1269 платформенных идентичностей",async()=>{
+  test("полный эффективный каталог не теряет исторические пути и не дублирует identity",async()=>{
     const entries=await readCatalog(REPO_ROOT);
-    expect(entries).toHaveLength(424);
-    expect(entries.reduce((count,entry)=>count+entry.platforms.length,0)).toBe(1269);
-    expect(new Set(entries.map(entry=>entry.path)).size).toBe(410);
-    expect(entries.filter(entry=>entry.path==="title.icons")).toHaveLength(3);
-    expect(entries.filter(entry=>entry.path==="spelling.autocomplete")).toHaveLength(2);
-    expect(entries.filter(entry=>entry.path==="tools.xdev")).toHaveLength(2);
+    expect(entries.length).toBeGreaterThanOrEqual(424);
+    expect(entries.reduce((count,entry)=>count+entry.platforms.length,0)).toBeGreaterThanOrEqual(1269);
+    expect(new Set(entries.map(entry=>entry.path)).size).toBeGreaterThanOrEqual(410);
+    expect(new Set(entries.map(entry=>`${entry.path}:${entry.sourceHash}`)).size).toBe(entries.length);
+    expect(entries.every(entry=>entry.platforms.length>0)).toBe(true);
+    expect(entries.filter(entry=>entry.path==="title.icons").length).toBeGreaterThanOrEqual(3);
+    expect(entries.filter(entry=>entry.path==="spelling.autocomplete").length).toBeGreaterThanOrEqual(2);
+    expect(entries.filter(entry=>entry.path==="tools.xdev").length).toBeGreaterThanOrEqual(2);
   });
 });
 

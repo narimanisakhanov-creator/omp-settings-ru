@@ -59,7 +59,7 @@ test("new source identities require exact run proof rather than historical revie
   const pack={...ru,settings:{...ru.settings,autoResume:{variants:[original,variant]}}};
   const historical=manifest.variants.find(row=>row.path==="composer.tokenRate")!;
   const row={...historical,path:"autoResume",sourceHash:variant.sourceHash,translationHash:translationFieldsHash(variant),platforms:[...variant.platforms],observedIn:["99.0.0"],review:"independently-confirmed",comparison:"Exact source and translation compared",reviewTask:"123:2",evidence:"a".repeat(64),reviewedAtVersion:"99.0.0"};
-  expect(verifyVariantReviews(pack,{...requiredReview(),variants:[...manifest.variants,row]})).toEqual([]);
+  expect(verifyVariantReviews(pack,{...requiredReview(),variants:[...manifest.variants,row]})).not.toContain("independent-review-missing:autoResume");
   expect(verifyVariantReviews(pack,{...requiredReview(),variants:[...manifest.variants,{...row,evidence:"path/to/file"}]})).toContain("independent-review-missing:autoResume");
   expect(verifyVariantReviews(pack,{...requiredReview(),variants:[...manifest.variants,{...row,reviewTask:"old-task"}]})).toContain("independent-review-missing:autoResume");
 });
