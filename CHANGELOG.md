@@ -6,8 +6,9 @@
 - prepublication gate снова устанавливает именно проверенный draft-каталог (`--catalog`) нативным хостом до promote; source-режим как замена убран.
 - тест configured extension roots конфигурирует корень через CLI хоста и читает настройку в обеих формах ответа (`array` и `{value}`), поэтому матрица 18.8.0/18.8.4 снова зелёная.
 
-- при fail-closed остановке перевода `translate.log` вкладывается в blocked-артефакт вместе с причиной independent review; successful candidate bundle по-прежнему не содержит файлов вне манифеста.
-- глоссарий различает уровни заметок советника: `concern` переводится как «замечание», а не «проблема»; translator prompt требует использовать глоссы без замены синонимами. Independent reviewer остаётся обязательным блокирующим gate.
+- при fail-closed остановке перевода `translate.log` вкладывается в blocked-артефакт вместе с причиной; successful candidate bundle по-прежнему не содержит файлов вне манифеста.
+- глоссарий различает уровни заметок советника: `concern` переводится как «замечание», а не «проблема»; translator prompt требует использовать глоссы без замены синонимами.
+- independent reviewer отключён: модель-ревьюер не вызывается, `semanticReview` фиксируется как `disabled` в `candidate.json`, `proof.json` и `variant-review.json`, новые варианты не получают verdict и comparison, а `unreviewed-*` для них не считается провалом. Исторические `independently-confirmed` строки сохраняют свои comparison/evidence и продолжают проверяться; строгая схема, hashes, provenance и native gates не меняются. Semantic-ошибка нового перевода может уйти в выпуск.
 
 ## [0.6.0](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/tag/v0.6.0) — 2026-10-24
 

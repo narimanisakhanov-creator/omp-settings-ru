@@ -9,7 +9,7 @@ import { verifyCandidate } from "./maintenance/actions-verify";
 import { publishCandidate, finalizeCandidate } from "./maintenance/actions-publish";
 import { parseCatalogJSON, CATALOG_PATH } from "./maintenance/catalog";
 import type { ControllerPolicy } from "./maintenance/contracts";
-import { translateCandidate, TranslationReviewRejected } from "./maintenance/translate";
+import { translateCandidate } from "./maintenance/translate";
 import { requestModelJSON, ModelRequestError } from "./maintenance/model";
 import { selectFixedHostAsset } from "./ci/prepare-host";
 import { SUPPORTED_HOSTS } from "./maintenance/paths";
@@ -32,7 +32,7 @@ export async function discover(checkout: string, baseSha: string, policy: Contro
     const artifact = asRecord(await github.api(`repos/${policy.repository}/actions/artifacts/${identity.artifactId}`));
     const baseDrift = !pr.merged_at && (identity.baseSha !== baseSha || artifact?.expired === true);
     if (!pr.merged_at && !baseDrift) {
-      await github.origin({ ...identity, files: [], reviewResponses: [] }, identity.artifactId);
+      await github.origin({ ...identity, semanticReview: "disabled", files: [] }, identity.artifactId);
       const checks = await github.checks.checksFor(identity.headSha);
       if (checks.some(check => check.status === "completed" && check.conclusion !== "success")) throw new Error("owned-candidate-ci-failed-explicit-rerun-required");
     }
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
       return { snapshots: input.snapshots.map(value => snapshotValue(value)), catalog: parseCatalogJSON(await Bun.file(join(root, "data", CATALOG_PATH)).text()) };
     });
     const requests: { messages: readonly { role: string; content: string }[]; bytes: string; sha256: string }[] = [];
-    const result = await translationStage("translate", () => translateCandidate({ candidateVersion: candidate.upstreamVersion, baseSha, runId: candidate.runId, runAttempt: candidate.runAttempt, snapshots, catalog, request: async messages => {
+    const result = await translationStage("translate", () => translateCandidate({ candidateVersion: candidate.upstreamVersion, snapshots, catalog, request: async messages => {
       const response = await requestModelJSON(messages);
       requests.push({ messages, bytes: response.bytes, sha256: response.sha256 });
       await writeArtifact(join(root, "requests.json"), requests);
@@ -111,12 +111,10 @@ async function main(): Promise<void> {
       const manifestPath = join(root, "data/src/translations/variant-review.json");
       const manifest = asRecord(parseStrictJSON(await Bun.file(manifestPath).text()));
       if (!manifest || !Array.isArray(manifest.variants)) throw new Error("variant-review-manifest-invalid");
-      const changed = new Set(result.reviews.map(row => `${row.path}:${row.sourceHash}`));
-      manifest.variants = [...manifest.variants.filter(row => { const entry = asRecord(row); return !changed.has(`${entry?.path}:${entry?.sourceHash}`); }), ...result.reviews];
+      manifest.semanticReview = "disabled";
       await writeArtifact(manifestPath, manifest);
-      await writeArtifact(join(root, "responses.json"), { reviews: result.reviews, responses: result.responses });
       await writeArtifact(join(root, "requests.json"), requests);
-      await writeBundleManifest(root, { ...candidate, reviewResponses: result.reviews.map(row => ({ path: row.path, sourceHash: row.sourceHash, sha256: row.evidence })) });
+      await writeBundleManifest(root, candidate);
     });
     return;
   }
@@ -131,7 +129,7 @@ async function main(): Promise<void> {
     if (!stableVersion.test(version) || base !== baseSha) throw new Error("prepare-version-or-base-invalid");
     const pkg = asRecord(parseStrictJSON(git(checkout, ["show", `${baseSha}:package.json`])));
     const parts = String(pkg?.version).split(".").map(Number);
-    const candidate: Candidate = { schemaVersion: 1, repository: policy.repository, runId: process.env.GITHUB_RUN_ID ?? "", runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? "", baseSha, upstreamVersion: version, releaseVersion: `${parts[0]}.${parts[1]! + 1}.0`, files: [], reviewResponses: [] };
+    const candidate: Candidate = { schemaVersion: 1, repository: policy.repository, runId: process.env.GITHUB_RUN_ID ?? "", runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? "", baseSha, upstreamVersion: version, releaseVersion: `${parts[0]}.${parts[1]! + 1}.0`, semanticReview: "disabled", files: [] };
     await prepareCandidate(checkout, root, candidate, policy);
   } else if (command === "verify") {
     if (readToken || maintenanceToken) throw new Error("verification-secret-forbidden");
@@ -146,7 +144,6 @@ async function main(): Promise<void> {
     else await finalizeCandidate(checkout, option(args, "--version") ?? "", github);
   }
 }
-const REVIEW_PATH = /^[A-Za-z0-9_.-]{1,200}$/;
 type TranslationStage = "bundle" | "input" | "translate" | "output";
 /** Fixed stage wrapper: the CLI prints only the stage plus a fixed detail, never the cause. */
 class TranslationStageError extends Error {
@@ -179,7 +176,6 @@ function translationFailure(error: unknown): string {
   let cause: unknown = error;
   while (cause instanceof TranslationStageError) cause = cause.cause;
   if (cause instanceof ModelRequestError) return modelFailure(cause);
-  if (cause instanceof TranslationReviewRejected && REVIEW_PATH.test(cause.path)) return `translation-review-rejected:${cause.path}`;
   const detail = translationDetail(cause);
   return error instanceof TranslationStageError ? `translate-failed:${error.stage}:${detail}` : `translate-failed:${detail}`;
 }

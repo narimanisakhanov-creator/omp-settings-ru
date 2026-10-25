@@ -1,43 +1,18 @@
 import type { BaselineSnapshot } from "../../src/report";
 import type { LocalePack, OptionTranslation, SourcePlatform, SourceVariant } from "../../src/translations/types";
 import { descriptionTemplates } from "../../src/source-templates";
-import { markers, missingMarkers, type ReviewRow } from "./semantic";
+import { markers, missingMarkers } from "./semantic";
 import type { ModelJSONResponse, ModelMessage } from "./model";
 import { translationFieldsHash } from "./catalog";
 
 export interface TranslationInput {
   readonly candidateVersion: string;
-  readonly baseSha: string;
-  readonly runId: string;
-  readonly runAttempt: string;
   readonly snapshots: readonly BaselineSnapshot[];
   readonly catalog: LocalePack;
   readonly request: (messages: readonly ModelMessage[]) => Promise<ModelJSONResponse>;
 }
-export interface TranslationResponse {
-  readonly path: string;
-  readonly sourceHash: string;
-  readonly bytes: string;
-  readonly sha256: string;
-  readonly comparison: string;
-}
 export interface TranslationResult {
   readonly catalog: LocalePack;
-  readonly reviews: readonly ReviewRow[];
-  readonly responses: readonly TranslationResponse[];
-}
-
-/**
- * Independent reviewer refused a translated identity. Only the source path is
- * carried; the CLI prints it after re-validating the path shape.
- */
-export class TranslationReviewRejected extends Error {
-  readonly path: string;
-  constructor(path: string) {
-    super(`translation-review-rejected:${path}`);
-    this.name = "TranslationReviewRejected";
-    this.path = path;
-  }
 }
 
 type Source = BaselineSnapshot["settings"][string];
@@ -111,12 +86,6 @@ function strictBody(value: unknown, source: Source, path: string): TranslationBo
   }
   return { label: body.label, description: body.description, ...(source.warning === null ? {} : { warning: body.warning as string }), ...(Array.isArray(source.options) ? { options } : {}) };
 }
-function reviewerBody(value: unknown, path: string): { verdict: "approved" | "rejected"; comparison: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`review-response-invalid:${path}`);
-  const body = value as Record<string, unknown>;
-  if (Object.keys(body).sort().join(",") !== "comparison,verdict" || !["approved", "rejected"].includes(String(body.verdict)) || typeof body.comparison !== "string" || !body.comparison.trim()) throw new Error(`review-response-invalid:${path}`);
-  return { verdict: body.verdict as "approved" | "rejected", comparison: body.comparison };
-}
 function translationMessages(path: string, source: Source, glossary: string, previous?: SourceVariant): ModelMessage[] {
   // Name the exact output keys in the request: a capable model otherwise echoes the input
   // envelope back, and the strict shape check correctly refuses that as a non-translation.
@@ -134,13 +103,11 @@ function reviewMessages(path: string, source: Source, body: TranslationBody, glo
 }
 
 export async function translateCandidate(input: TranslationInput): Promise<TranslationResult> {
-  if (!input.candidateVersion || !input.baseSha || !/^\d+$/.test(input.runId) || !/^\d+$/.test(input.runAttempt)) throw new Error("translation-input-invalid");
+  if (!input.candidateVersion) throw new Error("translation-input-invalid");
   const identities = sourceIdentities(input.snapshots);
   const glossary = await Bun.file(GLOSSARY_URL).text();
   const settings: Record<string, { variants: SourceVariant[] }> = {};
   for (const [path, setting] of Object.entries(input.catalog.settings)) settings[path] = { variants: setting.variants.map(variant => ({ ...variant, platforms: [...variant.platforms], observedIn: [...variant.observedIn] })) };
-  const reviews: ReviewRow[] = [];
-  const responses: TranslationResponse[] = [];
   for (const item of [...identities.values()].sort((left, right) => left.path.localeCompare(right.path) || left.sourceHash.localeCompare(right.sourceHash))) {
     const platforms = [...item.platforms].sort() as SourcePlatform[];
     const previous = existing(input.catalog, item.path, item.sourceHash);
@@ -159,16 +126,9 @@ export async function translateCandidate(input: TranslationInput): Promise<Trans
       strictBody(body, item.source, item.path);
     }
     if (!variant) throw new Error(`translation-missing:${item.path}`);
-    if (changed) {
-      const reviewed = await input.request(reviewMessages(item.path, item.source, body!, glossary));
-      const verdict = reviewerBody(reviewed.value, item.path);
-      responses.push({ path: item.path, sourceHash: item.sourceHash, bytes: reviewed.bytes, sha256: reviewed.sha256, comparison: verdict.comparison });
-      if (verdict.verdict !== "approved") throw new TranslationReviewRejected(item.path);
-      reviews.push({ path: item.path, sourceHash: item.sourceHash, translationHash: translationFieldsHash(variant), reviewedAtVersion: input.candidateVersion, platforms, review: "independently-confirmed", comparison: verdict.comparison, reviewTask: `${input.runId}:${input.runAttempt}`, evidence: reviewed.sha256 });
-    }
     settings[item.path] ??= { variants: [] };
     const retained = settings[item.path]!.variants.filter(candidate => candidate.sourceHash !== item.sourceHash);
     settings[item.path]!.variants = [...retained, { ...variant, platforms: [...new Set([...(previous?.platforms ?? []), ...platforms])].sort() as SourcePlatform[], observedIn }];
   }
-  return { catalog: { locale: "ru", settings }, reviews, responses };
+  return { catalog: { locale: "ru", settings } };
 }

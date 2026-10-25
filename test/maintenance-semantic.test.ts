@@ -203,6 +203,16 @@ describe("содержательный гейт", () => {
     expect(validateSemantic(evidence({changedCatalogVariants:[requirement(entry)],reviewRequired:false}),policy)).toEqual({ok:false,reason:`review-row-missing:${entry.path}:${entry.sourceHash}`});
   });
 
+  test("disabled semantic review accepts new variants without rows but rejects fabricated rows", () => {
+    const entry = entriesFromJSON(CATALOG)[0]!;
+    const base = evidence({
+      changedPaths: [...PLAIN_PATHS, T], reviewRequired: true,
+      changedCatalogVariants: [requirement(entry)], reviewRows: [],
+    });
+    expect(validateSemantic(base, policy, undefined, true)).toEqual({ ok: true });
+    expect(validateSemantic({ ...base, reviewRows: [reviewRow(entry)] }, policy, undefined, true)).toEqual({ ok: false, reason: "review-rows-unexpected" });
+  });
+
   test("строки ревью по вариантам изменённого файла каталога кандидата принимаются", () => {
     const entries = entriesFromJSON(CATALOG);
     expect(validateSemantic(evidence({

@@ -371,7 +371,7 @@ export function markerPairsOf(entries: readonly CatalogEntry[], snapshots: reado
 }
 
 export function validateSemantic(
-  evidence: SemanticEvidence, policy: ControllerPolicy, proof?: ReviewProofContext,
+  evidence: SemanticEvidence, policy: ControllerPolicy, proof?: ReviewProofContext, semanticReviewDisabled = false,
 ): SemanticVerdict {
   // Пустой фактический каталог или пустая база — это не «нечего проверять»: каталог проекта всегда непуст,
   // поэтому пустое множество идентичностей означает непрочитанный/неполный каталог и обязано отказать.
@@ -453,7 +453,9 @@ export function validateSemantic(
     byPath.set(path, set);
   }
   const key = (path: string, sourceHash: string): string => `${path}:${sourceHash}`;
-  if (!evidence.reviewRequired && evidence.changedCatalogVariants.length === 0) {
+  if (semanticReviewDisabled) {
+    if (evidence.reviewRows.length > 0) return { ok: false, reason: "review-rows-unexpected" };
+  } else if (!evidence.reviewRequired && evidence.changedCatalogVariants.length === 0) {
     if (evidence.reviewRows.length > 0) return { ok: false, reason: "review-rows-unexpected" };
   } else {
     for (const variant of evidence.changedCatalogVariants) {

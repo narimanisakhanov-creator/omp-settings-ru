@@ -48,7 +48,7 @@ bun run source:export 18.8.4 win32
 bun run source:export 18.8.4 win32 --output test/fixtures/host-snapshots/18.8.4-win32.json
 ```
 
-4. сравни источник с предыдущим снимком до принятия экспорта: added/removed/changed требуют ревью. перезапись снимка не должна скрывать изменение английского текста; `sha256` в `supported-hosts.json` обновляется тем же шагом.
+4. сравни источник с предыдущим снимком до принятия экспорта: added/removed/changed требуют ручного ревью. перезапись снимка не должна скрывать изменение английского текста; `sha256` в `supported-hosts.json` обновляется тем же шагом.
 
 5. повтори проверку для каждой записи матрицы. `native-package-registry` означает реестр пакета на текущей ОС; `source-derived` — извлечённые платформенные ветки. оба статуса отличаются от установленной панели.
 
@@ -80,7 +80,7 @@ bun scripts/maintenance.ts --pin <release-pin.json> --package <archive.tgz> --st
 
 ### настройка hosted pipeline
 
-Владелец задаёт Secrets `MAINTENANCE_API_KEY`, `MAINTENANCE_GH_TOKEN` и Variables `MAINTENANCE_BASE_URL`, `MAINTENANCE_MODEL`. API — OpenAI-compatible HTTPS root (включая `/v1`, если нужен провайдеру). Translation step делает отдельные stateless translator/reviewer запросы, не запускает subprocess и не получает GitHub token. Ни один другой step не получает model key.
+Владелец задаёт Secrets `MAINTENANCE_API_KEY`, `MAINTENANCE_GH_TOKEN` и Variables `MAINTENANCE_BASE_URL`, `MAINTENANCE_MODEL`. API — OpenAI-compatible HTTPS root (включая `/v1`, если нужен провайдеру). Translation step делает только stateless translator-запросы, не запускает subprocess и не получает GitHub token. Independent reviewer не вызывается вовсе: второй модели, verdict и comparison в pipeline нет. Ни один другой step не получает model key.
 
 Fine-grained PAT принадлежит закреплённому `controllerLogin` типа User и ограничен этим репозиторием: Contents RW, Pull requests RW, Actions RW, Checks Read. Он доступен только publish/finalize; git использует временный askpass вне checkout, gh получает token только в собственном env. Checkout всегда `persist-credentials: false`.
 
@@ -91,17 +91,17 @@ Production dispatch требует отдельного разрешения. Л
 Измерители выполняются из временного доверенного корня: код/конфигурация — принятые байты, зависимости — независимо пересчитанный lock с `--frozen-lockfile --ignore-scripts`. Из candidate читаются только JSON-данные и snapshots; исторические identity/translation hashes сохраняются и вся матрица измеряется заново.
 
 
-### привязка смыслового ревью
+### смысловое ревью отключено
 
-`validateSemantic(evidence, policy, proof?)` принимает доверенный `ReviewProofContext` отдельно от каталога и отчёта: `runId`, `runAttempt` и `artifacts: ReadonlyMap<string, ReviewContentArtifact>`. Ключ — точный `${path}:${sourceHash}`. Значение содержит точную строку sanitized reviewer content в `bytes` (хешируются UTF-8 байты без нормализации) либо `sha256`, независимо вычисленный доверенным загрузчиком по этим байтам. Если переданы оба поля, они обязаны совпасть. Нельзя получать artifact digest из `ReviewRow.evidence` или хешировать содержащий эту строку report JSON.
+`semanticReview: "disabled"` фиксируется в `candidate.json`, `proof.json` и `src/translations/variant-review.json`: independent reviewer не вызывается, поэтому для новых identity и platform extension нет reviewer verdict, `comparison` и response bytes.
 
-Для новой identity или platform extension `reviewTask` точно равен `${runId}:${runAttempt}`, `evidence` — SHA-256 фактического reviewer content. Hosted verify/publish заново хешируют response bytes и передают `ReviewProofContext` отдельно от candidate rows. Неполный context, чужой run/attempt или изменённые bytes блокируют gate; исторические исключения не расширяются.
+Для новых вариантов строка ревью не создаётся: в режиме `disabled` `verifyVariantReviews` пропускает только `unreviewed-*` для новых вариантов, а остальные проверки сохраняются — строгая схема `variant-review.json`, `translationFieldsHash`, platform/`observedIn` provenance, исторические identity и точные hashes. Исторические строки `independently-confirmed` не переписываются: они сверяются с неизменяемой историей и сохраняют `comparison`, `reviewTask` и `evidence`. Смысловая ошибка нового перевода автоматическим gate не ловится — это принятое ограничение; технические литералы, strict JSON, hashes и native smoke остаются обязательными.
 
 ## выпуск
 
 1. Версия плагина увеличивается отдельно от версии хоста: hosted pipeline готовит следующий minor через проверенный PR; ручной выпуск остаётся maintainer-операцией.
 2. Перед фиксацией номера проверь, что версия `package.json`, соответствующий заголовок `CHANGELOG.md`, установочная команда и незанятый Git tag согласованы. release.yml берёт release notes из заголовка `## <version>` в `CHANGELOG.md`.
-3. Получи independent review; на финальном состоянии пройди `bun run check`, `npm pack --dry-run --json --ignore-scripts`, `bun run release:check` и полный exact-SHA GitHub CI.
+3. Получи независимое ревью выпуска человеком или отдельным агентом (semantic reviewer отключён); на финальном состоянии пройди `bun run check`, `npm pack --dry-run --json --ignore-scripts`, `bun run release:check` и полный exact-SHA GitHub CI.
 4. Проверь публичные тексты, release notes, reachable Git history, PNG и итоговый пакет pinned secret scanner-ом; ограниченный поиск паттернов не гарантирует обнаружение любого секрета.
 5. Убедись, что smoke проверил установку и удаление точного выпускаемого артефакта в одноразовом профиле; никогда не меняй произвольный личный профиль.
 6. Не переписывай существующие теги и не применяй force push. Тег `v<version>` на `main` создаёт draft release; канал продвигается только workflow-ом после успешного exact-commit `check`, и вручную ничего пушить не нужно. Повторный запуск release workflow догружает только отсутствующие ассеты того же draft; совпавшие не перезаписываются, а несовпавшие или уже опубликованные блокируют выпуск. Незавершённый marketplace-index повторяется через `gh run rerun <id> --failed`; если прогона нет, dispatch идёт на `main` с input `tag`, а release — только на tag ref (`gh workflow run release.yml --ref v<version>`), без input версии.

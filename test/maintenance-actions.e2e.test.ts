@@ -18,7 +18,7 @@ afterEach(async () => { await Promise.all(temporary.splice(0).map(path => rm(pat
 async function directory() { const root = await mkdtemp(join(tmpdir(), "hosted-actions-")); temporary.push(root); return root; }
 function git(cwd: string, ...args: string[]) { const p = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.test", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.test" } }); if (p.exitCode) throw new Error(p.stderr.toString()); return p.stdout.toString().trim(); }
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-function manifest(baseSha = "a".repeat(40), headSha?: string) { return { schemaVersion: 1 as const, repository: "narimanisakhanov-creator/omp-settings-ru", runId: "123", runAttempt: "2", baseSha, upstreamVersion: "18.9.0", releaseVersion: "0.6.0", ...(headSha ? { headSha } : {}), files: [], reviewResponses: [] }; }
+function manifest(baseSha = "a".repeat(40), headSha?: string) { return { schemaVersion: 1 as const, repository: "narimanisakhanov-creator/omp-settings-ru", runId: "123", runAttempt: "2", baseSha, upstreamVersion: "18.9.0", releaseVersion: "0.6.0", semanticReview: "disabled" as const, ...(headSha ? { headSha } : {}), files: [] }; }
 
 describe("hosted artifact boundary", () => {
   test("rejects duplicate keys, traversal, unexpected fields and prereleases", () => {
@@ -118,7 +118,7 @@ test("expired owned candidate is closed and exact bare remote branch retired wit
   } finally { mock.restore(); server.stop(true); }
 }, 30000);
 
-test("fresh translation CLI writes exact review proof from loopback API and rejection leaves catalog unchanged", async () => {
+test("fresh translation CLI writes strict catalog without invoking a semantic reviewer", async () => {
   const root = await directory(); const bundle = join(root, "artifact"); await mkdir(bundle); await mkdir(join(bundle, "data/src/translations"), { recursive: true });
   await writeFile(join(root, "maintenance.config.json"), JSON.stringify(rawPolicy));
   const base = "a".repeat(40); const source = { tab: "General", group: null, label: "Mode", description: "Select mode", warning: null, options: null };
@@ -129,14 +129,13 @@ test("fresh translation CLI writes exact review proof from loopback API and reje
   await writeFile(join(bundle, "data/src/translations/variant-review.json"), JSON.stringify({ schemaVersion: 1, variants: [] }));
   await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots }));
   await writeBundleManifest(bundle, manifest(base));
-  let rejected = false; let count = 0;
-  const reviewer = '{"verdict":"approved","comparison":"Meaning preserved"}';
+  let count = 0;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname !== "/v1/chat/completions" || request.headers.get("authorization") !== "Bearer model-fixture") return new Response("refused", { status: 403 });
     const body = await request.json() as { messages: { role: string; content: string }[] };
     if (body.messages.length !== 2) return new Response("history", { status: 400 });
-    const review = body.messages[0]!.content.toLowerCase().includes("review"); count++;
-    return Response.json({ choices: [{ message: { content: review ? (rejected ? '{"verdict":"rejected","comparison":"Meaning changed"}' : reviewer) : '{"label":"Режим","description":"Выберите режим"}' } }] });
+    count++;
+    return Response.json({ choices: [{ message: { content: '{"label":"Режим","description":"Выберите режим"}' } }] });
   } });
   const cli = join(import.meta.dir, "../scripts/maintenance-actions.ts");
   const environment = { ...process.env, GITHUB_ACTIONS: "false", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", MAINTENANCE_BASE_SHA: base, MAINTENANCE_API_KEY: "model-fixture", MAINTENANCE_BASE_URL: server.url.href + "v1", MAINTENANCE_MODEL: "fixture", GH_TOKEN: undefined, GITHUB_TOKEN: undefined, MAINTENANCE_GH_TOKEN: undefined };
@@ -146,14 +145,10 @@ test("fresh translation CLI writes exact review proof from loopback API and reje
     const catalog = await Bun.file(join(bundle, "data/src/translations/ru-catalog.json")).json();
     expect(catalog.settings.fixture.variants[0].label).toBe("Режим");
     expect(catalog.settings.fixture.variants[0].platforms).toEqual(["darwin", "linux", "win32"]);
-    const candidate = await validateBundle(bundle); expect(candidate.reviewResponses).toEqual([{ path: "fixture", sourceHash: hash, sha256: sha(reviewer) }]);
+    const candidate = await validateBundle(bundle); expect(candidate.semanticReview).toBe("disabled"); expect("reviewResponses" in candidate).toBe(false);
     const rows = await Bun.file(join(bundle, "data/src/translations/variant-review.json")).json();
-    expect(rows.variants[0]).toMatchObject({ evidence: sha(reviewer), reviewTask: "123:2", reviewedAtVersion: "18.9.0" });
-    expect(count).toBe(2);
-    await writeFile(join(bundle, "data/src/translations/ru-catalog.json"), original); await writeBundleManifest(bundle, manifest(base)); rejected = true;
-    const failed = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
-    expect(await new Response(failed.stderr).text()).toBe("translation-review-rejected:fixture\n"); expect(await failed.exited).not.toBe(0);
-    expect(await Bun.file(join(bundle, "data/src/translations/ru-catalog.json")).text()).toBe(original);
+    expect(rows).toEqual({ schemaVersion: 1, variants: [], semanticReview: "disabled" });
+    expect(count).toBe(1);
     expect(await Bun.file(join(root, ".git")).exists()).toBe(false);
     await writeFile(join(bundle, "input.json"), "{model-fixture"); await writeBundleManifest(bundle, manifest(base));
     const broken = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
@@ -161,12 +156,13 @@ test("fresh translation CLI writes exact review proof from loopback API and reje
     expect(brokenStderr).toBe("translate-failed:input:SyntaxError\n");
     expect(brokenStderr.length).toBeLessThanOrEqual(120);
     expect(brokenStderr).not.toContain("maintenance-action-blocked"); expect(brokenStderr).not.toContain("model-fixture");
-    expect(count).toBe(4);
+    expect(count).toBe(1);
     await rm(join(bundle, "input.json")); await writeBundleManifest(bundle, manifest(base));
     const missing = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
     expect(await new Response(missing.stderr).text()).toBe("translate-failed:input:ENOENT\n"); expect(await missing.exited).not.toBe(0);
-    expect(count).toBe(4);
-    rejected = false; let httpFailure = false;
+    expect(count).toBe(1);
+    let httpFailure = false;
+    await writeFile(join(bundle, "data/src/translations/ru-catalog.json"), original);
     await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots })); await writeBundleManifest(bundle, manifest(base));
     server.stop(true);
     const failingServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() { httpFailure = true; return new Response("refused", { status: 503 }); } });

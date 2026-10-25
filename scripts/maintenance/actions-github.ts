@@ -23,7 +23,7 @@ export function parseMaintenanceBlock(body: string): MaintenanceIdentity {
   const raw = asRecord(parseStrictJSON(body.split(begin)[1]!.split(end)[0]!.trim()));
   if (!raw || Object.keys(raw).sort().join(",") !== "artifactId,baseSha,headSha,manifestSha256,releaseVersion,repository,runAttempt,runId,schemaVersion,upstreamVersion") throw new Error("maintenance-block-invalid");
   const { artifactId, manifestSha256, ...candidate } = raw;
-  parseCandidate({ ...candidate, files: [], reviewResponses: [] });
+  parseCandidate({ ...candidate, semanticReview: "disabled", files: [] });
   if (typeof raw.headSha !== "string" || typeof artifactId !== "string" || !/^[1-9]\d*$/.test(artifactId) || typeof manifestSha256 !== "string" || !/^[a-f0-9]{64}$/.test(manifestSha256)) throw new Error("maintenance-block-invalid");
   return raw as unknown as MaintenanceIdentity;
 }

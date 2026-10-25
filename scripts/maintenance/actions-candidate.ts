@@ -10,7 +10,7 @@ import { SNAPSHOT_PLATFORMS, SUPPORTED_HOSTS, snapshotPath } from "./paths";
 import { candidatePaths, git, stableVersion, validateBundle, validateCandidateTree, writeBundleManifest, type Candidate } from "./actions-bundle";
 import { secretFreeEnvironment } from "./actions-github";
 import { approvedDelta, hostAliasOf } from "./measurement-environment";
-import { catalogEntries, identitiesOf, translationIdentitiesOf, markerPairsOf, validateSemantic, type ReviewProofContext, type ReviewRow, type SemanticEvidence } from "./semantic";
+import { catalogEntries, identitiesOf, translationIdentitiesOf, markerPairsOf, validateSemantic, type SemanticEvidence } from "./semantic";
 import type { ControllerPolicy } from "./contracts";
 
 const platforms = SNAPSHOT_PLATFORMS;
@@ -98,22 +98,6 @@ export async function prepareCandidate(checkout: string, output: string, candida
     await saveCandidateData(worktree, output, candidate);
   } finally { await removeCandidateWorktree(checkout, worktree); }
 }
-export async function reviewProof(root: string, candidate: Candidate): Promise<{ rows: readonly ReviewRow[]; context: ReviewProofContext }> {
-  const proof = asRecord(parseStrictJSON(await Bun.file(join(root, "responses.json")).text()));
-  if (!proof || Object.keys(proof).sort().join(",") !== "responses,reviews" || !Array.isArray(proof.responses) || !Array.isArray(proof.reviews)) throw new Error("review-proof-invalid");
-  const artifacts = new Map<string, { bytes: string; sha256: string }>();
-  for (const expected of candidate.reviewResponses) {
-    const matches = proof.responses.map(asRecord).filter(row => row?.path === expected.path && row.sourceHash === expected.sourceHash && row.sha256 === expected.sha256);
-    if (matches.length !== 1 || typeof matches[0]?.bytes !== "string" || createHash("sha256").update(matches[0].bytes).digest("hex") !== expected.sha256) throw new Error("review-response-hash-mismatch");
-    const content = asRecord(parseStrictJSON(matches[0].bytes));
-    if (!content || Object.keys(content).sort().join(",") !== "comparison,verdict" || content.verdict !== "approved" || typeof content.comparison !== "string" || !content.comparison.trim()) throw new Error("review-response-not-approved");
-    const review = proof.reviews.map(asRecord).filter(row => row?.path === expected.path && row.sourceHash === expected.sourceHash);
-    if (review.length !== 1 || review[0]?.comparison !== content.comparison || review[0]?.evidence !== expected.sha256) throw new Error("review-response-row-mismatch");
-    artifacts.set(`${expected.path}:${expected.sourceHash}`, { bytes: matches[0].bytes, sha256: expected.sha256 });
-  }
-  if (proof.reviews.length !== candidate.reviewResponses.length || proof.responses.length !== candidate.reviewResponses.length) throw new Error("review-proof-row-count");
-  return { rows: proof.reviews as unknown as ReviewRow[], context: { runId: candidate.runId, runAttempt: candidate.runAttempt, artifacts } };
-}
 export async function completeSupport(worktree: string, candidate: Candidate): Promise<readonly string[]> {
   const supported = parseStrictJSON(await Bun.file(join(worktree, SUPPORTED_HOSTS)).text()) as SupportedHosts;
   const baselines: Record<string, string> = {};
@@ -164,8 +148,9 @@ export async function validatePublishedCandidate(checkout: string, root: string,
   const currentEntries = catalogEntries(parseCatalogJSON(git(checkout, ["show", `${candidate.headSha}:${CATALOG_PATH}`])));
   const baseEntries = catalogEntries(parseCatalogJSON(git(checkout, ["show", `${candidate.baseSha}:${CATALOG_PATH}`])));
   const proof = asRecord(parseStrictJSON(await Bun.file(join(root, "proof.json")).text()));
-  if (!proof || proof.baseSha !== candidate.baseSha || proof.upstreamVersion !== candidate.upstreamVersion || proof.releaseVersion !== candidate.releaseVersion || proof.nativeSmoke !== "passed" || !asRecord(proof.semantic)) throw new Error("candidate-verification-proof-invalid");
+  if (!proof || proof.baseSha !== candidate.baseSha || proof.upstreamVersion !== candidate.upstreamVersion || proof.releaseVersion !== candidate.releaseVersion || proof.semanticReview !== "disabled" || proof.nativeSmoke !== "passed" || !asRecord(proof.semantic)) throw new Error("candidate-verification-proof-invalid");
   const evidence = proof.semantic as unknown as SemanticEvidence;
+  if (evidence.reviewRows.length !== 0) throw new Error("candidate-verification-reviews-unexpected");
   if ([...evidence.changedPaths].sort().join("\0") !== [...paths].sort().join("\0") || evidence.candidateVersion !== candidate.upstreamVersion) throw new Error("candidate-verification-paths-mismatch");
   const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
   if (!same(evidence.identities, identitiesOf(currentEntries)) || !same(evidence.identitiesBefore, identitiesOf(baseEntries)) || !same(evidence.translationIdentities, translationIdentitiesOf(currentEntries)) || !same(evidence.translationIdentitiesBefore, translationIdentitiesOf(baseEntries))) throw new Error("candidate-semantic-identities-mismatch");
@@ -174,19 +159,11 @@ export async function validatePublishedCandidate(checkout: string, root: string,
   if (!same(evidence.markerPairs, markerPairsOf(currentEntries, snapshots)) || !same(evidence.supportedVersions, versions)) throw new Error("candidate-semantic-source-mismatch");
   const requirements = currentEntries.filter(entry => !baseEntries.some(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash && entry.platforms.every(platform => old.platforms.includes(platform)))).map(entry => ({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms: [...entry.platforms].sort() }));
   if (!same(evidence.changedCatalogVariants, requirements)) throw new Error("candidate-semantic-delta-mismatch");
-  const reviews = await reviewProof(root, candidate);
-  if (JSON.stringify(evidence.reviewRows) !== JSON.stringify(reviews.rows)) throw new Error("candidate-verification-reviews-mismatch");
   const manifest = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:src/translations/variant-review.json`])));
   const oldManifest = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:src/translations/variant-review.json`])));
-  if (!manifest || !oldManifest || !Array.isArray(manifest.variants) || !Array.isArray(oldManifest.variants)) throw new Error("candidate-review-manifest-invalid");
-  const keys = new Set(reviews.rows.map(row => `${row.path}:${row.sourceHash}`));
-  const retained = (rows: unknown[]) => rows.filter(row => { const entry = asRecord(row); return !keys.has(`${entry?.path}:${entry?.sourceHash}`); });
-  if (JSON.stringify(retained(manifest.variants)) !== JSON.stringify(retained(oldManifest.variants))) throw new Error("candidate-review-history-changed");
-  for (const row of reviews.rows) {
-    const matches = manifest.variants.filter(value => { const entry = asRecord(value); return entry?.path === row.path && entry.sourceHash === row.sourceHash; });
-    if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(row)) throw new Error("candidate-review-commit-mismatch");
-  }
-  const verdict = validateSemantic(evidence, policy, reviews.context);
+  if (!manifest || !oldManifest || manifest.semanticReview !== "disabled" || !Array.isArray(manifest.variants) || !Array.isArray(oldManifest.variants)) throw new Error("candidate-review-manifest-invalid");
+  if (JSON.stringify(manifest.variants) !== JSON.stringify(oldManifest.variants)) throw new Error("candidate-review-history-changed");
+  const verdict = validateSemantic(evidence, policy, undefined, true);
   if (!verdict.ok) throw new Error(verdict.reason);
   const digest = (path: string) => createHash("sha256").update(git(checkout, ["show", `${candidate.headSha}:${path}`]) + "\n").digest("hex");
   if (proof.catalogSha256 !== digest(CATALOG_PATH) || proof.manifestSha256 !== digest("src/translations/variant-review.json")) throw new Error("candidate-verification-data-mismatch");

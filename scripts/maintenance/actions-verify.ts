@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ControllerPolicy } from "./contracts";
 import { candidatePaths, git, validateBundle, type Candidate } from "./actions-bundle";
-import { applyCandidateData, completeSupport, createCandidateWorktree, removeCandidateWorktree, reviewProof, runTrusted, saveCandidateData } from "./actions-candidate";
+import { applyCandidateData, completeSupport, createCandidateWorktree, removeCandidateWorktree, runTrusted, saveCandidateData } from "./actions-candidate";
 import { collectSemanticEvidence, validateSemantic } from "./semantic";
 import { changedEntries, planPaths, intendedTree, commitApproved } from "./tree";
 import { CATALOG_PATH } from "./catalog";
@@ -19,16 +19,15 @@ export async function verifyCandidate(checkout: string, root: string, policy: Co
     await applyCandidateData(root, worktree, candidate);
     const versions = await completeSupport(worktree, candidate);
     await runTrusted(worktree, ["bun", "install", "--ignore-scripts"], policy.deadlinesMs.verification);
-    const review = await reviewProof(root, candidate);
-    const coverageReport = `# OMP ${candidate.upstreamVersion}\n\nRelease: ${candidate.releaseVersion}. Exact host/platform matrix: ${versions.join(", ")} × win32/darwin/linux.\n\nAll source identities and historical translations are retained; semantic and native gates must pass before publication.\n`;
+    const coverageReport = `# OMP ${candidate.upstreamVersion}\n\nRelease: ${candidate.releaseVersion}. Exact host/platform matrix: ${versions.join(", ")} × win32/darwin/linux.\n\nAll source identities and historical translations are retained; schema, technical, hash and native gates must pass before publication. Semantic reviewer is disabled.\n`;
     await Bun.write(join(worktree, "upgrade-report.md"), coverageReport);
     const changelog = await Bun.file(join(worktree, "CHANGELOG.md")).text();
     await Bun.write(join(worktree, "CHANGELOG.md"), `## ${candidate.releaseVersion}\n\n- Добавлена проверенная поддержка OMP ${candidate.upstreamVersion}; исторические переводы сохранены.\n\n${changelog}`);
     const paths = planPaths(changedEntries(worktree), policy, candidate.upstreamVersion);
     if (paths.rejected.length || paths.approved.some(path => !candidatePaths(candidate.upstreamVersion).includes(path))) throw new Error("candidate-path-outside-policy");
-    const semantic = await collectSemanticEvidence(worktree, candidate.baseSha, candidate.upstreamVersion, versions, paths.approved, review.rows, { deadlineMs: policy.deadlinesMs.verification });
+    const semantic = await collectSemanticEvidence(worktree, candidate.baseSha, candidate.upstreamVersion, versions, paths.approved, undefined, { deadlineMs: policy.deadlinesMs.verification });
     if ("failure" in semantic) throw new Error(semantic.failure);
-    const verdict = validateSemantic(semantic, policy, review.context);
+    const verdict = validateSemantic(semantic, policy, undefined, true);
     if (!verdict.ok) throw new Error(verdict.reason);
     const releaseResponse = await fetch(`https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v${candidate.upstreamVersion}`, { headers: { Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(policy.deadlinesMs.command), redirect: "error" });
     if (!releaseResponse.ok) throw new Error("native-release-unavailable");
@@ -47,7 +46,7 @@ export async function verifyCandidate(checkout: string, root: string, policy: Co
     const patch = Bun.spawnSync(["git", "diff", "--binary", "--full-index", "--no-renames", candidate.baseSha, headSha], { cwd: worktree, stdout: "pipe", stderr: "pipe" });
     if (patch.exitCode) throw new Error("candidate-patch-failed");
     await Bun.write(join(root, "candidate.patch"), patch.stdout);
-    await Bun.write(join(root, "proof.json"), JSON.stringify({ baseSha: candidate.baseSha, upstreamVersion: candidate.upstreamVersion, releaseVersion: candidate.releaseVersion, nativeSmoke: "passed", catalogSha256: createHash("sha256").update(await Bun.file(join(worktree, CATALOG_PATH)).bytes()).digest("hex"), manifestSha256: createHash("sha256").update(await Bun.file(join(worktree, "src/translations/variant-review.json")).bytes()).digest("hex"), semantic }, null, 2) + "\n");
+    await Bun.write(join(root, "proof.json"), JSON.stringify({ baseSha: candidate.baseSha, upstreamVersion: candidate.upstreamVersion, releaseVersion: candidate.releaseVersion, semanticReview: "disabled", nativeSmoke: "passed", catalogSha256: createHash("sha256").update(await Bun.file(join(worktree, CATALOG_PATH)).bytes()).digest("hex"), manifestSha256: createHash("sha256").update(await Bun.file(join(worktree, "src/translations/variant-review.json")).bytes()).digest("hex"), semantic }, null, 2) + "\n");
     const result = { ...candidate, headSha }; await saveCandidateData(worktree, root, result);
     return result;
   } finally {

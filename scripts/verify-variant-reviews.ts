@@ -68,6 +68,7 @@ export function verifyVariantReviews(
   const prior = Bun.spawnSync(["git","show",`${historicalReviewCommit}:src/translations/variant-review.json`],{stdout:"pipe",stderr:"pipe"});
   if (prior.exitCode !== 0) return ["historical-reviews-unavailable"];
   const oldRows = (parseStrictJSON(prior.stdout.toString()) as typeof manifest).variants;
+  const semanticReviewDisabled = "semanticReview" in review && review.semanticReview === "disabled";
   let history: HistoricalCatalogIdentity;
   try { history = historicalIdentity(); } catch { return ["historical-catalog-unavailable"]; }
   if (history.hash !== review.historicalCatalogHash) failures.push("historical-catalog-hash-mismatch");
@@ -79,6 +80,7 @@ export function verifyVariantReviews(
     if (hash !== row.translationHash) { failures.push("translation-review-mismatch:" + row.path); continue; }
     if (!row.comparison.trim() || !row.review.trim()) { failures.push("semantic-review-missing:" + row.path); continue; }
     if (!oldRows.some(old => JSON.stringify(old) === JSON.stringify(row))) {
+      if (semanticReviewDisabled) { failures.push("unexpected-review-row:" + row.path); continue; }
       const reviewedAtVersion = (row as unknown as Record<string,unknown>).reviewedAtVersion;
       if (row.review !== "independently-confirmed" || !/^\d+:\d+$/.test(row.reviewTask ?? "") || !/^[a-f0-9]{64}$/.test(row.evidence ?? "") || typeof reviewedAtVersion !== "string" || !variant.observedIn.includes(reviewedAtVersion)) {
         failures.push("independent-review-missing:" + row.path); continue;
@@ -98,7 +100,7 @@ export function verifyVariantReviews(
     if (approvals.get(key) === hash) continue;
     if (history.hash === review.historicalCatalogHash && history.identities.get(key) === hash && !(path === "title.icons" && !history.identities.has(key))) continue;
     const classification = history.identities.has(key) ? "translation-edit" : history.firstPaths.has(path) ? "source-variant" : "addition";
-    failures.push(`unreviewed-${classification}:${path}:${platform}`);
+    if (!semanticReviewDisabled || classification === "translation-edit") failures.push(`unreviewed-${classification}:${path}:${platform}`);
   }
   return failures;
 }

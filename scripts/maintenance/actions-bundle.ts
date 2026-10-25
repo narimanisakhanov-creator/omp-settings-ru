@@ -12,31 +12,25 @@ export interface Candidate {
   readonly baseSha: string;
   readonly upstreamVersion: string;
   readonly releaseVersion: string;
+  readonly semanticReview: "disabled";
   readonly headSha?: string;
   readonly files: readonly { path: string; sha256: string }[];
-  readonly reviewResponses: readonly { path: string; sourceHash: string; sha256: string }[];
 }
 export const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export const candidatePaths = (version: string): readonly string[] => ["src/translations/ru-catalog.json", "src/translations/variant-review.json", ...SNAPSHOT_PLATFORMS.map(platform => snapshotPath(version, platform)), SUPPORTED_HOSTS, "package.json", "bun.lock", "upgrade-report.md", "CHANGELOG.md"];
 export function parseCandidate(raw: unknown): Candidate {
   const row = asRecord(raw);
-  const keys = ["schemaVersion", "repository", "runId", "runAttempt", "baseSha", "upstreamVersion", "releaseVersion", "headSha", "files", "reviewResponses"];
-  if (!row || Object.keys(row).some(key => !keys.includes(key)) || row.schemaVersion !== 1 || typeof row.repository !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(row.repository)) throw new Error("candidate-schema-invalid");
+  const keys = ["schemaVersion", "repository", "runId", "runAttempt", "baseSha", "upstreamVersion", "releaseVersion", "semanticReview", "headSha", "files"];
+  if (!row || Object.keys(row).some(key => !keys.includes(key)) || row.schemaVersion !== 1 || row.semanticReview !== "disabled" || typeof row.repository !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(row.repository)) throw new Error("candidate-schema-invalid");
   for (const key of ["runId", "runAttempt"]) if (typeof row[key] !== "string" || !/^[1-9]\d*$/.test(row[key] as string)) throw new Error("candidate-run-invalid");
   for (const key of ["baseSha", ...(row.headSha === undefined ? [] : ["headSha"])]) if (typeof row[key] !== "string" || !/^[a-f0-9]{40}$/.test(row[key] as string)) throw new Error("candidate-sha-invalid");
   for (const key of ["upstreamVersion", "releaseVersion"]) if (typeof row[key] !== "string" || !stableVersion.test(row[key] as string)) throw new Error("candidate-version-invalid");
-  if (!Array.isArray(row.files) || row.files.length > 2000 || !Array.isArray(row.reviewResponses) || row.reviewResponses.length > 1000) throw new Error("candidate-files-invalid");
+  if (!Array.isArray(row.files) || row.files.length > 2000) throw new Error("candidate-files-invalid");
   const paths = new Set<string>();
   for (const file of row.files) {
     const item = asRecord(file);
     if (!item || Object.keys(item).sort().join(",") !== "path,sha256" || typeof item.path !== "string" || !/^(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+$/.test(item.path) || item.path.split("/").some(part => part === "." || part === "..") || item.path === "candidate.json" || paths.has(item.path) || typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256)) throw new Error("candidate-file-invalid");
     paths.add(item.path);
-  }
-  const reviews = new Set<string>();
-  for (const review of row.reviewResponses) {
-    const item = asRecord(review);
-    if (!item || Object.keys(item).sort().join(",") !== "path,sha256,sourceHash" || typeof item.path !== "string" || !item.path || typeof item.sourceHash !== "string" || !/^[a-f0-9]{64}$/.test(item.sourceHash) || typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256) || reviews.has(`${item.path}:${item.sourceHash}`)) throw new Error("candidate-review-invalid");
-    reviews.add(`${item.path}:${item.sourceHash}`);
   }
   return row as unknown as Candidate;
 }
