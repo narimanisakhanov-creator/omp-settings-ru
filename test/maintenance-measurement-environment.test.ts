@@ -69,7 +69,7 @@ async function tarball(root: string, name: string, version: string, files: Recor
   }
   const out = join(stage, `${name.replaceAll(/[^\w.-]/g, "_")}-${version}.tgz`);
   const archive = join(stage, "package.tar");
-  const tar = Bun.spawnSync(["tar", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-cf", archive, "-C", stage, "package"], { stdout: "pipe", stderr: "pipe" });
+  const tar = Bun.spawnSync(["tar", "-cf", archive, "-C", stage, "package"], { stdout: "pipe", stderr: "pipe" });
   if (tar.exitCode !== 0) throw new Error(`tar: ${tar.stderr.toString()}`);
   const bytes = Bun.gzipSync(await readFile(archive), { level: 9 });
   await writeFile(out, bytes);

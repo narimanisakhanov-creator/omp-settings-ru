@@ -64,7 +64,7 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     for (const [path, text] of Object.entries(files)) { await mkdir(join(pkg,path,".."),{recursive:true}); await writeFile(join(pkg,path),text); }
     const file = `${name.split("/").pop()}-${version}.tgz`;
     const archive = join(registryDir, "package.tar");
-    const tar = Bun.spawnSync(["tar","--mtime=@0","--owner=0","--group=0","--numeric-owner","-cf",archive,"-C",stage,"package"],{stdout:"pipe",stderr:"pipe"});
+    const tar = Bun.spawnSync(["tar","-cf",archive,"-C",stage,"package"],{stdout:"pipe",stderr:"pipe"});
     if (tar.exitCode !== 0) throw new Error(tar.stderr.toString());
     await rm(pkg,{recursive:true,force:true});
     const bytes = Bun.gzipSync(await readFile(archive), { level: 9 });
