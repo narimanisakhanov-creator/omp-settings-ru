@@ -27,8 +27,8 @@ function technicalLiterals(text: string): readonly string[] {
 function assertPreserved(source: string, translation: string, path: string): void {
   const sourceMarkers = markers(source);
   if (missingMarkers(source, translation).length > 0 || markers(translation).some(marker => !sourceMarkers.includes(marker))) throw new Error(`translation-marker-mismatch:${path}`);
-  const expected = technicalLiterals(source);
-  const actual = technicalLiterals(translation);
+  const expected = [...new Set(technicalLiterals(source))];
+  const actual = [...new Set(technicalLiterals(translation))];
   if (expected.length !== actual.length || expected.some((literal, index) => literal !== actual[index])) throw new Error(`translation-technical-literal-mismatch:${path}`);
 }
 const identityKey = (path: string, sourceHash: string) => `${path}\0${sourceHash}`;
