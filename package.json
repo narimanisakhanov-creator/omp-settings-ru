@@ -1,6 +1,6 @@
 {
   "name": "omp-settings-ru",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Русский перевод панели /settings в Oh My Pi — расширение OMP для marketplace-установки",
   "type": "module",
   "license": "MIT",
