@@ -56,6 +56,11 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
+      # distribution-session imports the native PTY module; without the locked graph Bun
+      # auto-installs pi-natives into the smoke home and falls back to a source build.
+      - name: Install the locked dependency graph
+        shell: bash
+        run: bun install --frozen-lockfile --ignore-scripts
       # Proves the successful release run at the dereferenced tag commit, the draft job of the
       # run's current attempt, and the one artifact that run uploaded (selected by the build
       # attempt embedded in its name, whose verify job is proven too). Read-only token only:
