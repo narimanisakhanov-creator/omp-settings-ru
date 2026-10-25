@@ -72,7 +72,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OMP_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          OMP_WORKFLOW_HEAD: ${{ github.sha }}
           OMP_CHECK_NAME: check (${{ matrix.os }}, ${{ matrix.version }})
         run: bun scripts/smoke-ci-host.ts ${{ matrix.version }}
       # The reviewed source itself, not an already published release: a real native

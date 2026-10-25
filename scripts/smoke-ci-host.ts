@@ -15,8 +15,7 @@ export function parsePackFilename(payload: unknown): string {
 }
 
 /** Select this job's own in-progress check run; never guess, and refuse ambiguous, truncated or foreign listings.
- *  `commitSha` is the commit the workflow actually runs against (GITHUB_SHA), which on pull_request is the
- *  synthetic merge commit - not the reviewed PR head the receipt binds as its source identity. */
+ *  GitHub attaches pull-request check runs to the reviewed head SHA, which is also the artifact source identity. */
 export function selectCheckRun(payload: unknown, expected: {repository: string; commitSha: string; runId: string; jobName: string}): number {
   const rows = (payload as {check_runs?: unknown} | null)?.check_runs;
   const total = (payload as {total_count?: unknown} | null)?.total_count;
@@ -38,16 +37,13 @@ export function selectCheckRun(payload: unknown, expected: {repository: string; 
 async function main(): Promise<void> {
   const version = process.argv[2];
   if (!version || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error("exact-host-version-required");
-  // The reviewed source head is the artifact identity; never the synthetic pull-request merge commit.
+  // The reviewed source head is both the artifact identity and the pull-request check-suite head.
   const sourceHead = process.env.OMP_SOURCE_HEAD ?? "";
-  // The workflow commit is what this job's own check run is attached to (on pull_request, the merge commit).
-  const workflowHead = process.env.OMP_WORKFLOW_HEAD ?? process.env.GITHUB_SHA ?? "";
   const workflowRunId = process.env.GITHUB_RUN_ID ?? "";
   const runAttempt = process.env.GITHUB_RUN_ATTEMPT ?? "";
   const checkName = process.env.OMP_CHECK_NAME ?? "";
   const repository = process.env.GITHUB_REPOSITORY ?? "";
   if (!/^[a-f0-9]{40}$/.test(sourceHead)) throw new Error("source-head-unavailable");
-  if (!/^[a-f0-9]{40}$/.test(workflowHead)) throw new Error("workflow-head-unavailable");
   if (!workflowRunId || !runAttempt) throw new Error("github-run-unavailable");
   if (!checkName || !repository) throw new Error("github-check-context-unavailable");
   const sourceDirectory = process.cwd();
@@ -81,10 +77,10 @@ async function main(): Promise<void> {
   const executable = join(executableDirectory, name);
   await writeFile(executable, bytes);
   if (process.platform !== "win32") await chmod(executable, 0o700);
-  // Check runs bind to the commit the workflow ran against; the workflow run must be this run.
-  const checks = Bun.spawnSync(["gh", "api", `repos/${repository}/commits/${workflowHead}/check-runs?per_page=100`], {stdout: "pipe", stderr: "pipe", timeout: 30000});
+  // Check runs bind to the reviewed source head; the workflow run must be this run.
+  const checks = Bun.spawnSync(["gh", "api", `repos/${repository}/commits/${sourceHead}/check-runs?per_page=100`], {stdout: "pipe", stderr: "pipe", timeout: 30000});
   if (checks.exitCode !== 0) throw new Error("check-run-lookup-failed");
-  const checkRunId = selectCheckRun(JSON.parse(checks.stdout.toString()), {repository, commitSha: workflowHead, runId: workflowRunId, jobName: checkName});
+  const checkRunId = selectCheckRun(JSON.parse(checks.stdout.toString()), {repository, commitSha: sourceHead, runId: workflowRunId, jobName: checkName});
   const smoke = await runInstalledSmoke({executable, pluginPath: extracted.directory, ownedProfile: `omp-settings-ru-proof-ci-${version.replaceAll(".", "-")}`, mode: "pre-activation"});
   const receipt = {
     schemaVersion: 1,
@@ -93,7 +89,7 @@ async function main(): Promise<void> {
     native: true,
     passed: smoke.passed,
     checkRunId,
-    checkRunHeadSha: workflowHead,
+    checkRunHeadSha: sourceHead,
     workflowRunId,
     runAttempt,
     checkName,

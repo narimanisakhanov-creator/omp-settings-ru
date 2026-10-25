@@ -30,13 +30,12 @@ test("selects the running check run that matches this workflow run, head and job
   expect(selectCheckRun(payload, expected)).toBe(41);
 });
 
-test("selects by the workflow commit, not the reviewed source head, when they differ", () => {
+test("selects by the reviewed source head, not the synthetic pull-request merge commit", () => {
   const reviewedSourceHead = "b".repeat(40);
-  const workflowCommit = "a".repeat(40);
-  const payload = {total_count: 1, check_runs: [row(7, {head_sha: workflowCommit})]};
-  // On pull_request the job's check run is attached to the synthetic merge commit (workflow commit).
-  expect(selectCheckRun(payload, {...expected, commitSha: workflowCommit})).toBe(7);
-  expect(() => selectCheckRun(payload, {...expected, commitSha: reviewedSourceHead})).toThrow("check-run-unavailable");
+  const mergeCommit = "a".repeat(40);
+  const payload = {total_count: 1, check_runs: [row(7, {head_sha: reviewedSourceHead})]};
+  expect(selectCheckRun(payload, {...expected, commitSha: reviewedSourceHead})).toBe(7);
+  expect(() => selectCheckRun(payload, {...expected, commitSha: mergeCommit})).toThrow("check-run-unavailable");
 });
 
 test("refuses to guess a check id from unrelated, ambiguous, truncated or foreign listings", () => {

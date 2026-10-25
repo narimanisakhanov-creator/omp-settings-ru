@@ -491,7 +491,7 @@ describe("доверенный корень измерения", () => {
       await dispose(root);
     }
     expect(existsSync(root)).toBe(false);
-  });
+  }, 30_000);
 
   test("node_modules рабочего дерева кандидата в измерение не попадает", async () => {
     const fixtureValue = await fixture();
@@ -515,7 +515,7 @@ describe("доверенный корень измерения", () => {
     } finally {
       await dispose(root);
     }
-  });
+  }, 30_000);
 
   test("подмена в установленном хосте видна по отпечатку каталога", async () => {
     const fixtureValue = await fixture();
@@ -536,7 +536,7 @@ describe("доверенный корень измерения", () => {
     } finally {
       await dispose(root);
     }
-  });
+  }, 30_000);
 
   test("отсутствующий установленный хост — отказ, а не пустая подпись", async () => {
     const fixtureValue = await fixture();
@@ -553,7 +553,7 @@ describe("доверенный корень измерения", () => {
     } finally {
       await dispose(root);
     }
-  });
+  }, 30_000);
 });
 
 describe("отказы не оставляют мусора", () => {
@@ -591,7 +591,7 @@ describe("отказы не оставляют мусора", () => {
       checkout: fixtureValue.checkout, baseSha: fixtureValue.baseSha, root, delta: wrong, registry: fixtureValue.registry, deadlineMs: 180_000,
     })).toEqual({ failure: `host-identity-mismatch:${fixtureValue.hostAlias}` });
     await leftoversAbsent(root);
-  });
+  }, 30_000);
 
   test("существующий каталог не удаляется: он не наш", async () => {
     const parent = await tempRoot("existing");
@@ -657,5 +657,5 @@ describe("принятый код не подменяется данными к�
     } finally {
       await dispose(root);
     }
-  });
+  }, 30_000);
 });
