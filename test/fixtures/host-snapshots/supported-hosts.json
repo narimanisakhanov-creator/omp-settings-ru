@@ -85,6 +85,20 @@
         "darwin": "4a48fce3f9986939d8d53c5d18fcfb80c198b1a40a3a3fa011cd8c359954a068",
         "linux": "90572bc98146e060a1ca9e5757e75d1865722ba8e82fbe01e093448031c34006"
       }
+    },
+    {
+      "version": "18.13.2",
+      "package": "omp-host-18132",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "a52a8eeac63ac60cbf2991c2c7080942c8824aa3cf379aeb38f868ed77c9d5df",
+        "darwin": "6cffee059ad9517f3631499b6261d3a8b30c1c44dc09fb10ec3606d519e5ae90",
+        "linux": "f42d394887c0c594611b8a7ed932ea8c3318dac932e49d3bfa733c21f2159c73"
+      }
     }
   ],
   "installedEvidence": [
