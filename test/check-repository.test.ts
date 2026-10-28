@@ -85,7 +85,7 @@ test("the current tracked tree passes the guard", () => {
 }, 60_000);
 
 test("a tracked service artifact fails the guard without printing its content", async () => {
-  const secret = "ghp_thisValueMustNeverBePrinted0123456789";
+  const secret = "private-content-sentinel-must-not-appear";
   const root = await trackedRepository({
     "README.md": "project\n",
     ".tools/session.log": `${secret}\n`,
