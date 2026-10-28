@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "last-three-stable",
+      "packument": {
+        "dist-tags": { "latest": "18.13.3" },
+        "versions": { "18.13.1": {}, "18.13.2": {}, "18.13.3": {} }
+      },
+      "window": ["18.13.1", "18.13.2", "18.13.3"]
+    },
+    {
+      "name": "prerelease-excluded",
+      "packument": {
+        "dist-tags": { "latest": "18.13.3" },
+        "versions": { "18.13.1": {}, "18.13.2": {}, "18.13.3": {}, "18.13.4-rc.1": {} }
+      },
+      "window": ["18.13.1", "18.13.2", "18.13.3"]
+    },
+    {
+      "name": "numeric-not-lexical",
+      "packument": {
+        "dist-tags": { "latest": "18.10.1" },
+        "versions": { "18.9.0": {}, "18.10.0": {}, "18.10.1": {} }
+      },
+      "window": ["18.9.0", "18.10.0", "18.10.1"]
+    },
+    {
+      "name": "latest-behind-still-included",
+      "packument": {
+        "dist-tags": { "latest": "18.12.0" },
+        "versions": { "18.12.0": {}, "18.13.0": {}, "18.13.1": {} }
+      },
+      "window": ["18.12.0", "18.13.0", "18.13.1"]
+    },
+    {
+      "name": "invalid-versions-shape",
+      "packument": { "versions": [] },
+      "error": "registry-window-invalid"
+    }
+  ]
+}

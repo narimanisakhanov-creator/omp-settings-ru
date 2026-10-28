@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitHub } from "../scripts/maintenance/github";
 import type { ControllerPolicy } from "../scripts/maintenance/contracts";
+import { HostedGitHub } from "../scripts/maintenance/actions-github";
+import { ensureCheckRun } from "../scripts/maintenance/check-recovery";
+import { workflowRecovery } from "../scripts/maintenance/actions-publish";
 
 const repository = "narimanisakhanov-creator/omp-settings-ru";
 const sha = "a".repeat(40);
@@ -46,27 +49,38 @@ const serverSource = `
 import {appendFileSync, readFileSync} from "node:fs";
 import {join} from "node:path";
 const [root] = process.argv.slice(2);
+const counts = new Map();
 const server = Bun.serve({hostname:"127.0.0.1",port:0,fetch(request) {
  const url = new URL(request.url); const key = url.pathname + url.search;
- appendFileSync(join(root,"requests.log"), JSON.stringify({key,accept:request.headers.get("accept")})+"\\n");
+ appendFileSync(join(root,"requests.log"), JSON.stringify({key,method:request.method,accept:request.headers.get("accept")})+"\\n");
  const routes = JSON.parse(readFileSync(join(root,"routes.json"),"utf8"));
- const row = routes[key];
+ const entry = routes[key];
+ const signature = JSON.stringify(entry); const previous = counts.get(key);
+ const count = previous?.signature === signature ? previous.count : 0; counts.set(key, {signature,count:count+1});
+ const row = Array.isArray(entry) ? entry[Math.min(count,entry.length-1)] : entry;
  return row ? new Response(Buffer.from(row.body,"base64"),{status:row.status??200,headers:{"content-type":row.type??"application/json"}}) : new Response("unregistered route",{status:404});
 }}); console.log(server.port);
 `;
 const ghSource = `
+import {mkdirSync,writeFileSync} from "node:fs";
+import {join} from "node:path";
 const args = process.argv.slice(2);
-if(args[0]!=="api") throw new Error("fixture refuses mutations");
+let path = args[1], method = "GET", directory;
+if(args[0]==="run" && args[1]==="rerun" && args.includes("--failed")) {path="fixture/rerun/"+args[2];method="POST";}
+else if(args[0]==="run" && args[1]==="download") {path="fixture/receipt/"+args[2];directory=args[args.indexOf("--dir")+1];}
+else if(args[0]!=="api") throw new Error("fixture refuses unknown command");
 const headers = {};
 for(let i=2;i<args.length;i++) if(args[i]==="-H") { const [name,...value]=args[++i].split(":");headers[name]=value.join(":").trim(); }
-const response = await fetch(process.env.FIXTURE_GITHUB + "/" + args[1],{headers});
-if(!response.ok) { console.error("HTTP "+response.status); process.exit(1); }
-process.stdout.write(Buffer.from(await response.arrayBuffer()));
+const response = await fetch(process.env.FIXTURE_GITHUB + "/" + path,{headers,method});
+if(!response.ok) { console.error("(HTTP "+response.status+")"); process.exit(1); }
+const bytes = Buffer.from(await response.arrayBuffer());
+if(directory) {mkdirSync(directory,{recursive:true});writeFileSync(join(directory,"receipt.json"),bytes);} else process.stdout.write(bytes);
 `;
 let root: string;
 let origin: string;
 let server: Bun.Subprocess;
-let routes: Record<string, {body: string; status?: number; type?: string}>;
+type HttpReply = {body: string; status?: number; type?: string};
+let routes: Record<string, HttpReply | HttpReply[]>;
 const spawn = Bun.spawn;
 const spawnSync = Bun.spawnSync;
 const actualFetch = globalThis.fetch;
@@ -94,10 +108,16 @@ afterAll(async () => { server?.kill(); if (server) await server.exited; if (root
 function route(path: string, body: unknown, raw = false) {
   routes[path] = {body: Buffer.from(raw ? body as string : JSON.stringify(body)).toString("base64")};
 }
+let sequenceId = 0;
+function sequence(path: string, values: readonly unknown[]) {
+  const id = ++sequenceId;
+  routes[path] = values.map(value => ({body: Buffer.from(JSON.stringify({...value as object, fixtureSequence: id})).toString("base64")}));
+}
 async function fixture() {
   routes = {};
   route(`/repos/${repository}/commits/${sha}/check-runs?filter=latest&per_page=100&page=1`, {total_count: 2, check_runs: checkRuns()});
   route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {total_count: 1, workflow_runs: [workflow()]});
+  route("/user", {login: "controller", type: "User"});
   route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100`, {total_count: 1, workflow_runs: [workflow()]});
   route(`/repos/${repository}/actions/runs/501/jobs?filter=latest&per_page=100&page=1`, {total_count: 2, jobs: jobs()});
   route(`/repos/${repository}/actions/runs/501`, workflow());
@@ -155,6 +175,24 @@ test("production adapter follows check and workflow collection pages", async () 
   expect(github.requiredChecksPassed(await github.checksFor(sha), sha, ["18.8.7"])).toEqual({ok: true});
 }, 30000);
 
+test("latest jobs preserve reused successes and paginate beyond one hundred jobs", async () => {
+  const github = await fixture();
+  route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {total_count: 1, workflow_runs: [workflow({run_attempt: 2})]});
+  const unrelated = Array.from({length: 100}, (_, id) => ({...jobs()[0], id: 2000 + id, name: "unrelated"}));
+  route(`/repos/${repository}/actions/runs/501/jobs?filter=latest&per_page=100&page=1`, {total_count: 102, jobs: unrelated});
+  route(`/repos/${repository}/actions/runs/501/jobs?filter=latest&per_page=100&page=2`, {total_count: 102, jobs: [jobs()[0], {...jobs()[1], run_attempt: 2}]});
+  await saveRoutes();
+  const checks = await github.checksFor(sha);
+  expect(checks.map(row => [row.jobAttempt, row.workflowAttempt])).toEqual([[1, 2], [2, 2]]);
+  expect(github.requiredChecksPassed(checks, sha, ["18.8.7"], {id: 501, attempt: 2, headBranch: "maintenance/18.8.7", status: "completed", conclusion: "success"})).toEqual({ok: true});
+}, 30000);
+
+test("selected run cannot borrow missing jobs from another run on the same SHA", async () => {
+  const github = await fixture();
+  const checks = await github.checksFor(sha);
+  expect(github.requiredChecksPassed(checks, sha, ["18.8.7"], {id: 502, attempt: 1, headBranch: "maintenance/18.8.7", status: "completed", conclusion: "success"})).toEqual({ok: false, reason: "check-missing:check (ubuntu-latest, 18.8.7)"});
+}, 30000);
+
 test("unreadable workflow collection is unknown rather than an authoritative absence", async () => {
   const github = await fixture();
   route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {workflow_runs: "not an array"});
@@ -168,6 +206,17 @@ test("failed Actions jobs cannot borrow successful embedded check conclusions", 
   await saveRoutes();
   expect(github.requiredChecksPassed(await github.checksFor(sha), sha, ["18.8.7"]).ok).toBe(false);
 }, 30000);
+
+test("required checks reject an older successful attempt when the latest attempt failed", async () => {
+  const github = await fixture();
+  const stale = checkRuns().map(row => ({ ...row, status: "completed", conclusion: "success" }));
+  const latestFailure = checkRuns().map(row => ({ ...row, status: "completed", conclusion: "failure" }));
+  const checks = [
+    ...stale.map(row => ({ id: row.id, name: row.name, headSha: sha, status: row.status, conclusion: row.conclusion, workflowPath: checkPath, event: "push" as const, workflowRunId: 501, workflowAttempt: 1 })),
+    ...latestFailure.map(row => ({ id: row.id + 100, name: row.name, headSha: sha, status: row.status, conclusion: row.conclusion, workflowPath: checkPath, event: "push" as const, workflowRunId: 501, workflowAttempt: 2 })),
+  ];
+  expect(github.requiredChecksPassed(checks, sha, ["18.8.7"])).toEqual({ ok: false, reason: "check-failed:check (ubuntu-latest, 18.8.7)" });
+});
 
 for (const [name, changes] of [
   ["same-named foreign workflow", {path: ".github/workflows/foreign.yml"}],
@@ -238,7 +287,9 @@ test("published proof refuses a pull-request workflow run despite successful exa
 test("published release with absent archive is blocked rather than pending", async () => {
   const github = await fixture();
   const key = `/repos/${repository}/releases/tags/${tag}`;
-  const release = JSON.parse(Buffer.from(routes[key]!.body, "base64").toString());
+  const reply = routes[key];
+  if (!reply || Array.isArray(reply)) throw new Error("fixture-release-reply-invalid");
+  const release = JSON.parse(Buffer.from(reply.body, "base64").toString());
   release.assets = release.assets.filter((asset: {name: string}) => asset.name !== "omp-settings-ru-0.6.0.tgz");
   route(key, release);
   route(`/repos/${repository}/releases?per_page=100`, [release]);
@@ -266,4 +317,162 @@ test("run ID mismatch in an exact-SHA endpoint response does not prove publicati
   route(`/repos/${repository}/actions/runs/501`, workflow({id: 502}));
   await saveRoutes();
   expect((await github.verifyPublishedRelease(tag, "501", sha)).kind).toBe("blocked");
+}, 30000);
+
+for (const rejected of [false, true]) for (const conclusion of ["failure", "cancelled"]) test(`HTTP ${conclusion} rerun ${rejected ? "already-running" : "accepted"} observes a real new attempt and reused jobs`, async () => {
+  await fixture();
+  const failed = workflow({conclusion});
+  const active = workflow({run_attempt: 2, status: "in_progress", conclusion: null});
+  const success = workflow({run_attempt: 2});
+  sequence(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, [
+    {total_count: 1, workflow_runs: [failed]}, {total_count: 1, workflow_runs: [active]},
+    {total_count: 1, workflow_runs: [success]},
+  ]);
+  route(`/repos/${repository}/actions/runs/501/attempts/1/jobs?filter=all&per_page=100&page=1`, {jobs: jobs({conclusion: "failure"})});
+  route(`/repos/${repository}/actions/runs/501/attempts/2`, active);
+  route("/fixture/rerun/501", {});
+  if (rejected) (routes["/fixture/rerun/501"] as HttpReply).status = 409;
+  await saveRoutes();
+  let clock = 0;
+  spyOn(Date, "now").mockImplementation(() => clock);
+  spyOn(Bun, "sleep").mockImplementation(((ms: number) => {clock += ms; return Promise.resolve();}) as typeof Bun.sleep);
+  await ensureCheckRun(new HostedGitHub({...policy, deadlinesMs: {...policy.deadlinesMs, checks: 40 * 60_000}}, "fixture"), sha, ["18.8.7"], "maintenance/18.8.7");
+  expect((await requests()).filter(row => row.key === "/fixture/rerun/501")).toHaveLength(1);
+  expect(clock).toBe(15_000);
+}, 30000);
+
+test("HTTP recovery gives each observed attempt its own deadline", async () => {
+  await fixture();
+  const active = workflow({status: "in_progress", conclusion: null});
+  const failure = workflow({conclusion: "failure"});
+  const success = workflow({run_attempt: 2});
+  sequence(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, [
+    ...Array.from({length: 3}, () => ({total_count: 1, workflow_runs: [active]})),
+    {total_count: 1, workflow_runs: [failure]},
+    {total_count: 1, workflow_runs: [workflow({run_attempt: 2, status: "in_progress", conclusion: null})]},
+    {total_count: 1, workflow_runs: [success]},
+  ]);
+  route(`/repos/${repository}/actions/runs/501/attempts/1/jobs?filter=all&per_page=100&page=1`, {jobs: jobs({conclusion: "failure"})});
+  route(`/repos/${repository}/actions/runs/501/attempts/2`, success);
+  route("/fixture/rerun/501", {});
+  await saveRoutes();
+  let clock = 0;
+  spyOn(Date, "now").mockImplementation(() => clock);
+  spyOn(Bun, "sleep").mockImplementation(((ms: number) => {clock += ms; return Promise.resolve();}) as typeof Bun.sleep);
+  await ensureCheckRun(new HostedGitHub({...policy, deadlinesMs: {...policy.deadlinesMs, checks: 60_000}}, "fixture"), sha, ["18.8.7"], "maintenance/18.8.7");
+  expect(clock).toBe(60_000);
+}, 30000);
+
+for (const rejected of [false, true]) test(`HTTP ${rejected ? "rejected" : "accepted"} rerun without observed attempt stops after sixty seconds`, async () => {
+  await fixture();
+  route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {total_count: 1, workflow_runs: [workflow({conclusion: "cancelled"})]});
+  route(`/repos/${repository}/actions/runs/501/attempts/1/jobs?filter=all&per_page=100&page=1`, {jobs: jobs({conclusion: "cancelled"})});
+  route("/fixture/rerun/501", {});
+  if (rejected) (routes["/fixture/rerun/501"] as HttpReply).status = 409;
+  await saveRoutes();
+  let clock = 0;
+  spyOn(Date, "now").mockImplementation(() => clock);
+  spyOn(Bun, "sleep").mockImplementation(((ms: number) => {clock += ms; return Promise.resolve();}) as typeof Bun.sleep);
+  await expect(ensureCheckRun(new HostedGitHub(policy, "fixture"), sha, ["18.8.7"], "maintenance/18.8.7")).rejects.toThrow("check-rerun-not-started:501");
+  expect(clock).toBe(60_000);
+  expect((await requests()).filter(row => row.key === "/fixture/rerun/501")).toHaveLength(1);
+}, 30000);
+
+test("HTTP attempt three remains exhausted after a new controller starts", async () => {
+  await fixture();
+  route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {total_count: 1, workflow_runs: [workflow({run_attempt: 3, conclusion: "failure"})]});
+  await saveRoutes();
+  for (let restart = 0; restart < 2; restart++) await expect(ensureCheckRun(new HostedGitHub(policy, "fixture"), sha, ["18.8.7"], "maintenance/18.8.7")).rejects.toThrow("candidate-checks-retries-exhausted:501");
+  expect((await requests()).some(row => row.key.startsWith("/fixture/rerun/"))).toBe(false);
+}, 30000);
+
+async function publisherFixture(event: "workflow_dispatch" | "workflow_run", attempt: number) {
+  await fixture();
+  const run = {id: 1002, run_attempt: attempt, path: ".github/workflows/marketplace-index.yml", event,
+    head_sha: otherSha, head_branch: "main", display_title: `marketplace-index ${tag}`, status: "completed", conclusion: "failure", repository: {full_name: repository}};
+  route(`/repos/${repository}/actions/workflows/marketplace-index.yml/runs?per_page=100&page=1`, {workflow_runs: [run]});
+  route(`/repos/${repository}/actions/runs/1002/artifacts?per_page=100&page=1`, {artifacts: [{id: 2002, name: `prepublish-${tag}-1002-1`, expired: false, size_in_bytes: 1000, workflow_run: {id: 1002, head_sha: otherSha}}]});
+  route(`/repos/${repository}/actions/runs/1002/attempts/1`, {...run, run_attempt: 1});
+  route(`/repos/${repository}/actions/runs/1002/attempts/1/jobs?filter=all&per_page=100&page=1`, {jobs: [{id: 3002, run_id: 1002, run_attempt: 1, head_sha: otherSha, name: "prepublish", status: "completed", conclusion: "success"}]});
+  route("/fixture/receipt/1002", {schemaVersion: 1, repository, tag, version: "0.6.0", tagSha: sha, releaseState: "draft", releaseRunId: "1001", releaseRunAttempt: "1", checkRunId: "501", catalogSha256: "c".repeat(64), archiveSha256: "d".repeat(64), sumsSha256: "e".repeat(64), hostVersion: "18.8.7", smoke: "distribution-smoke", smokePassed: true});
+  route(`/repos/${repository}/actions/runs/1001/attempts/1`, {id: 1001, run_attempt: 1, path: ".github/workflows/release.yml", event: "push", head_sha: sha, head_branch: tag, status: "completed", conclusion: "success", repository: {full_name: repository}});
+  route("/fixture/rerun/1002", {});
+  await saveRoutes();
+  return new HostedGitHub(policy, "fixture");
+}
+
+for (const event of ["workflow_run", "workflow_dispatch"] as const) test(`HTTP ${event} publisher reuses attempt-one prepublish proof without REST inputs`, async () => {
+  const github = await publisherFixture(event, 2);
+  expect(await workflowRecovery(github, "marketplace-index.yml", tag, sha, new Set())).toBe(false);
+  expect((await requests()).filter(row => row.key === "/fixture/rerun/1002")).toHaveLength(1);
+}, 30000);
+
+test("HTTP publisher producer attempt does not reset current attempt-three budget after restart", async () => {
+  const github = await publisherFixture("workflow_run", 3);
+  for (let restart = 0; restart < 2; restart++) await expect(workflowRecovery(new HostedGitHub(github.policy, "fixture"), "marketplace-index.yml", tag, sha, new Set())).rejects.toThrow("publisher-checks-retries-exhausted:1002");
+  expect((await requests()).some(row => row.key === "/fixture/rerun/1002")).toBe(false);
+}, 30000);
+
+for (const status of ["pending", "requested", "completed"]) test(`HTTP unbound ${status} publisher waits without guessing a new dispatch`, async () => {
+  await publisherFixture("workflow_run", 1);
+  route(`/repos/${repository}/actions/runs/1002/artifacts?per_page=100&page=1`, {artifacts: []});
+  route(`/repos/${repository}/actions/workflows/marketplace-index.yml/runs?per_page=100&page=1`, {workflow_runs: [{id: 1002, run_attempt: 1, path: ".github/workflows/marketplace-index.yml", event: "workflow_run", head_sha: otherSha, head_branch: "main", display_title: `marketplace-index ${tag}`, status, conclusion: null, repository: {full_name: repository}}]});
+  await saveRoutes();
+  expect(await workflowRecovery(new HostedGitHub(policy, "fixture"), "marketplace-index.yml", tag, sha, new Set())).toBe(false);
+  expect((await requests()).some(row => row.key.startsWith("/fixture/rerun/"))).toBe(false);
+}, 30000);
+
+test("HTTP selected successful run cannot borrow another same-SHA run's jobs", async () => {
+  await fixture();
+  route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {total_count: 2, workflow_runs: [workflow(), workflow({id: 502, check_suite_id: 602})]});
+  route(`/repos/${repository}/actions/runs/502/jobs?filter=latest&per_page=100&page=1`, {total_count: 0, jobs: []});
+  await saveRoutes();
+  await expect(ensureCheckRun(new HostedGitHub(policy, "fixture"), sha, ["18.8.7"], "maintenance/18.8.7")).rejects.toThrow("check-missing:check (ubuntu-latest, 18.8.7)");
+}, 30000);
+
+for (const corruption of ["job-run", "job-attempt", "job-sha", "job-failure", "receipt-sha"] as const) test(`HTTP publisher refuses ${corruption} despite matching artifact title`, async () => {
+  const github = await publisherFixture("workflow_run", 2);
+  if (corruption === "receipt-sha") {
+    const response = routes["/fixture/receipt/1002"] as HttpReply;
+    const receipt = JSON.parse(Buffer.from(response.body, "base64").toString("utf8"));
+    route("/fixture/receipt/1002", {...receipt, tagSha: otherSha});
+  } else {
+    const job = {id: 3002, run_id: corruption === "job-run" ? 999 : 1002, run_attempt: corruption === "job-attempt" ? 2 : 1,
+      head_sha: corruption === "job-sha" ? sha : otherSha, name: "prepublish", status: "completed", conclusion: corruption === "job-failure" ? "failure" : "success"};
+    route(`/repos/${repository}/actions/runs/1002/attempts/1/jobs?filter=all&per_page=100&page=1`, {jobs: [job]});
+  }
+  await saveRoutes();
+  await expect(workflowRecovery(github, "marketplace-index.yml", tag, sha, new Set())).rejects.toThrow(corruption === "receipt-sha" ? "publisher-receipt-binding-invalid" : "publisher-prepublish-job-not-successful");
+  expect((await requests()).some(row => row.key === "/fixture/rerun/1002")).toBe(false);
+}, 30000);
+
+for (const selected of [
+  {id: 501, attempt: 1, headBranch: "foreign-branch"},
+  {id: 501, attempt: 2, headBranch: "maintenance/18.8.7"},
+]) test(`HTTP jobs cannot prove a different selected ${selected.headBranch === "foreign-branch" ? "branch" : "workflow attempt"}`, async () => {
+  const github = await fixture();
+  expect(github.requiredChecksPassed(await github.checksFor(sha), sha, ["18.8.7"], {...selected, status: "completed", conclusion: "success"}).ok).toBe(false);
+}, 30000);
+
+test("HTTP newer successful run ignores an older run's higher failed attempt", async () => {
+  const github = await fixture();
+  const newerChecks = checkRuns(602).map(row => ({...row, id: row.id + 10}));
+  route(`/repos/${repository}/commits/${sha}/check-runs?filter=latest&per_page=100&page=1`, {total_count: 4, check_runs: [...checkRuns(), ...newerChecks]});
+  route(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, {total_count: 2, workflow_runs: [workflow({run_attempt: 3, conclusion: "failure"}), workflow({id: 502, check_suite_id: 602})]});
+  route(`/repos/${repository}/actions/runs/501/jobs?filter=latest&per_page=100&page=1`, {total_count: 2, jobs: jobs({run_attempt: 3, conclusion: "failure"})});
+  route(`/repos/${repository}/actions/runs/502/jobs?filter=latest&per_page=100&page=1`, {total_count: 2, jobs: jobs().map((row, index) => ({...row, run_id: 502, check_run_url: `https://api.github.com/repos/${repository}/check-runs/${711 + index}`}))});
+  await saveRoutes();
+  expect(github.requiredChecksPassed(await github.checksFor(sha), sha, ["18.8.7"], {id: 502, attempt: 1, headBranch: "maintenance/18.8.7", status: "completed", conclusion: "success"})).toEqual({ok: true});
+}, 30000);
+
+test("HTTP three failed attempts perform only two failed-job reruns and restart cannot reset them", async () => {
+  await fixture();
+  sequence(`/repos/${repository}/actions/runs?head_sha=${sha}&per_page=100&page=1`, [1, 2, 3].map(run_attempt => ({total_count: 1, workflow_runs: [workflow({run_attempt, conclusion: "failure"})]})));
+  for (const attempt of [1, 2]) route(`/repos/${repository}/actions/runs/501/attempts/${attempt}/jobs?filter=all&per_page=100&page=1`, {jobs: jobs({run_attempt: attempt, conclusion: "failure"})});
+  for (const attempt of [2, 3]) route(`/repos/${repository}/actions/runs/501/attempts/${attempt}`, workflow({run_attempt: attempt, conclusion: "failure"}));
+  route("/fixture/rerun/501", {});
+  await saveRoutes();
+  const hosted = () => new HostedGitHub({...policy, deadlinesMs: {...policy.deadlinesMs, checks: 40 * 60_000}}, "fixture");
+  for (let restart = 0; restart < 2; restart++) await expect(ensureCheckRun(hosted(), sha, ["18.8.7"], "maintenance/18.8.7")).rejects.toThrow("candidate-checks-retries-exhausted:501");
+  expect((await requests()).filter(row => row.key === "/fixture/rerun/501")).toHaveLength(2);
 }, 30000);

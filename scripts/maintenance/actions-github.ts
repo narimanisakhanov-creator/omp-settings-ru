@@ -5,8 +5,8 @@ import { dirname, join } from "node:path";
 import type { ControllerPolicy } from "./contracts";
 import { GitHub } from "./github";
 import { asRecord, parseStrictJSON } from "./json";
+import { outcomeArtifactName, parseOutcome, type MaintenanceOutcome } from "./outcome";
 import { parseCandidate, validateBundle, type Candidate } from "./actions-bundle";
-
 export interface MaintenanceIdentity {
   readonly schemaVersion: 1; readonly repository: string; readonly upstreamVersion: string; readonly releaseVersion: string;
   readonly baseSha: string; readonly headSha: string; readonly runId: string; readonly runAttempt: string;
@@ -47,8 +47,11 @@ export class HostedGitHub {
     const child = Bun.spawn(["gh", ...args], { env: { ...secretFreeEnvironment(), GH_TOKEN: this.token }, stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => child.kill(), this.policy.deadlinesMs.command);
     try {
-      const [stdout, , code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-      if (code !== 0) throw new Error(`github-command-refused:${args[0]}`);
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      if (code !== 0) {
+        const status = args[0] === "api" ? /\(HTTP (\d{3})\)/.exec(stderr)?.[1] : undefined;
+        throw new Error(status ? `github-http-${status}` : `github-command-refused:${args[0]}`);
+      }
       if (stdout.length > 16 * 1024 * 1024) throw new Error("github-response-too-large");
       return stdout;
     } finally { clearTimeout(timer); }
@@ -90,6 +93,70 @@ export class HostedGitHub {
     const jobs = await this.list(`${root}/actions/runs/${candidate.runId}/attempts/${candidate.runAttempt}/jobs?filter=all`, "jobs");
     const verified = jobs.filter(job => job.name === "verify" && String(job.run_id) === candidate.runId && job.head_sha === candidate.baseSha);
     if (verified.length !== 1 || verified[0]?.status !== "completed" || verified[0]?.conclusion !== "success") throw new Error("artifact-verification-job-not-successful");
+  }
+  async readOutcomes(baseSha: string, candidateVersion: string): Promise<readonly MaintenanceOutcome[]> {
+    const root = `repos/${this.policy.repository}`;
+    const runs = await this.list(`${root}/actions/workflows/upstream-watch.yml/runs?branch=main&head_sha=${baseSha}`, "workflow_runs");
+    const outcomes: MaintenanceOutcome[] = [];
+    const validRun = (run: Record<string, unknown>, id: string, attempt: string) => String(run.id) === id && String(run.run_attempt) === attempt && run.path === ".github/workflows/upstream-watch.yml" && run.head_branch === "main" && run.head_sha === baseSha && asRecord(run.repository)?.full_name === this.policy.repository && ["schedule", "workflow_dispatch"].includes(String(run.event));
+    const ordered = [...runs].sort((a, b) => Number(b.id) - Number(a.id));
+    for (const latest of ordered) {
+      const id = String(latest.id); const attempts = Number(latest.run_attempt);
+      if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 1000 || !validRun(latest, id, String(attempts))) throw new Error("maintenance-outcome-origin-invalid");
+      const artifacts = await this.list(`${root}/actions/runs/${id}/artifacts`, "artifacts");
+      for (let number = attempts; number >= 1; number--) {
+        const attempt = String(number);
+        if (id === process.env.GITHUB_RUN_ID && attempt === process.env.GITHUB_RUN_ATTEMPT) continue;
+        const run = asRecord(await this.api(`${root}/actions/runs/${id}/attempts/${attempt}`));
+        if (!run || !validRun(run, id, attempt)) throw new Error("maintenance-outcome-origin-invalid");
+        if (run.status !== "completed") continue;
+        const selectedName = `maintenance-selection-${candidateVersion}-${id}-${attempt}`;
+        const selected = artifacts.some(artifact => artifact.name === selectedName);
+        const matches = artifacts.filter(artifact => artifact.name === outcomeArtifactName(id, attempt));
+        const otherSelection = artifacts.some(artifact => typeof artifact.name === "string" && artifact.name.startsWith("maintenance-selection-") && artifact.name.endsWith(`-${id}-${attempt}`) && artifact.name !== selectedName);
+        if (!selected && otherSelection) continue;
+        if (!matches.length && !selected) {
+          const jobs = await this.list(`${root}/actions/runs/${id}/attempts/${attempt}/jobs?filter=all`, "jobs");
+          // Failed discovery before selection must remain harmless, but a started prepare cannot disappear.
+          const matchingSelectionStep = jobs.some(job => Array.isArray(job.steps) && job.steps.some(step => asRecord(step)?.name === `Record selected candidate ${candidateVersion}` && asRecord(step)?.conclusion !== "skipped"));
+          if (matchingSelectionStep || jobs.some(job => job.name === "prepare" && job.conclusion !== "skipped")) throw new Error("maintenance-outcome-unavailable");
+          continue;
+        }
+        if (matches.length !== 1) throw new Error("maintenance-outcome-unavailable");
+        const artifact = matches[0]!; const origin = asRecord(artifact.workflow_run);
+        if (artifact.expired !== false || typeof artifact.expires_at !== "string" || Date.parse(artifact.expires_at) <= Date.now() || !Number.isFinite(Date.parse(artifact.expires_at)) || typeof artifact.size_in_bytes !== "number" || artifact.size_in_bytes < 1 || artifact.size_in_bytes > 128 * 1024) throw new Error("maintenance-outcome-unavailable");
+        if (!/^[1-9]\d*$/.test(String(artifact.id)) || String(origin?.id) !== id || origin?.head_sha !== baseSha || origin?.head_branch !== "main" || origin?.repository_id !== asRecord(run.repository)?.id || origin?.head_repository_id !== asRecord(run.repository)?.id) throw new Error("maintenance-outcome-origin-invalid");
+        const directory = await mkdtemp(join(tmpdir(), "omp-outcome-"));
+        try {
+          const zip = join(directory, "artifact.zip");
+          const child = Bun.spawn(["gh", "api", `${root}/actions/artifacts/${artifact.id}/zip`], { env: { ...secretFreeEnvironment(), GH_TOKEN: this.token }, stdout: "pipe", stderr: "ignore" });
+          const timer = setTimeout(() => child.kill(), this.policy.deadlinesMs.command);
+          const chunks: Uint8Array[] = []; let size = 0;
+          try {
+            for await (const chunk of child.stdout) { size += chunk.length; if (size > 128 * 1024) { child.kill(); throw new Error("maintenance-outcome-invalid"); } chunks.push(chunk); }
+            if (await child.exited !== 0) throw new Error("maintenance-outcome-unavailable");
+          } finally { clearTimeout(timer); }
+          await writeFile(zip, Buffer.concat(chunks, size));
+          const listing = Bun.spawnSync(["unzip", "-Z1", zip], { env: secretFreeEnvironment(), stdout: "pipe", stderr: "ignore", timeout: this.policy.deadlinesMs.command });
+          if (listing.exitCode !== 0 || listing.stdout.toString().trim() !== "maintenance-outcome.json") throw new Error("maintenance-outcome-invalid");
+          const entry = Bun.spawn(["unzip", "-p", zip, "maintenance-outcome.json"], { env: secretFreeEnvironment(), stdout: "pipe", stderr: "ignore" });
+          const entryTimer = setTimeout(() => entry.kill(), this.policy.deadlinesMs.command);
+          const bytes: Uint8Array[] = []; let length = 0;
+          try {
+            for await (const chunk of entry.stdout) { length += chunk.length; if (length > 64 * 1024) { entry.kill(); throw new Error("maintenance-outcome-invalid"); } bytes.push(chunk); }
+            if (await entry.exited !== 0) throw new Error("maintenance-outcome-invalid");
+          } finally { clearTimeout(entryTimer); }
+          const outcome = parseOutcome(parseStrictJSON(Buffer.concat(bytes, length).toString("utf8")));
+          if (outcome.baseSha !== baseSha || (selected && outcome.candidateVersion !== candidateVersion)) throw new Error("maintenance-outcome-origin-invalid");
+          if (outcome.retryBlocked && run.event !== "workflow_dispatch") throw new Error("maintenance-outcome-origin-invalid");
+          if (outcome.candidateVersion === candidateVersion) {
+            outcomes.push(outcome);
+            if (outcome.retryBlocked) return outcomes.reverse();
+          }
+        } finally { await rm(directory, { recursive: true, force: true }); }
+      }
+    }
+    return outcomes.reverse();
   }
   async download(identity: MaintenanceIdentity): Promise<string> {
     const extract = async (zip: string, path: string, limit: number): Promise<Uint8Array> => {

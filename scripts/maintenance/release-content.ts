@@ -112,6 +112,8 @@ export function renderCompatibility(versions: readonly string[], coverage: reado
   if (versions.length === 0) invalid("versions-empty");
   if (new Set(versions).size !== versions.length) invalid("versions-duplicate");
   for (const version of versions) if (!STABLE_VERSION.test(version)) invalid(`version-invalid:${version}`);
+  const expected = new Set(versions);
+  for (const pair of coverage) if (!expected.has(pair.version)) invalid(`coverage-version-invalid:${pair.version}`);
   const grid = coverageGrid(versions, coverage, false);
   const ordered = [...versions].sort(compareVersions);
   const rows = ordered.map(version => {
@@ -125,6 +127,8 @@ export function renderCompatibility(versions: readonly string[], coverage: reado
     "## поддерживаемые версии OMP",
     "",
     `Поддержка в этом checkout: OMP ${ordered.join(", ")}.`,
+    "",
+    "Целевое окно — три последние стабильные npm-версии OMP. Новые версии проходят проверки и добавляются последовательно; таблица показывает только уже измеренную поддержку, а не будущую очередь.",
     "",
     `| OMP | ${DISPLAY_PLATFORMS.map(platform => PLATFORM_LABELS[platform]).join(" | ")} |`,
     "| --- | ---: | ---: | ---: |",

@@ -5,9 +5,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact stable OMP version (optional)
+        description: Exact stable OMP version (optional; must be next queued version)
         required: false
         type: string
+      retry_blocked:
+        description: Explicitly reset a blocked preparation cycle (does not reset CI attempts)
+        required: false
+        default: false
+        type: boolean
 permissions: {}
 concurrency:
   group: upstream-watch
@@ -15,6 +20,7 @@ concurrency:
 jobs:
   discover:
     if: github.ref == 'refs/heads/main'
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -24,10 +30,12 @@ jobs:
       mode: ${{ steps.discover.outputs.mode }}
       version: ${{ steps.discover.outputs.version }}
       base: ${{ steps.discover.outputs.base }}
+      reason: ${{ steps.discover.outputs.reason }}
+      retryable: ${{ steps.discover.outputs.retryable }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -37,15 +45,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_VERSION: ${{ inputs.version }}
+          RETRY_BLOCKED: ${{ inputs.retry_blocked || false }}
+          MAINTENANCE_PAUSED: ${{ vars.MAINTENANCE_PAUSED }}
         run: bun scripts/maintenance-actions.ts discover
+      - name: Record selected candidate ${{ steps.discover.outputs.version }}
+        if: always() && steps.discover.outputs.version != ''
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: maintenance-selection-${{ steps.discover.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance.config.json
+          if-no-files-found: error
+          retention-days: 90
   prepare:
     needs: discover
     if: needs.discover.outputs.mode == 'prepare'
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
+      reason: ${{ steps.prepare.outputs.reason }}
+      retryable: ${{ steps.prepare.outputs.retryable }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -55,7 +76,8 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
-      - env:
+      - id: prepare
+        env:
           VERSION: ${{ needs.discover.outputs.version }}
           BASE: ${{ needs.discover.outputs.base }}
         run: bun scripts/maintenance-actions.ts prepare --version "$VERSION" --base "$BASE" --output "$RUNNER_TEMP/prepared"
@@ -68,12 +90,15 @@ jobs:
           retention-days: 7
   translate:
     needs: [discover, prepare]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
+      reason: ${{ steps.translate.outputs.reason }}
+      retryable: ${{ steps.translate.outputs.retryable }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -88,12 +113,13 @@ jobs:
           artifact-ids: ${{ needs.prepare.outputs.artifact }}
           path: ${{ runner.temp }}/prepared
           merge-multiple: true
-      - env:
+      - id: translate
+        env:
           MAINTENANCE_API_KEY: ${{ secrets.MAINTENANCE_API_KEY }}
           MAINTENANCE_BASE_URL: ${{ vars.MAINTENANCE_BASE_URL }}
           MAINTENANCE_MODEL: ${{ vars.MAINTENANCE_MODEL }}
           MAINTENANCE_BASE_SHA: ${{ needs.discover.outputs.base }}
-        run: set -o pipefail; bun scripts/maintenance-actions.ts translate --bundle "$RUNNER_TEMP/prepared" 2>&1 | tee "$RUNNER_TEMP/translate.log"
+        run: bun scripts/maintenance-actions.ts translate --bundle "$RUNNER_TEMP/prepared"
       - id: upload
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
@@ -101,25 +127,17 @@ jobs:
           path: ${{ runner.temp }}/prepared
           if-no-files-found: error
           retention-days: 7
-      - name: Keep the translate log with the blocked bundle
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: cp "$RUNNER_TEMP/translate.log" "$RUNNER_TEMP/prepared/translate.log" 2>/dev/null || true
-      - if: failure()
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
-        with:
-          name: blocked-translation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/prepared
-          if-no-files-found: warn
-          retention-days: 7
   verify:
     needs: [discover, translate]
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
+      reason: ${{ steps.verify.outputs.reason }}
+      retryable: ${{ steps.verify.outputs.retryable }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -134,7 +152,8 @@ jobs:
           artifact-ids: ${{ needs.translate.outputs.artifact }}
           path: ${{ runner.temp }}/candidate
           merge-multiple: true
-      - env:
+      - id: verify
+        env:
           GH_TOKEN: ${{ github.token }}
           GIT_AUTHOR_NAME: omp maintenance
           GIT_AUTHOR_EMAIL: maintenance@users.noreply.github.com
@@ -158,10 +177,15 @@ jobs:
   publish:
     needs: [discover, verify]
     if: always() && needs.discover.result == 'success' && (needs.discover.outputs.mode == 'resume' || (needs.discover.outputs.mode == 'prepare' && needs.verify.result == 'success'))
+    timeout-minutes: 180
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
+    outputs:
+      outcome: ${{ steps.finalize.outputs.outcome }}
+      reason: ${{ steps.finalize.outputs.reason || steps.publish.outputs.reason }}
+      retryable: ${{ steps.finalize.outputs.retryable || steps.publish.outputs.retryable }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -177,12 +201,40 @@ jobs:
           artifact-ids: ${{ needs.verify.outputs.artifact }}
           path: ${{ runner.temp }}/candidate
           merge-multiple: true
-      - if: needs.discover.outputs.mode == 'prepare'
+      - id: publish
+        if: needs.discover.outputs.mode == 'prepare'
         env:
           MAINTENANCE_GH_TOKEN: ${{ secrets.MAINTENANCE_GH_TOKEN }}
           MAINTENANCE_ARTIFACT_ID: ${{ needs.verify.outputs.artifact }}
         run: bun scripts/maintenance-actions.ts publish-candidate --bundle "$RUNNER_TEMP/candidate"
-      - env:
+      - id: finalize
+        env:
           MAINTENANCE_GH_TOKEN: ${{ secrets.MAINTENANCE_GH_TOKEN }}
           VERSION: ${{ needs.discover.outputs.version }}
         run: bun scripts/maintenance-actions.ts finalize --version "$VERSION"
+  outcome:
+    if: always() && github.ref == 'refs/heads/main'
+    needs: [discover, prepare, translate, verify, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - name: Write bounded maintenance outcome
+        id: outcome
+        env:
+          OUTCOME_NEEDS: ${{ toJSON(needs) }}
+          RETRY_BLOCKED: ${{ inputs.retry_blocked || false }}
+        run: bun scripts/maintenance/outcome.ts
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        if: steps.outcome.outputs.upload == 'true'
+        with:
+          name: maintenance-outcome-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance-outcome.json
+          retention-days: 90

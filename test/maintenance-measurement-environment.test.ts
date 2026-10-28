@@ -258,6 +258,7 @@ async function fixture(): Promise<Fixture> {
   const baseManifest = {
     name: "omp-settings-ru",
     version: "0.5.0",
+    packageManager: `bun@${Bun.version}`,
     devDependencies: { "@oh-my-pi/pi-base-helper": "1.0.0" },
   };
   await writeFile(join(checkout, "package.json"), `${JSON.stringify(baseManifest, null, 2)}\n`);
@@ -285,51 +286,184 @@ async function fixture(): Promise<Fixture> {
   };
 }
 
-/** Дельта, которую выдал бы гейт: пин хоста — настоящая запись реестра, разрешаемая реестром-фикстурой. */
 function deltaFor(fixtureValue: Fixture) {
   return {
     releaseVersion: RELEASE_VERSION,
     hostPins: [{ alias: fixtureValue.hostAlias, version: fixtureValue.hostVersion, spec: fixtureValue.hostSpec }],
+    removedHostAliases: [],
     peers: [{ name: "@oh-my-pi/pi-coding-agent", value: `18.8.7 || ${fixtureValue.hostVersion}` }],
     devPins: [],
   };
 }
 
-/** Тот же манифест, но пин хоста — запись реестра: так выглядит настоящий выпуск. */
+/** Тот же манифест, но пин хоста — запись реестра. */
 function registryDelta(version = HOST_VERSION) {
   return {
     releaseVersion: RELEASE_VERSION,
     hostPins: [{ alias: hostAliasOf(version), version, spec: `npm:@oh-my-pi/pi-coding-agent@${version}` }],
+    removedHostAliases: [],
     peers: [{ name: "@oh-my-pi/pi-coding-agent", value: `18.8.7 || ${version}` }],
     devPins: [],
   };
 }
 
 const ACCEPTED_MANIFEST = JSON.stringify({
-  name: "omp-settings-ru", version: "0.5.0",
+  name: "omp-settings-ru", version: "0.5.0", packageManager: `bun@${Bun.version}`,
   devDependencies: {
     "@oh-my-pi/pi-coding-agent": "18.8.7",
+    "@oh-my-pi/pi-natives": "18.8.7",
+    "@oh-my-pi/pi-tui": "18.8.7",
+    "@oh-my-pi/pi-utils": "18.8.7",
     "omp-host-1887": "npm:@oh-my-pi/pi-coding-agent@18.8.7",
   },
-  peerDependencies: { "@oh-my-pi/pi-coding-agent": "18.8.7" },
+  peerDependencies: {
+    "@oh-my-pi/pi-coding-agent": "18.8.7",
+    "@oh-my-pi/pi-utils": "18.8.7",
+  },
   scripts: { test: "bun test" },
 });
 
 function candidate(overrides: Record<string, unknown> = {}): unknown {
   return {
-    name: "omp-settings-ru", version: RELEASE_VERSION,
+    name: "omp-settings-ru", version: RELEASE_VERSION, packageManager: `bun@${Bun.version}`,
     devDependencies: {
       "@oh-my-pi/pi-coding-agent": HOST_VERSION,
+      "@oh-my-pi/pi-natives": HOST_VERSION,
+      "@oh-my-pi/pi-tui": HOST_VERSION,
+      "@oh-my-pi/pi-utils": HOST_VERSION,
       "omp-host-1887": "npm:@oh-my-pi/pi-coding-agent@18.8.7",
       [hostAliasOf(HOST_VERSION)]: `npm:@oh-my-pi/pi-coding-agent@${HOST_VERSION}`,
     },
-    peerDependencies: { "@oh-my-pi/pi-coding-agent": `18.8.7 || ${HOST_VERSION}` },
+    peerDependencies: {
+      "@oh-my-pi/pi-coding-agent": `18.8.7 || ${HOST_VERSION}`,
+      "@oh-my-pi/pi-utils": `18.8.7 || ${HOST_VERSION}`,
+    },
     scripts: { test: "bun test" },
     ...overrides,
   };
 }
 
+/** Полное исходное окно и ожидаемая ротация: значения заданы независимо от supportWindow. */
+function rollingManifests() {
+  const accepted = {
+    ...JSON.parse(ACCEPTED_MANIFEST),
+    devDependencies: {
+      "@oh-my-pi/pi-coding-agent": "18.13.3",
+      "@oh-my-pi/pi-natives": "18.13.3",
+      "@oh-my-pi/pi-tui": "18.13.3",
+      "@oh-my-pi/pi-utils": "18.13.3",
+      typescript: "5.9.2",
+      "omp-host-18131": "npm:@oh-my-pi/pi-coding-agent@18.13.1",
+      "omp-host-18132": "npm:@oh-my-pi/pi-coding-agent@18.13.2",
+      "omp-host-18133": "npm:@oh-my-pi/pi-coding-agent@18.13.3",
+    },
+    peerDependencies: {
+      "@oh-my-pi/pi-coding-agent": "18.13.1 || 18.13.2 || 18.13.3",
+      "@oh-my-pi/pi-utils": "18.13.1 || 18.13.2 || 18.13.3",
+      typescript: "^5.9.0",
+    },
+    dependencies: { "left-pad": "1.0.0" },
+  };
+  const next = {
+    ...accepted,
+    version: RELEASE_VERSION,
+    devDependencies: {
+      "@oh-my-pi/pi-coding-agent": "18.13.4",
+      "@oh-my-pi/pi-natives": "18.13.4",
+      "@oh-my-pi/pi-tui": "18.13.4",
+      "@oh-my-pi/pi-utils": "18.13.4",
+      typescript: "5.9.2",
+      "omp-host-18132": "npm:@oh-my-pi/pi-coding-agent@18.13.2",
+      "omp-host-18133": "npm:@oh-my-pi/pi-coding-agent@18.13.3",
+      "omp-host-18134": "npm:@oh-my-pi/pi-coding-agent@18.13.4",
+    },
+    peerDependencies: {
+      "@oh-my-pi/pi-coding-agent": "18.13.2 || 18.13.3 || 18.13.4",
+      "@oh-my-pi/pi-utils": "18.13.2 || 18.13.3 || 18.13.4",
+      typescript: "^5.9.0",
+    },
+  };
+  return { accepted, next };
+}
+
 describe("дельта кандидата к принятому манифесту", () => {
+  test("окно .1/.2/.3 → .2/.3/.4 удаляет только выбывший алиас и воспроизводит весь манифест", () => {
+    const { accepted, next } = rollingManifests();
+    const verdict = approvedDelta(accepted, next, "18.13.4");
+    if (!("ok" in verdict)) throw new Error(`неожиданный отказ: ${verdict.failure}`);
+    expect(verdict.delta.removedHostAliases).toEqual(["omp-host-18131"]);
+    expect(verdict.delta.hostPins).toEqual([
+      { alias: "omp-host-18134", version: "18.13.4", spec: "npm:@oh-my-pi/pi-coding-agent@18.13.4" },
+    ]);
+    expect(verdict.delta.devPins).toHaveLength(4);
+    expect(JSON.parse(manifestWithDelta(JSON.stringify(accepted), verdict.delta)!)).toEqual(next);
+    expect(declaredHostAliases(JSON.stringify(accepted), verdict.delta)).toEqual([
+      { alias: "omp-host-18132", version: "18.13.2" },
+      { alias: "omp-host-18133", version: "18.13.3" },
+      { alias: "omp-host-18134", version: "18.13.4" },
+    ]);
+  });
+
+  test("удаление сохранённого алиаса или обычной зависимости отклоняется", () => {
+    for (const name of ["omp-host-18132", "omp-host-18133", "typescript"]) {
+      const { accepted, next } = rollingManifests();
+      const devDependencies: Record<string, string> = { ...next.devDependencies };
+      delete devDependencies[name];
+      expect(approvedDelta(accepted, { ...next, devDependencies }, "18.13.4"))
+        .toEqual({ failure: `manifest-dependency-removed:${name}` });
+    }
+  });
+
+  test("выбывший алиас обязан исчезнуть, а сохранённые спецификации неизменны", () => {
+    const { accepted, next } = rollingManifests();
+    expect(approvedDelta(accepted, {
+      ...next, devDependencies: { ...next.devDependencies, "omp-host-18131": accepted.devDependencies["omp-host-18131"] },
+    }, "18.13.4")).toEqual({ failure: "manifest-overflow-alias-retained:omp-host-18131" });
+    expect(approvedDelta(accepted, {
+      ...next, devDependencies: { ...next.devDependencies, "omp-host-18132": "npm:@oh-my-pi/pi-coding-agent@18.13.4" },
+    }, "18.13.4")).toEqual({ failure: "host-alias-unexpected:omp-host-18132" });
+  });
+
+  test("принятые спецификации обязаны точно подтверждать версию и имя каждого алиаса", () => {
+    for (const spec of ["^18.13.1", "npm:@oh-my-pi/pi-coding-agent@18.13.2", "npm:@oh-my-pi/pi-coding-agent@18.13.01"]) {
+      const { accepted, next } = rollingManifests();
+      accepted.devDependencies["omp-host-18131"] = spec;
+      expect(approvedDelta(accepted, next, "18.13.4"))
+        .toEqual({ failure: "accepted-host-pin-invalid:omp-host-18131" });
+    }
+  });
+
+  test("оба peer равны точному новому окну: лишняя версия, порядок и удаление запрещены", () => {
+    for (const name of ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-utils"]) {
+      for (const value of ["18.13.1 || 18.13.2 || 18.13.3 || 18.13.4", "18.13.4 || 18.13.3 || 18.13.2", "^18.13.4", undefined]) {
+        const { accepted, next } = rollingManifests();
+        const peerDependencies: Record<string, string> = { ...next.peerDependencies };
+        if (value === undefined) delete peerDependencies[name];
+        else peerDependencies[name] = value;
+        expect(approvedDelta(accepted, { ...next, peerDependencies }, "18.13.4"))
+          .toEqual({ failure: `peer-range-unverified:${name}` });
+      }
+    }
+  });
+
+  test("четыре dev-пина обязательны; прочие поля и зависимости сохраняются", () => {
+    for (const name of ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-natives", "@oh-my-pi/pi-tui", "@oh-my-pi/pi-utils"]) {
+      const { accepted, next } = rollingManifests();
+      expect(approvedDelta(accepted, {
+        ...next, devDependencies: { ...next.devDependencies, [name]: "18.13.3" },
+      }, "18.13.4")).toEqual({ failure: `package-pin-unverified:${name}` });
+    }
+    const { accepted, next } = rollingManifests();
+    expect(approvedDelta(accepted, { ...next, packageManager: "bun@0.0.0" }, "18.13.4"))
+      .toEqual({ failure: "manifest-field-changed:packageManager" });
+    expect(approvedDelta(accepted, { ...next, dependencies: {} }, "18.13.4"))
+      .toEqual({ failure: "manifest-field-changed:dependencies" });
+    const peerDependencies: Record<string, string> = { ...next.peerDependencies };
+    delete peerDependencies.typescript;
+    expect(approvedDelta(accepted, { ...next, peerDependencies }, "18.13.4"))
+      .toEqual({ failure: "peer-dependency-changed:typescript" });
+  });
+
   test("принимается ровно выпуск: версия плагина, пин хоста с точной записью реестра, расширение диапазона peer", () => {
     const verdict = approvedDelta(JSON.parse(ACCEPTED_MANIFEST), candidate(), HOST_VERSION);
     if (!("ok" in verdict)) throw new Error(`неожиданный отказ: ${verdict.failure}`);
@@ -337,7 +471,13 @@ describe("дельта кандидата к принятому манифест
     expect(verdict.delta.hostPins).toEqual([
       { alias: hostAliasOf(HOST_VERSION), version: HOST_VERSION, spec: `npm:@oh-my-pi/pi-coding-agent@${HOST_VERSION}` },
     ]);
-    expect(verdict.delta.devPins).toEqual([{ name: "@oh-my-pi/pi-coding-agent", value: HOST_VERSION }]);
+    expect(verdict.delta.removedHostAliases).toEqual([]);
+    expect(verdict.delta.devPins).toEqual([
+      { name: "@oh-my-pi/pi-coding-agent", value: HOST_VERSION },
+      { name: "@oh-my-pi/pi-natives", value: HOST_VERSION },
+      { name: "@oh-my-pi/pi-tui", value: HOST_VERSION },
+      { name: "@oh-my-pi/pi-utils", value: HOST_VERSION },
+    ]);
   });
 
   test("спецификация пина проверяется целиком, а не подстрокой", () => {
@@ -373,7 +513,7 @@ describe("дельта кандидата к принятому манифест
     expect(approvedDelta(accepted, candidate({ devDependencies: removed }), HOST_VERSION))
       .toEqual({ failure: "manifest-dependency-removed:omp-host-1887" });
     expect(approvedDelta(accepted, candidate({ peerDependencies: { "@oh-my-pi/pi-coding-agent": HOST_VERSION } }), HOST_VERSION))
-      .toEqual({ failure: "peer-range-narrowed:@oh-my-pi/pi-coding-agent" });
+      .toEqual({ failure: "peer-range-unverified:@oh-my-pi/pi-coding-agent" });
   });
 
   test("перевыпуск без смены версии плагина не подтверждает выпуск", () => {
@@ -388,13 +528,29 @@ describe("дельта кандидата к принятому манифест
     if (applied === undefined) throw new Error("ожидался манифест");
     const manifest = JSON.parse(applied) as { devDependencies: Record<string, string>; peerDependencies: Record<string, string> };
     expect(Object.keys(manifest.devDependencies).sort())
-      .toEqual(["@oh-my-pi/pi-coding-agent", "omp-host-1887", hostAliasOf(HOST_VERSION)].sort());
+      .toEqual([
+        "@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-natives", "@oh-my-pi/pi-tui", "@oh-my-pi/pi-utils",
+        "omp-host-1887", hostAliasOf(HOST_VERSION),
+      ].sort());
     expect(manifest.devDependencies[hostAliasOf(HOST_VERSION)]).toBe(`npm:@oh-my-pi/pi-coding-agent@${HOST_VERSION}`);
     expect(manifest.peerDependencies["@oh-my-pi/pi-coding-agent"]).toBe(`18.8.7 || ${HOST_VERSION}`);
   });
 });
 
 describe("ожидаемый lock-файл и его сверка", () => {
+  test("несовпадение Bun с принятым packageManager отклоняется до изменения площадки", async () => {
+    const parent = await tempRoot("lockversion");
+    const scratch = join(parent, "scratch");
+    await mkdir(scratch);
+    await writeFile(join(scratch, "keep.txt"), "not owned by the refused generation");
+    const accepted = { ...JSON.parse(ACCEPTED_MANIFEST), packageManager: "bun@0.0.0" };
+    expect(await expectedLock({
+      acceptedManifest: JSON.stringify(accepted), acceptedLock: "", delta: registryDelta(), scratch,
+      cacheDir: `${scratch}.cache`, deadline: Date.now() + 60_000,
+    })).toEqual({ failure: "lock-bun-version-mismatch" });
+    expect(await readFile(join(scratch, "keep.txt"), "utf8")).toBe("not owned by the refused generation");
+  });
+
   test("Bun действительно считает lock по дельте, а сверка принимает тот же граф", async () => {
     const fixtureValue = await fixture();
     const acceptedLock = await readFile(join(fixtureValue.checkout, "bun.lock"), "utf8");
@@ -624,6 +780,7 @@ describe("отказы не оставляют мусора", () => {
 describe("объявленные хосты", () => {
   test("набор алиасов — это принятые базой плюс разрешённый дельтой, в устойчивом порядке", () => {
     const accepted = JSON.stringify({
+      packageManager: `bun@${Bun.version}`,
       devDependencies: {
         "omp-host-1887": "npm:@oh-my-pi/pi-coding-agent@18.8.7",
         omp_host_bad: "npm:@oh-my-pi/pi-coding-agent@18.8.7",

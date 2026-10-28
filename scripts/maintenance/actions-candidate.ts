@@ -5,17 +5,18 @@ import { dirname, isAbsolute, join } from "node:path";
 import type { BaselineSnapshot } from "../../src/report";
 import { asRecord, parseStrictJSON } from "./json";
 import { parseCatalogJSON, CATALOG_PATH } from "./catalog";
-import { SNAPSHOT_PLATFORMS, SUPPORTED_HOSTS, snapshotPath } from "./paths";
+import { SNAPSHOT_PLATFORMS, SUPPORTED_HOSTS, snapshotPath, supportWindow, evidenceHosts, validateSupportedHostsManifest } from "./paths";
+import { compareVersions } from "./policy";
 import { candidatePaths, git, validateBundle, validateCandidateTree, writeBundleManifest, type Candidate } from "./actions-bundle";
 import { verifyReleaseDocuments } from "./release-documents";
 import { secretFreeEnvironment } from "./actions-github";
-import { approvedDelta, hostAliasOf } from "./measurement-environment";
-import { catalogEntries, identitiesOf, translationIdentitiesOf, markerPairsOf, validateSemantic, type SemanticEvidence } from "./semantic";
+import { approvedDelta, dispose, exportHostSnapshot, hostAliasOf, lockVerdict, prepareToolRoot } from "./measurement-environment";
+import { catalogEntries, catalogDelta, identitiesOf, markerPairsOf, translationIdentitiesOf, validateSemantic, type SemanticEvidence } from "./semantic";
 import { snapshotValue } from "./snapshots";
 import type { ControllerPolicy } from "./contracts";
 
 const platforms = SNAPSHOT_PLATFORMS;
-export interface SupportedHosts { schemaVersion: number; versions: { version: string; package: string; platforms: string[]; baselines: Record<string, string> }[]; [key: string]: unknown }
+export interface SupportedHosts { schemaVersion: number; versions: { version: string; package: string; platforms: string[]; baselines: Record<string, string> }[]; historical?: { version: string; package: string; platforms: string[]; baselines: Record<string, string> }[]; [key: string]: unknown }
 export async function runTrusted(cwd: string, args: readonly string[], timeout: number, environment: Record<string, string | undefined> = {}): Promise<string> {
   const child = Bun.spawn([...args], { cwd, env: { ...secretFreeEnvironment(), ...environment }, stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill(), timeout);
@@ -64,33 +65,49 @@ export async function prepareCandidate(checkout: string, output: string, candida
     manifest.version = candidate.releaseVersion;
     await Bun.write(join(worktree, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
     const snapshots: BaselineSnapshot[] = [];
+    const supported = validateSupportedHostsManifest(parseStrictJSON(await Bun.file(join(worktree, SUPPORTED_HOSTS)).text())) as SupportedHosts;
+    if (supported.versions.some(row => row.version === candidate.upstreamVersion || row.package === hostAliasOf(candidate.upstreamVersion)) || (supported.historical ?? []).some(row => row.version === candidate.upstreamVersion || row.package === hostAliasOf(candidate.upstreamVersion))) throw new Error("candidate-already-supported-or-alias-conflict");
+    const target = supportWindow([...supported.versions.map(row => row.version), candidate.upstreamVersion]);
+    if (!target.includes(candidate.upstreamVersion)) throw new Error("candidate-support-window-invalid");
     for (const platform of platforms) {
       const text = await runTrusted(worktree, ["bun", "scripts/matrix-registry-worker.ts", hostAliasOf(candidate.upstreamVersion), candidate.upstreamVersion, platform], policy.deadlinesMs.verification);
       const snapshot = snapshotValue(parseStrictJSON(text), candidate.upstreamVersion, platform);
       const bytes = JSON.stringify(snapshot, null, 2) + "\n";
       await Bun.write(join(worktree, snapshotPath(candidate.upstreamVersion, platform)), bytes);
-      snapshots.push(snapshot);
     }
-    const supported = parseStrictJSON(await Bun.file(join(worktree, SUPPORTED_HOSTS)).text()) as SupportedHosts;
-    if (supported.versions.some(row => row.version === candidate.upstreamVersion || row.package === hostAliasOf(candidate.upstreamVersion))) throw new Error("candidate-already-supported-or-alias-conflict");
-    for (const row of supported.versions) for (const platform of platforms) snapshots.push(snapshotValue(parseStrictJSON(await Bun.file(join(worktree, snapshotPath(row.version, platform))).text()), row.version, platform));
+    for (const version of target) for (const platform of platforms) snapshots.push(snapshotValue(parseStrictJSON(await Bun.file(join(worktree, snapshotPath(version, platform))).text()), version, platform));
     await Bun.write(join(output, "input.json"), JSON.stringify({ snapshots }) + "\n");
     await saveCandidateData(worktree, output, candidate);
   } finally { await removeCandidateWorktree(checkout, worktree); }
 }
 export async function completeSupport(worktree: string, candidate: Candidate): Promise<readonly string[]> {
-  const supported = parseStrictJSON(await Bun.file(join(worktree, SUPPORTED_HOSTS)).text()) as SupportedHosts;
+  const supported = validateSupportedHostsManifest(parseStrictJSON(await Bun.file(join(worktree, SUPPORTED_HOSTS)).text())) as SupportedHosts;
+  const active = [...supported.versions];
+  if (active.some(row => row.version === candidate.upstreamVersion || row.package === hostAliasOf(candidate.upstreamVersion)) || (supported.historical ?? []).some(row => row.version === candidate.upstreamVersion || row.package === hostAliasOf(candidate.upstreamVersion))) throw new Error("candidate-already-supported-or-alias-conflict");
+  const target = supportWindow([...active.map(row => row.version), candidate.upstreamVersion]);
+  if (!target.includes(candidate.upstreamVersion)) throw new Error("candidate-support-window-invalid");
+  const overflow = active.filter(row => !target.includes(row.version));
+  const retained = active.filter(row => target.includes(row.version));
   const baselines: Record<string, string> = {};
-  for (const platform of platforms) baselines[platform] = createHash("sha256").update(await Bun.file(join(worktree, snapshotPath(candidate.upstreamVersion, platform))).bytes()).digest("hex");
-  supported.versions.push({ version: candidate.upstreamVersion, package: hostAliasOf(candidate.upstreamVersion), platforms: [...platforms], baselines });
+  for (const platform of platforms) {
+    const file = Bun.file(join(worktree, snapshotPath(candidate.upstreamVersion, platform)));
+    if (!await file.exists()) throw new Error(`candidate-snapshot-missing:${candidate.upstreamVersion}-${platform}`);
+    const bytes = await file.bytes();
+    snapshotValue(parseStrictJSON(new TextDecoder().decode(bytes)), candidate.upstreamVersion, platform);
+    baselines[platform] = createHash("sha256").update(bytes).digest("hex");
+  }
+  const added = { version: candidate.upstreamVersion, package: hostAliasOf(candidate.upstreamVersion), platforms: [...platforms], baselines };
+  supported.versions = [...retained, added].sort((left, right) => compareVersions(left.version, right.version));
+  supported.historical = [...(supported.historical ?? []), ...overflow].sort((left, right) => compareVersions(left.version, right.version));
   await Bun.write(join(worktree, SUPPORTED_HOSTS), JSON.stringify(supported, null, 2) + "\n");
   const versions = supported.versions.map(row => row.version);
-  const manifest = parseStrictJSON(await Bun.file(join(worktree, "package.json")).text()) as { version: string; peerDependencies: Record<string, string> };
+  const manifest = parseStrictJSON(await Bun.file(join(worktree, "package.json")).text()) as { version: string; peerDependencies: Record<string, string>; devDependencies: Record<string, string> };
   manifest.version = candidate.releaseVersion;
   for (const name of ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-utils"]) {
     if (!Object.hasOwn(manifest.peerDependencies, name)) throw new Error("accepted-peer-missing");
     manifest.peerDependencies[name] = versions.join(" || ");
   }
+  for (const row of overflow) delete manifest.devDependencies[row.package];
   await Bun.write(join(worktree, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
   return versions;
 }
@@ -102,33 +119,62 @@ export async function verifyCommittedArtifacts(checkout: string, root: string, c
     if (committed.exitCode || !await artifact.exists() || !Buffer.from(committed.stdout).equals(Buffer.from(await artifact.arrayBuffer()))) throw new Error(`candidate-data-commit-mismatch:${path}`);
   }
 }
-export async function validatePublishedCandidate(checkout: string, root: string, policy: ControllerPolicy): Promise<Candidate> {
+export async function validatePublishedCandidate(checkout: string, root: string, policy: ControllerPolicy, registry?: string): Promise<Candidate> {
   const candidate = await validateBundle(root);
   if (candidate.repository !== policy.repository) throw new Error("candidate-repository-mismatch");
   const paths = validateCandidateTree(checkout, root, candidate);
   await verifyCommittedArtifacts(checkout, root, candidate, paths);
-  const before = parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:package.json`]));
-  const after = parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:package.json`]));
+  const before = parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:package.json`])) as Record<string, unknown>;
+  const after = parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:package.json`])) as Record<string, unknown>;
+  const supportedBefore = validateSupportedHostsManifest(parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:${SUPPORTED_HOSTS}`])));
+  const supportedAfter = validateSupportedHostsManifest(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:${SUPPORTED_HOSTS}`])));
+  const activeBefore = [...supportedBefore.versions];
+  const expectedVersions = supportWindow([...activeBefore.map(row => row.version), candidate.upstreamVersion]);
+  if (!expectedVersions.includes(candidate.upstreamVersion)) throw new Error("candidate-support-window-invalid");
+  const overflow = activeBefore.filter(row => !expectedVersions.includes(row.version));
+  const retained = activeBefore.filter(row => expectedVersions.includes(row.version));
+  const added = supportedAfter.versions.find(row => row.version === candidate.upstreamVersion);
+  if (!added) throw new Error("candidate-support-candidate-missing");
+  const expectedActive = [...retained, added].sort((left, right) => compareVersions(left.version, right.version));
+  const expectedHistorical = [...(supportedBefore.historical ?? []), ...overflow].sort((left, right) => compareVersions(left.version, right.version));
+  if (JSON.stringify(supportedAfter.versions) !== JSON.stringify(expectedActive) || JSON.stringify(supportedAfter.historical ?? []) !== JSON.stringify(expectedHistorical)) throw new Error("candidate-support-delta-invalid");
+  const supportKeys = new Set([...Object.keys(supportedBefore), ...Object.keys(supportedAfter)]);
+  for (const key of supportKeys) if (key !== "versions" && key !== "historical" && JSON.stringify(supportedBefore[key]) !== JSON.stringify(supportedAfter[key])) throw new Error("candidate-support-field-changed");
+  if (added.package !== hostAliasOf(candidate.upstreamVersion) || JSON.stringify(added.platforms) !== JSON.stringify([...platforms])) throw new Error("candidate-support-candidate-invalid");
+  const acceptedAliases = supportedBefore.versions.map(row => row.package);
+  const baseDev = asRecord(before.devDependencies);
+  if (!baseDev || acceptedAliases.some(alias => {
+    const row = activeBefore.find(item => item.package === alias);
+    return !row || baseDev[alias] !== `npm:@oh-my-pi/pi-coding-agent@${row.version}`;
+  }) || Object.keys(baseDev).filter(alias => alias.startsWith("omp-host-")).sort().join("\0") !== [...acceptedAliases].sort().join("\0")) throw new Error("accepted-alias-manifest-mismatch");
   const approved = approvedDelta(before, after, candidate.upstreamVersion);
   if ("failure" in approved) throw new Error(approved.failure);
   const oldVersion = String(asRecord(before)?.version).split(".").map(Number);
   if (candidate.releaseVersion !== `${oldVersion[0]}.${oldVersion[1]! + 1}.0` || asRecord(after)?.version !== candidate.releaseVersion) throw new Error("candidate-release-version-mismatch");
-  const supportedBefore = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:${SUPPORTED_HOSTS}`])));
-  const supportedAfter = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:${SUPPORTED_HOSTS}`])));
-  if (!supportedBefore || !supportedAfter || !Array.isArray(supportedBefore.versions) || !Array.isArray(supportedAfter.versions) || supportedAfter.versions.length !== supportedBefore.versions.length + 1) throw new Error("candidate-support-delta-invalid");
-  const added = supportedAfter.versions.at(-1) as Record<string, unknown>;
-  if (JSON.stringify(supportedAfter.versions.slice(0, -1)) !== JSON.stringify(supportedBefore.versions) || added.version !== candidate.upstreamVersion || added.package !== hostAliasOf(candidate.upstreamVersion) || JSON.stringify(added.platforms) !== JSON.stringify(platforms)) throw new Error("candidate-support-delta-invalid");
-  const { versions: _old, ...oldSupport } = supportedBefore; const { versions: _new, ...newSupport } = supportedAfter;
-  if (JSON.stringify(oldSupport) !== JSON.stringify(newSupport)) throw new Error("candidate-support-history-changed");
-  const versions = supportedAfter.versions.map(row => String(asRecord(row)?.version));
+  const versions = supportedAfter.versions.map(row => row.version);
   const peers = asRecord(asRecord(after)?.peerDependencies);
   for (const name of ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-utils"]) if (peers?.[name] !== versions.join(" || ")) throw new Error("candidate-peer-union-invalid");
+  const addedAfter = supportedAfter.versions.at(-1)!;
   for (const platform of platforms) {
     const path = snapshotPath(candidate.upstreamVersion, platform);
     const bytes = await Bun.file(join(root, "data", path)).bytes();
     snapshotValue(parseStrictJSON(new TextDecoder().decode(bytes)), candidate.upstreamVersion, platform);
-    if (asRecord(added.baselines)?.[platform] !== createHash("sha256").update(bytes).digest("hex")) throw new Error("candidate-baseline-hash-mismatch");
+    if (addedAfter.baselines?.[platform] !== createHash("sha256").update(bytes).digest("hex")) throw new Error("candidate-baseline-hash-mismatch");
   }
+  const measurementCheckout = await createCandidateWorktree(checkout, candidate.headSha!);
+  const measurementRoot = join(root, "trusted-measurement");
+  const prepared = await prepareToolRoot({ checkout: measurementCheckout, baseSha: candidate.baseSha, root: measurementRoot, delta: approved.delta, deadlineMs: policy.deadlinesMs.verification, registry });
+  if ("failure" in prepared) { await removeCandidateWorktree(checkout, measurementCheckout); throw new Error(prepared.failure); }
+  try {
+    const lock = lockVerdict(prepared.lock, git(checkout, ["show", `${candidate.headSha}:bun.lock`]), Bun.version);
+    if ("failure" in lock) throw new Error(lock.failure);
+    for (const platform of platforms) {
+      const exported = await exportHostSnapshot({ root: prepared.root, alias: hostAliasOf(candidate.upstreamVersion), version: candidate.upstreamVersion, platform, lock: prepared.lock, deadlineMs: policy.deadlinesMs.verification });
+      if ("failure" in exported) throw new Error(exported.failure);
+      const file = await Bun.file(join(root, "data", snapshotPath(candidate.upstreamVersion, platform))).json();
+      if (JSON.stringify(snapshotValue(file, candidate.upstreamVersion, platform)) !== JSON.stringify(snapshotValue(exported.snapshot, candidate.upstreamVersion, platform))) throw new Error(`candidate-snapshot-source-mismatch:${candidate.upstreamVersion}-${platform}`);
+    }
+  } finally { await dispose(prepared.root); await removeCandidateWorktree(checkout, measurementCheckout); }
   const currentEntries = catalogEntries(parseCatalogJSON(git(checkout, ["show", `${candidate.headSha}:${CATALOG_PATH}`])));
   const baseEntries = catalogEntries(parseCatalogJSON(git(checkout, ["show", `${candidate.baseSha}:${CATALOG_PATH}`])));
   const proof = asRecord(parseStrictJSON(await Bun.file(join(root, "proof.json")).text()));
@@ -139,14 +185,13 @@ export async function validatePublishedCandidate(checkout: string, root: string,
   const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
   if (!same(evidence.identities, identitiesOf(currentEntries)) || !same(evidence.identitiesBefore, identitiesOf(baseEntries)) || !same(evidence.translationIdentities, translationIdentitiesOf(currentEntries)) || !same(evidence.translationIdentitiesBefore, translationIdentitiesOf(baseEntries))) throw new Error("candidate-semantic-identities-mismatch");
   const snapshots: BaselineSnapshot[] = [];
-  for (const version of versions) for (const platform of platforms) snapshots.push(snapshotValue(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:${snapshotPath(version, platform)}`])), version, platform));
+  for (const row of evidenceHosts(supportedAfter)) for (const platform of row.platforms) snapshots.push(snapshotValue(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:${snapshotPath(row.version, platform)}`])), row.version, platform));
+  const baseSnapshots: BaselineSnapshot[] = [];
+  for (const row of evidenceHosts(supportedBefore)) for (const platform of row.platforms) baseSnapshots.push(snapshotValue(parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:${snapshotPath(row.version, platform)}`])), row.version, platform));
   if (!same(evidence.markerPairs, markerPairsOf(currentEntries, snapshots)) || !same(evidence.supportedVersions, versions)) throw new Error("candidate-semantic-source-mismatch");
-  // Пользовательские документы пересчитываются доверенным генератором из базы и проверенных данных головы и
-  // сверяются с байтами коммита: расширенный allowlist README не должен разрешать произвольную замену
-  // установочной инструкции, ссылок или истории CHANGELOG.
   await verifyReleaseDocuments(checkout, candidate, versions, evidence.coverage);
-  const requirements = currentEntries.filter(entry => !baseEntries.some(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash && entry.platforms.every(platform => old.platforms.includes(platform)))).map(entry => ({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms: [...entry.platforms].sort() }));
-  if (!same(evidence.changedCatalogVariants, requirements)) throw new Error("candidate-semantic-delta-mismatch");
+  const requirements = catalogDelta(currentEntries, baseEntries, snapshots, baseSnapshots);
+  if ("failure" in requirements || !same(evidence.changedCatalogVariants, requirements.variants)) throw new Error("candidate-semantic-delta-mismatch");
   const manifest = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:src/translations/variant-review.json`])));
   const oldManifest = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.baseSha}:src/translations/variant-review.json`])));
   if (!manifest || !oldManifest || manifest.semanticReview !== "disabled" || !Array.isArray(manifest.variants) || !Array.isArray(oldManifest.variants)) throw new Error("candidate-review-manifest-invalid");
