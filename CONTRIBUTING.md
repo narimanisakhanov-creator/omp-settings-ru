@@ -12,7 +12,7 @@
 
 перед коммитом `git status` без `--ignored` должен показывать только файлы, нужные потребителю плагина.
 
-`main` — единственная публичная ветка. ни один workflow не создаёт веток и не открывает PR: проверка upstream-кандидата кладёт результат в артефакт прогона, Dependabot держит `open-pull-requests-limit: 0`, а канал выпуска продвигается workflow-ом, а не веткой каталога. изменения вноси на `main` и сопровождай тегом выпуска.
+`main` — единственная постоянная публичная ветка. Hosted maintenance создаёт собственную временную `upgrade/omp-<version>` и проверяемый PR; прочие изменения тоже проходят обычный PR без force push. Dependabot держит `open-pull-requests-limit: 0`. Канал выпуска продвигается workflow-ом, а не отдельной веткой каталога; опубликованные теги и ассеты не переписываются.
 
 ## окружение
 
@@ -41,6 +41,11 @@ runtime получает живой реестр запущенного OMP; л�
 ## матрица и peer-диапазон
 
 `test/fixtures/host-snapshots/supported-hosts.json` связывает версии, алиасы пакетов и платформы, а `sha256` каждой записи указывает на снимок `<версия>-<платформа>.json` в том же каталоге. это единственный отслеживаемый экземпляр данных хоста: `baseline/` в checkout — локальный рабочий каталог для ручного экспорта, он игнорируется Git, и пути к снимкам берутся только из `scripts/maintenance/paths.ts`.
+
+`versions` — активное окно: не более трёх точных стабильных версий в числовом порядке. Только оно определяет `omp-host-*` зависимости, оба точных peer-списка, README и native CI-матрицу (три версии × три ОС). Цель — три максимальные stable npm-версии без prerelease; при отставании очередь проверяет самую старую недостающую новую версию, один кандидат и один обычный выпуск за цикл. README не обещает поддержку будущего окна до прохождения проверок.
+
+`historical` — неизменяемый архив прежних rows и snapshot JSON, не установленные зависимости и не обещание поддержки. `completeSupport` — единственная финальная ротация: добавляет проверенного кандидата, оставляет три последние active rows и переносит точный overflow в history без изменения старых данных; удаляет только его exact host aliases. `upgrade-host.ts` готовит pin и snapshots, но не завершает ротацию. Старые catalog identities и translation hashes сохраняются, а marker provenance может ссылаться на active + historical corpus.
+
 три уровня доказательств не заменяют друг друга:
 
 - source-derived и native-package-registry фиксируют метаданные реестра, не панель;
@@ -65,6 +70,11 @@ bun run release:check
 `matrix:check` проверяет покрытие и drift по выбранной матрице; не подменяет installed smoke.
 `release:check` проверяет pack allowlist, поиск паттернов секретов и схему записей `variant-review.json`, включая сохранность исторических identity.
 сохраняй версии, платформу, SHA, вывод и код возврата; конфигурация CI не равна завершённому run.
+
+В GitHub общий suite выполняется один раз в Linux job `shared`; девять jobs `check (os, version)` измеряют active coverage/drift и native smoke соответствующей пары, отдельно работает `hygiene`. Push exact head обязателен: same-repo PR не дублирует suite, fork PR проверяется без write credentials. После merge требуется новый успешный `main` push на merge SHA — зелёный кандидат не доказывает merge commit. `check.yml` не запускается на тегах; release/catalog используют exact-SHA доказательство принятого `main`, не требуют отдельного tag check.
+
+Finalize может повторить только failed jobs неизменного exact-SHA `check` через `gh run rerun <id> --failed`, максимум до attempt 3. Полный required set и успешный completed run обязательны; permissions, skipped/neutral required jobs и исчерпанные попытки блокируют выпуск. Это не автоматическое исправление теста или перевода. Durable outcome и ручной сброс подготовки описаны в [runbook](docs/maintenance.md#автоматизация-сопровождения).
+
 
 ## проверка установленного хоста
 

@@ -1,4 +1,4 @@
-import type { CheckRun, ControllerPolicy, ReleasePin } from "./contracts";
+import type { CheckRun, CheckWorkflowProof, ControllerPolicy, ReleasePin } from "./contracts";
 import { asRecord, readBoolean, readNumber, readPath, readRecords, readString } from "./json";
 import { CATALOG_ASSET, downloadReleaseAsset, loadVerifiedCatalog } from "../marketplace-catalog";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -58,7 +58,7 @@ export interface GithubPort {
   createDraft(branch: string, baseSha: string, headSha: string, version: string): Promise<number>;
   markReady(number: number, expectedHead: string): Promise<void>;
   checksFor(headSha: string): Promise<readonly CheckRun[]>;
-  requiredChecksPassed(runs: readonly CheckRun[], headSha: string, versions: readonly string[]): { ok: true } | { ok: false; reason: string };
+  requiredChecksPassed(runs: readonly CheckRun[], headSha: string, versions: readonly string[], selected?: CheckWorkflowProof): { ok: true } | { ok: false; reason: string };
   merge(number: number, headSha: string): Promise<{ mergeSha: string }>;
   deleteBranch(branch: string): Promise<void>;
   tag(tag: string, sha: string): Promise<void>;
@@ -266,7 +266,11 @@ export class GitHub implements GithubPort {
       const suiteId = readNumber(workflow, "check_suite_id")!;
       const jobs = await this.collection(`${root}/actions/runs/${runId}/jobs?filter=latest`, "jobs");
       for (const job of jobs) {
-        if (readNumber(job, "run_id") !== runId || readString(job, "head_sha") !== headSha) continue;
+        const jobAttempt = readNumber(job, "run_attempt");
+        const workflowAttempt = readNumber(workflow, "run_attempt");
+        if (readNumber(job, "run_id") !== runId || readString(job, "head_sha") !== headSha
+          || jobAttempt === undefined || !Number.isSafeInteger(jobAttempt) || jobAttempt < 1
+          || workflowAttempt === undefined || !Number.isSafeInteger(workflowAttempt) || workflowAttempt < jobAttempt) continue;
         const check = checks.find(candidate => readString(job, "check_run_url") === `https://api.github.com/${root}/check-runs/${readNumber(candidate, "id")}`
           && readNumber(asRecord(candidate.check_suite), "id") === suiteId
           && readPath(candidate, "app", "slug") === "github-actions"
@@ -281,6 +285,12 @@ export class GitHub implements GithubPort {
           conclusion: readString(job, "conclusion") ?? "",
           workflowPath: readString(workflow, "path")!,
           event: readString(workflow, "event")!,
+          workflowRunId: runId,
+          workflowAttempt: readNumber(workflow, "run_attempt"),
+          jobAttempt,
+          headBranch: readString(workflow, "head_branch"),
+          workflowStatus: readString(workflow, "status"),
+          workflowConclusion: readString(workflow, "conclusion"),
         });
       }
     }
@@ -294,21 +304,25 @@ export class GitHub implements GithubPort {
    * привязан к синтетическому merge-коммиту и receipt-ом служить не может.
    */
   requiredChecksPassed(
-    runs: readonly CheckRun[], headSha: string, versions: readonly string[],
+    runs: readonly CheckRun[], headSha: string, versions: readonly string[], selected?: CheckWorkflowProof,
   ): { ok: true } | { ok: false; reason: string } {
     const required = [
       ...versions.flatMap(version => this.policy.requiredCheckPlatforms.map(pair =>
         this.policy.requiredCheckTemplate.replaceAll("{os}", pair.os).replaceAll("{version}", version))),
       ...this.policy.additionalRequiredChecks,
     ];
+    // Choose one workflow globally, never a separate winner for each job name.
+    const eligible = runs.filter(run => run.headSha === headSha && run.event === "push" && run.workflowPath === ".github/workflows/check.yml");
+    const runId = selected?.id ?? Math.max(0, ...eligible.map(run => run.workflowRunId ?? 0));
+    const attempt = selected?.attempt ?? Math.max(0, ...eligible.filter(run => run.workflowRunId === runId).map(run => run.workflowAttempt ?? 0));
+    const bound = eligible.filter(run => run.workflowRunId === runId && run.workflowAttempt === attempt
+      && (!selected || run.headBranch === selected.headBranch));
+    if (selected && (selected.status !== "completed" || selected.conclusion !== "success")) return { ok: false, reason: "check-workflow-not-successful" };
     for (const name of required) {
-      const forName = runs.filter(run => run.name === name);
+      const forName = bound.filter(run => run.name === name);
       if (forName.length === 0) return { ok: false, reason: `check-missing:${name}` };
-      const settled = forName.filter(run => run.headSha === headSha && run.event === "push"
-        && run.workflowPath === ".github/workflows/check.yml");
-      if (settled.length === 0) return { ok: false, reason: `check-other-sha:${name}` };
-      if (settled.some(run => run.status === "completed" && run.conclusion === "success")) continue;
-      if (settled.some(run => run.status !== "completed")) return { ok: false, reason: `check-pending:${name}` };
+      if (forName.some(run => run.status !== "completed")) return { ok: false, reason: `check-pending:${name}` };
+      if (forName.length === 1 && forName[0]?.conclusion === "success") continue;
       return { ok: false, reason: `check-failed:${name}` };
     }
     return { ok: true };

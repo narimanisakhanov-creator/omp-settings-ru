@@ -20,9 +20,8 @@ import {
  *
  * 1. `release.yml` creates a DRAFT release with archive, `SHA256SUMS` and `marketplace.json`.
  *    A draft is not `latest`, so no user can observe a release without its catalog.
- * 2. The exact tag-commit `check.yml` run is *waited for*, not queried once. A tag push starts
- *    its own run and the release job finishes long before it; a single completed-only query is
- *    the observed v0.4.0 race.
+ * 2. A successful `check.yml` run on the exact release commit's main push is waited for; tags do not trigger
+ *    `check.yml`, so a tag run is not a required gate and cannot replace the exact-SHA proof.
  * 3. Every draft asset is re-downloaded through the authenticated asset API and re-hashed here,
  *    so the receipt describes the bytes that were uploaded rather than the release metadata.
  *    The catalog used for the decision is those downloaded bytes; no local file can be

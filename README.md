@@ -1,18 +1,28 @@
 # omp-settings-ru
 
-[![лицензия MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![последний выпуск](https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru)](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases)
+[![лицензия MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![последний выпуск](https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru)](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases) [![проверка main](https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml?query=branch%3Amain)
 
-русский перевод штатной панели `/settings` в [Oh My Pi](https://github.com/can1357/oh-my-pi).
-отдельное расширение — не форк OMP и не патч `omp.exe`.
+Русская панель `/settings` для [Oh My Pi](https://github.com/can1357/oh-my-pi): отдельное marketplace-расширение, не форк OMP и не патч `omp.exe`.
 
-переводит названия, описания, предупреждения и статические подписи вариантов.
-значения, пути, идентификаторы моделей и обработчики не меняются.
-вкладки, группы, динамические списки и остальная TUI остаются у хоста.
+🧩 переводит UI; 🔒 не меняет значения и обработчики; 🌐 работает офлайн в runtime.
 
-![OMP 18.8.4 / Windows](docs/screenshots/settings-ru.png)
+**Навигация:** [Установка](#установка) · [Совместимость](#поддерживаемые-версии-omp) · [Скриншоты](docs/screenshots.md) · [Изменения](CHANGELOG.md) · [Сообщить об ошибке](https://github.com/narimanisakhanov-creator/omp-settings-ru/issues)
 
-[о снимке](docs/screenshots.md).
+![OMP 18.13.3 / Windows — русская панель Settings](docs/screenshots/settings-ru.png)
 
+[о снимке и его происхождении](docs/screenshots.md).
+
+Переводит названия, описания, предупреждения и статические подписи вариантов. Значения, пути, идентификаторы моделей и обработчики не меняются; вкладки, группы, динамические списки и остальная TUI остаются у хоста.
+
+<details>
+<summary>Поиск и английское сравнение</summary>
+
+![Поиск «скорость» в русской панели](docs/screenshots/settings-ru-search.png)
+
+![Та же панель на английском](docs/screenshots/settings-en.png)
+
+</details>
+ 
 ## установка
 
 один штатный путь — marketplace OMP с каталогом из выпуска; не добавляй вторую копию через `-e`, `--plugin-dir` или settings extensions.
@@ -91,15 +101,12 @@ omp plugin upgrade omp-settings-ru@omp-settings-ru
 <!-- omp-supported:start -->
 ## поддерживаемые версии OMP
 
-Поддержка в этом checkout: OMP 18.6.1, 18.8.0, 18.8.4, 18.8.7, 18.12.6, 18.13.1, 18.13.2, 18.13.3.
+Поддержка в этом checkout: OMP 18.13.1, 18.13.2, 18.13.3.
+
+Целевое окно — три последние стабильные npm-версии OMP. Новые версии проходят проверки и добавляются последовательно; таблица показывает только уже измеренную поддержку, а не будущую очередь.
 
 | OMP | Windows | Linux | macOS |
 | --- | ---: | ---: | ---: |
-| 18.6.1 | 398/398 | 398/398 | 398/398 |
-| 18.8.0 | 404/404 | 404/404 | 404/404 |
-| 18.8.4 | 404/404 | 404/404 | 404/404 |
-| 18.8.7 | 410/410 | 410/410 | 410/410 |
-| 18.12.6 | 419/419 | 419/419 | 419/419 |
 | 18.13.1 | 421/421 | 421/421 | 421/421 |
 | 18.13.2 | 423/423 | 423/423 | 423/423 |
 | 18.13.3 | 426/426 | 426/426 | 426/426 |

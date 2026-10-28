@@ -4,13 +4,16 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  catalogEntries, changedCatalogRequirements, claimedVersions, collectSemanticEvidence, identitiesOf,
+  catalogDelta, catalogEntries, changedCatalogRequirements, claimedVersions, collectSemanticEvidence, identitiesOf,
   markerPairsOf, markers, measurementChanges, missingMarkers, packageChanges, readCatalog, readCatalogAtCommit,
   translationHash, translationIdentitiesOf, validateSemantic, type CatalogEntry, type SemanticEvidence,
 } from "../scripts/maintenance/semantic";
 import { parseCatalogJSON } from "../scripts/maintenance/catalog";
-import { SNAPSHOT_DIR, SUPPORTED_HOSTS, snapshotPath } from "../scripts/maintenance/paths";
+import { SNAPSHOT_DIR, SUPPORTED_HOSTS, evidenceHosts, snapshotPath, supportWindow } from "../scripts/maintenance/paths";
 import type { BaselineSnapshot } from "../src/report";
+import { buildSourceSnapshot } from "../src/report";
+import { computeSourceHash } from "../src/source";
+import { snapshotValue } from "../scripts/maintenance/snapshots";
 import { fixtureGit } from "./maintenance-runtime-fixture";
 import { validatePolicy } from "../scripts/maintenance/policy";
 import rawPolicy from "../maintenance.config.json";
@@ -34,14 +37,14 @@ const SOURCES = [{version:"18.8.7",platform:"win32",settings:{
   "spelling.autocomplete":{sourceHash:entriesFromJSON(CATALOG).find(entry=>entry.path==="spelling.autocomplete")!.sourceHash,label:"Autocomplete",description:"Suggest words from the {dictionary} as you type",warning:null,options:[{value:"system",label:"System",description:"System dictionary"},{value:"apple",label:"Apple",description:"macOS dictionary"}]},
 }}] as unknown as BaselineSnapshot[];
 
-const VERSION_SET = [...VERSIONS, CANDIDATE];
+const VERSION_SET = supportWindow([...VERSIONS, CANDIDATE]);
 const PLATFORMS = ["win32", "linux", "darwin"] as const;
 
 function evidence(overrides: Partial<SemanticEvidence> = {}): SemanticEvidence {
   const entries = entriesFromJSON(CATALOG);
   return {
     candidateVersion: CANDIDATE,
-    supportedVersions: VERSIONS,
+    supportedVersions: VERSION_SET,
     coverage: VERSION_SET.flatMap(version =>
       PLATFORMS.map(platform => ({ version, platform, complete: 404, total: 404 }))),
     drift: VERSION_SET.flatMap(version =>
@@ -108,9 +111,9 @@ describe("разбор реального каталога", () => {
   });
   test("all effective runtime variants pair against accepted baseline display fields",async()=>{
     const entries=await readCatalog(join(import.meta.dir,".."));
-    const supported=JSON.parse(await Bun.file(join(import.meta.dir,"..",SUPPORTED_HOSTS)).text()) as { versions: { version: string; platforms: string[] }[] };
+    const supported = await Bun.file(join(import.meta.dir,"..",SUPPORTED_HOSTS)).json();
     const snapshots:BaselineSnapshot[]=[];
-    for(const row of supported.versions)for(const platform of row.platforms)snapshots.push(await Bun.file(join(import.meta.dir,"..",snapshotPath(row.version,platform))).json() as BaselineSnapshot);
+    for(const row of evidenceHosts(supported))for(const platform of row.platforms)snapshots.push(snapshotValue(await Bun.file(join(import.meta.dir,"..",snapshotPath(row.version,platform))).json(),row.version,platform));
     const pairs=markerPairsOf(entries,snapshots);
     expect(new Set(pairs.map(pair=>`${pair.path}:${pair.sourceHash}`)).size).toBe(entries.length);
     const mismatches=pairs.filter(pair=>markers(pair.source).join("\0")!==markers(pair.ru).join("\0"));
@@ -153,9 +156,9 @@ describe("содержательный гейт", () => {
 
   test("нулевой total в покрытии отклоняется", () => {
     const broken = evidence().coverage.map(pair =>
-      pair.version === "18.8.0" && pair.platform === "win32" ? { ...pair, complete: 0, total: 0 } : pair);
+      pair.version === "18.8.4" && pair.platform === "win32" ? { ...pair, complete: 0, total: 0 } : pair);
     expect(validateSemantic(evidence({ coverage: broken }), policy))
-      .toEqual({ ok: false, reason: "coverage-incomplete:18.8.0-win32" });
+      .toEqual({ ok: false, reason: "coverage-incomplete:18.8.4-win32" });
   });
 
   test("пропущенная версия в покрытии отклоняется", () => {
@@ -346,15 +349,15 @@ describe("содержательный гейт", () => {
       .toEqual({ ok: false, reason: "coverage-missing:18.8.4-darwin" });
     const duplicated = [...evidence().coverage, evidence().coverage[0]!];
     expect(validateSemantic(evidence({ coverage: duplicated }), policy))
-      .toEqual({ ok: false, reason: `coverage-duplicate:${VERSIONS[0]}-win32` });
+      .toEqual({ ok: false, reason: `coverage-duplicate:${VERSION_SET[0]}-win32` });
     const extraDrift = [...evidence().drift, evidence().drift[0]!];
     expect(validateSemantic(evidence({ drift: extraDrift }), policy))
-      .toEqual({ ok: false, reason: `drift-duplicate:${VERSIONS[0]}-win32` });
+      .toEqual({ ok: false, reason: `drift-duplicate:${VERSION_SET[0]}-win32` });
     // Длина совпадает и дублей нет, но один ключ сетки подменён версией вне набора — сетка обязана отказать.
     const driftedKeys = evidence().drift.map((pair, index) =>
       index === 0 ? { ...pair, version: "18.9.0", platform: "win32" } : pair);
     expect(validateSemantic(evidence({ drift: driftedKeys }), policy))
-      .toEqual({ ok: false, reason: `drift-missing:${VERSIONS[0]}-win32` });
+      .toEqual({ ok: false, reason: `drift-missing:${VERSION_SET[0]}-win32` });
   });
 });
 
@@ -443,8 +446,8 @@ async function failureMessage(run: () => unknown): Promise<string> {
 }
 
 /** Манифест поддержки хостов в форме контракта: пары «версия × платформы» объявляет сам фикстурный тест. */
-function hostManifest(versions: readonly (readonly [string, readonly string[]])[]): unknown {
-  return { schemaVersion: 1, versions: versions.map(([version, platforms]) => ({ version, platforms, package: `omp-host-${version.replaceAll(".","")}` })) };
+function hostManifest(versions: readonly (readonly [string, readonly string[]])[]) {
+  return { schemaVersion: 1, versions: versions.map(([version, platforms]) => ({ version, platforms, package: `omp-host-${version.replaceAll(".","")}`, baselines: Object.fromEntries(PLATFORMS.map(platform => [platform,"a".repeat(64)])) })), historical: [] };
 }
 
 /** Корни принадлежат коллектору: ни успех, ни ранний отказ после установки не должны оставлять их в temp. */
@@ -504,52 +507,32 @@ describe("каталог рабочего дерева и базы", () => {
     } finally { await fixture.close(); }
   },90_000);
 
-  test("требования строк ревью выводятся из базовых снимков поддерживаемых версий", async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-requirements-"));
-    try {
-      writeCatalog(root,catalogSource([catalogEntry("old.setting","b")]));
-      const base=commitBase(root);
-      writeCatalog(root,catalogSource([catalogEntry("old.setting","b"),catalogEntry("theme.dark","a","Тёмная")]));
-      const snapshot = (settings: Readonly<Record<string, string>>): string => JSON.stringify({
-        version: "18.8.7", platform: "win32",
-        settings: Object.fromEntries(Object.entries(settings).map(([path, hash]) => [path, { sourceHash: hash }])),
-      });
-      mkdirSync(join(root, SNAPSHOT_DIR), { recursive: true });
-      for (const platform of ["win32", "linux", "darwin"]) {
-        writeFileSync(join(root, snapshotPath("18.8.7", platform)), snapshot({ "theme.dark": "a".repeat(64) }));
-      }
-      const collected = await changedCatalogRequirements(root,base,["18.8.7"]);
-      if ("failure" in collected) throw new Error(collected.failure);
-      const variant = collected.variants[0]!;
-      expect(variant.path).toBe("theme.dark");
-      expect(variant.platforms).toEqual(["darwin", "linux", "win32"]);
-      expect(variant.translationHash).toBe(entriesFromJSON(catalogSource([catalogEntry("theme.dark","a","Тёмная")]))[0]!.translationHash);
-      writeFileSync(join(root,snapshotPath("18.8.7","darwin")),snapshot({}));
-      expect(await changedCatalogRequirements(root,base,["18.8.7"])).toEqual({failure:`catalog-platform-mismatch:theme.dark:${"a".repeat(64)}`});
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  test("catalog delta requires exact source platforms for new variants", () => {
+    const snapshot = (platform: "win32"|"linux"|"darwin", include = true) => buildSourceSnapshot({version:"18.8.7",platform,schema:{"old.setting":{type:"string",default:"",ui:{tab:"General",label:"Old",description:"Old setting"}},...(include?{"theme.dark":{type:"string" as const,default:"",ui:{tab:"General",label:"Dark",description:"Dark theme"}}}:{})}});
+    const snapshots = PLATFORMS.map(platform=>snapshot(platform));
+    const entry = (path:string): CatalogEntry => ({path,sourceHash:snapshots[0]!.settings[path]!.sourceHash,translationHash:"f".repeat(64),label:"Перевод",platforms:PLATFORMS,observedIn:["18.8.7"]});
+    const old = entry("old.setting"), added = entry("theme.dark");
+    expect(catalogDelta([old,added],[old],snapshots,snapshots)).toEqual({variants:[requirement(added,["darwin","linux","win32"])]});
+    expect(catalogDelta([old,added],[old],PLATFORMS.map(platform=>snapshot(platform,platform!=="darwin")),snapshots)).toEqual({failure:`catalog-platform-mismatch:theme.dark:${added.sourceHash}`});
   });
-  test("unchanged data and added observations need no review; platform extension does",async()=>{
-    const root=mkdtempSync(join(tmpdir(),"semantic-platform-extension-"));
-    const variant={sourceHash:"a".repeat(64),label:"Метка",platforms:["win32"],observedIn:["18.8.7"]};
-    const pack=(platforms:string[],observedIn=["18.8.7"])=>JSON.stringify({locale:"ru",settings:{setting:{variants:[{...variant,platforms,observedIn}]}}});
-    try {
-      writeCatalog(root,pack(["win32"]));mkdirSync(join(root,SNAPSHOT_DIR),{recursive:true});
-      for(const platform of PLATFORMS) writeFileSync(join(root,snapshotPath("18.8.7",platform)),JSON.stringify({settings:platform==="win32"?{setting:{sourceHash:variant.sourceHash}}:{}}));
-      const base=commitBase(root);
-      expect(await changedCatalogRequirements(root,base,["18.8.7"])).toEqual({variants:[]});
-      writeCatalog(root,pack(["win32"],["18.8.7","18.8.9"]));
-      expect(await changedCatalogRequirements(root,base,["18.8.7"])).toEqual({variants:[]});
-      writeCatalog(root,pack(["win32","linux"]));
-      writeFileSync(join(root,snapshotPath("18.8.7","linux")),JSON.stringify({settings:{setting:{sourceHash:variant.sourceHash}}}));
-      const extended=await changedCatalogRequirements(root,base,["18.8.7"]);
-      if("failure" in extended)throw new Error(extended.failure);
-      expect(extended.variants).toEqual([{path:"setting",sourceHash:variant.sourceHash,translationHash:translationHash(variant),platforms:["linux","win32"]}]);
-      writeCatalog(root,pack(["win32"],["18.8.9"]));
-      const removed=await changedCatalogRequirements(root,base,["18.8.7"]);
-      expect("failure" in removed&&removed.failure.startsWith("historical-identity-removed:")).toBe(true);
-    } finally {rmSync(root,{recursive:true,force:true});}
+  test("rotation and added observations need no review; real platform extension does", () => {
+    const snapshots = PLATFORMS.map(platform=>buildSourceSnapshot({version:"18.8.7",platform,schema:{setting:{type:"string",default:"",ui:{tab:"General",label:"Setting",description:"Setting description"}}}}));
+    const entry: CatalogEntry = {path:"setting",sourceHash:snapshots[0]!.settings.setting!.sourceHash,translationHash:"f".repeat(64),label:"Перевод",platforms:["win32"],observedIn:["18.8.7"]};
+    expect(catalogDelta([{...entry,observedIn:["18.8.7","18.8.9"]}],[entry],snapshots,snapshots)).toEqual({variants:[]});
+    expect(catalogDelta([{...entry,platforms:["win32","linux"]}],[entry],snapshots,snapshots.slice(0,1))).toEqual({variants:[requirement(entry,["linux","win32"])]});
+    const removed = catalogDelta([{...entry,observedIn:["18.8.9"]}],[entry],snapshots,snapshots);
+    expect("failure" in removed&&removed.failure.startsWith("historical-identity-removed:")).toBe(true);
+    // Retiring a row does not erase any of its observations from the supplied evidence corpus.
+    const archived = snapshots.map(snapshot=>({...snapshot,version:"18.8.4"}));
+    expect(catalogDelta([entry],[entry],[...snapshots,...archived],[...archived,...snapshots])).toEqual({variants:[]});
+  });
+  test("historical-only source observations do not become new requirements on rotation", () => {
+    const historical = buildSourceSnapshot({version:"18.6.1",platform:"win32",schema:{retired:{type:"string",default:"",ui:{tab:"General",label:"Retired source",description:"Historical source only"}}}});
+    const active = buildSourceSnapshot({version:"18.8.7",platform:"win32",schema:{current:{type:"string",default:"",ui:{tab:"General",label:"Current source",description:"Active source only"}}}});
+    const entry: CatalogEntry = {path:"retired",sourceHash:historical.settings.retired!.sourceHash,translationHash:"f".repeat(64),label:"Архивный перевод",platforms:["win32"],observedIn:["18.6.1"]};
+    expect(catalogDelta([entry],[entry],[active,historical],[historical,active])).toEqual({variants:[]});
+    // Erasing history from the base corpus would spuriously demand a new independent review.
+    expect(catalogDelta([entry],[entry],[active,historical],[active])).toEqual({variants:[requirement(entry,["win32"])]});
   });
 
   test("переписанный измерительный код обесценивает доказательство до запуска скриптов", async () => {
@@ -585,66 +568,76 @@ describe("каталог рабочего дерева и базы", () => {
     }
   });
 
-  test("манифест: версия и пин хоста кандидата допустимы, прочее изменение — отказ", async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-package-"));
+  test("package delta uses accepted manifest aliases, exact peers and pinned toolchain", async () => {
+    const fixture = await semanticRuntimeFixture();
     try {
-      const git = (...args: readonly string[]) => Bun.spawnSync(
-        ["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", ...args],
-        { cwd: root, stdout: "pipe", stderr: "pipe" },
-      );
-      expect(git("init").exitCode).toBe(0);
-      const manifest = (extra: Record<string, unknown> = {}) => JSON.stringify({
-        name: "omp-settings-ru", version: "0.5.0",
-        dependencies: { "omp-host-1884": "npm:@oh-my-pi/pi-coding-agent@18.8.4" },
-        peerDependencies: { "@oh-my-pi/pi-coding-agent": "18.6.1 || 18.8.4" },
-        scripts: { test: "bun test" }, ...extra,
-      });
-      writeFileSync(join(root, "package.json"), manifest());
-      writeFileSync(join(root, "bun.lock"), "lock\n");
-      expect(git("add", "-A").exitCode).toBe(0);
-      expect(git("commit", "-m", "base").exitCode).toBe(0);
-      expect(await packageChanges(root, "HEAD", "18.8.7")).toEqual([]);
-      // Версия плагина и новый пин хоста кандидата — законная часть выпуска.
-      writeFileSync(join(root, "package.json"), manifest({
-        version: "0.6.0",
-        dependencies: { "omp-host-1884": "npm:@oh-my-pi/pi-coding-agent@18.8.4", "omp-host-1887": "npm:@oh-my-pi/pi-coding-agent@18.8.7" },
-        peerDependencies: { "@oh-my-pi/pi-coding-agent": "18.6.1 || 18.8.4 || 18.8.7" },
-      }));
-      expect(await packageChanges(root, "HEAD", "18.8.7")).toEqual([]);
-      // Произвольная зависимость, тестовый скрипт и постороннее поле — отказ.
-      const pinned = (extra: Record<string, unknown> = {}) => manifest({
-        ...extra,
-        dependencies: { "omp-host-1884": "npm:@oh-my-pi/pi-coding-agent@18.8.4", ...(extra.dependencies as object ?? {}) },
-      });
-      writeFileSync(join(root, "package.json"), pinned({ dependencies: { left: "1.0.0" } }));
-      expect(await packageChanges(root, "HEAD", "18.8.7")).toEqual(["package-dependency-changed:left"]);
-      writeFileSync(join(root, "package.json"), pinned({ scripts: { test: "bun test", postinstall: "curl evil" } }));
-      expect(await packageChanges(root, "HEAD", "18.8.7")).toEqual(["package-field-changed:scripts"]);
-      writeFileSync(join(root, "package.json"), pinned({ omp: { preload: "./evil.ts" } }));
-      expect(await packageChanges(root, "HEAD", "18.8.7")).toEqual(["package-field-changed:omp"]);
-      // Пин хоста, не упоминающий версию кандидата, не подтверждён.
-      writeFileSync(join(root, "package.json"), manifest({ dependencies: { "omp-host-1884": "npm:@oh-my-pi/pi-coding-agent@18.8.9" } }));
-      expect(await packageChanges(root, "HEAD", "18.8.7")).toEqual(["package-dependency-unverified:omp-host-1884"]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  }, 30000);
-
-  test("вариант без следа в базовых снимках не подтверждается платформенно", async () => {
-    const root = mkdtempSync(join(tmpdir(), "semantic-unbaselined-"));
-    try {
-      writeCatalog(root,catalogSource([catalogEntry("old.setting","b")]));
-      const base=commitBase(root);
-      writeCatalog(root,catalogSource([catalogEntry("old.setting","b"),catalogEntry("theme.dark","a","Тёмная")]));
-      mkdirSync(join(root, SNAPSHOT_DIR), { recursive: true });
-      for (const platform of ["win32", "linux", "darwin"]) {
-        writeFileSync(join(root, snapshotPath("18.8.7", platform)), JSON.stringify({ settings: {} }));
+      fixture.applyCandidate(fixture.checkout);
+      const file = join(fixture.checkout,"package.json");
+      const candidate = await Bun.file(file).json();
+      expect(await packageChanges(fixture.checkout,fixture.base,fixture.candidate)).toEqual([]);
+      const cases: readonly [Record<string,unknown>,string][] = [
+        [{...candidate,devDependencies:{...candidate.devDependencies,left:"1.0.0"}},"package-dependency-changed:left"],
+        [{...candidate,scripts:{postinstall:"curl evil"}},"manifest-field-changed:scripts"],
+        [{...candidate,omp:{preload:"./evil.ts"}},"manifest-field-changed:omp"],
+        [{...candidate,packageManager:"bun@0.0.0"},"manifest-field-changed:packageManager"],
+        [{...candidate,devDependencies:{...candidate.devDependencies,"omp-host-1884":"npm:@oh-my-pi/pi-coding-agent@18.8.9"}},"host-alias-unexpected:omp-host-1884"],
+      ];
+      for (const [value,reason] of cases) {
+        writeFileSync(file,JSON.stringify(value));
+        expect(await packageChanges(fixture.checkout,fixture.base,fixture.candidate)).toEqual([reason]);
       }
-      const collected = await changedCatalogRequirements(root,base,["18.8.7"]);
-      expect(collected).toEqual({ failure: `catalog-variant-without-baseline:theme.dark:${"a".repeat(64)}` });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    } finally {await fixture.close();}
+  },90_000);
+
+  test("accepted aliases must exactly match the base active manifest", async () => {
+    const fixture = await semanticRuntimeFixture();
+    try {
+      const file = join(fixture.checkout,"package.json");
+      const accepted = await Bun.file(file).json();
+      accepted.devDependencies["omp-host-1884"]="npm:@oh-my-pi/pi-coding-agent@18.8.9";
+      writeFileSync(file,JSON.stringify(accepted));
+      fixtureGit(fixture.checkout,["add","package.json"]);
+      fixtureGit(fixture.checkout,["commit","-q","-m","invalid accepted alias"]);
+      const base = fixtureGit(fixture.checkout,["rev-parse","HEAD"]);
+      fixture.applyCandidate(fixture.checkout);
+      const requests = fixture.requests();
+      expect(await collectSemanticEvidence(fixture.checkout,base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000})).toEqual({failure:"accepted-active-aliases-invalid"});
+      expect(fixture.requests()).toEqual(requests);
+    } finally {await fixture.close();}
+  },90_000);
+
+  test("support history, retained rows, top fields and snapshot bytes freeze before install", async () => {
+    const fixture = await semanticRuntimeFixture(VERSIONS.slice(0,3),VERSIONS[3]);
+    try {
+      const file = join(fixture.checkout,SUPPORTED_HOSTS);
+      const cases = ["history","retained","fields","snapshot","baseline"] as const;
+      for (const change of cases) {
+        fixture.applyCandidate(fixture.checkout);
+        const manifest = await Bun.file(file).json();
+        let reason: string;
+        if (change === "history") { manifest.historical[0].note="rewritten"; reason="supported-history-transition-invalid"; }
+        else if (change === "retained") { manifest.versions[0].note="rewritten"; reason=`supported-row-changed:${fixture.versions[1]}`; }
+        else if (change === "fields") { manifest.structuralFallback="rewritten"; reason="supported-fields-changed"; }
+        else {
+          const version=fixture.versions[0]!;
+          const snapshotFile=join(fixture.checkout,snapshotPath(version,"win32"));
+          const bytes=(await Bun.file(snapshotFile).text())+"\n";
+          writeFileSync(snapshotFile,bytes);
+          if (change === "baseline") manifest.historical[0].baselines.win32=createHash("sha256").update(bytes).digest("hex");
+          reason=change === "baseline"?"supported-history-transition-invalid":`historical-snapshot-changed:${version}-win32`;
+        }
+        writeFileSync(file,JSON.stringify(manifest));
+        const requests=fixture.requests();
+        expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000})).toEqual({failure:reason});
+        expect(fixture.requests()).toEqual(requests);
+      }
+    } finally {await fixture.close();}
+  },90_000);
+
+  test("variant absent from valid source snapshots is rejected", () => {
+    const entries = entriesFromJSON(catalogSource([catalogEntry("old.setting","b"),catalogEntry("theme.dark","a")]));
+    const snapshots = PLATFORMS.map(platform=>buildSourceSnapshot({version:"18.8.7",platform,schema:{other:{type:"string",default:"",ui:{tab:"General",label:"Other",description:"Other setting"}}}}));
+    expect(catalogDelta(entries,entries.slice(0,1),snapshots,snapshots)).toEqual({failure:`catalog-variant-without-baseline:theme.dark:${"a".repeat(64)}`});
   });
 
   test("разные sourceHash сосуществуют; перекрывающаяся платформа отклоняется",async()=>{
@@ -669,15 +662,12 @@ describe("каталог рабочего дерева и базы", () => {
   });
 });
 
-/**
- * Набор измеряемых версий — объединение принятой поддержки, поддержки, заявленной манифестом кандидата, и
- * версии кандидата. Заявленную версию нельзя пропустить: она либо измерена целиком по сетке «версия ×
- * платформа», либо сбор отказывает. Принятая поддержка при этом не вытесняется манифестом кандидата.
- */
-describe("реальная сетка принятых и заявленных версий", () => {
-  test("все базовые алиасы и кандидат измерены по трём реальным платформенным источникам", async () => {
+/** Only the rotated active window is measured; frozen history remains marker evidence. */
+describe("реальная сетка активного окна", () => {
+  test("три активных алиаса измерены, выбывшая версия сохранена только как доказательство", async () => {
     const fixture = await semanticRuntimeFixture(VERSIONS.slice(0,3),VERSIONS[3]);
     try {
+      expect(fixtureGit(fixture.checkout,["ls-tree","-r","--name-only",fixture.base])).not.toContain(snapshotPath(fixture.candidate,"win32"));
       fixture.applyCandidate(fixture.checkout);
       const rootsBefore = measurementRoots();
       // Кандидатская установленная копия — приманка, её код не должен исполняться измерением.
@@ -685,9 +675,11 @@ describe("реальная сетка принятых и заявленных �
       writeFileSync(decoy,"throw new Error('candidate-node-modules-decoy');");
       const result = await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000});
       if ("failure" in result) throw new Error(result.failure);
-      expect(result.coverage).toHaveLength(12);
-      expect(result.drift).toHaveLength(12);
-      for (const version of [...fixture.versions,fixture.candidate]) for (const platform of PLATFORMS) {
+      expect(result.supportedVersions).toEqual(["18.8.0","18.8.4","18.8.7"]);
+      expect(result.coverage).toHaveLength(9);
+      expect(result.drift).toHaveLength(9);
+      expect(result.coverage.some(pair=>pair.version===fixture.versions[0])).toBe(false);
+      for (const version of ["18.8.0","18.8.4","18.8.7"]) for (const platform of PLATFORMS) {
         const expected = version===fixture.candidate ? 7 : 1;
         expect(result.coverage.find(pair=>pair.version===version&&pair.platform===platform)).toEqual({version,platform,complete:expected,total:expected});
         expect(result.drift.find(pair=>pair.version===version&&pair.platform===platform)).toEqual({version,platform,added:0,removed:0,changed:0});
@@ -699,7 +691,7 @@ describe("реальная сетка принятых и заявленных �
       const reviewRows=result.changedCatalogVariants.map(variant=>({...variant,reviewedAtVersion:fixture.candidate,review:"independently-confirmed" as const,comparison:"Compared independently",reviewTask:"123:1",evidence:REVIEW_SHA}));
       const artifacts = new Map(result.changedCatalogVariants.map(variant => [`${variant.path}:${variant.sourceHash}`, { bytes: REVIEW_BYTES }]));
       expect(validateSemantic({...result,reviewRows},policy,{runId:"123",runAttempt:"1",artifacts})).toEqual({ok:true});
-      expect(fixture.requests().every(path=>path.startsWith("/@oh-my-pi/pi-")||/^\/pi-(coding-agent|utils)-[0-9.]+\.tgz$/.test(path))).toBe(true);
+      expect(fixture.requests().every(path=>path.startsWith("/@oh-my-pi/pi-")||/^\/pi-(coding-agent|utils|natives|tui)-[0-9.]+\.tgz$/.test(path))).toBe(true);
       expect(measurementRoots()).toEqual(rootsBefore);
     } finally { await fixture.close(); }
   },90_000);
@@ -710,27 +702,37 @@ describe("реальная сетка принятых и заявленных �
       fixture.applyCandidate(fixture.checkout);
       const file = join(fixture.checkout,SUPPORTED_HOSTS);
       const requests = fixture.requests();
-      writeFileSync(file,JSON.stringify(hostManifest([[fixture.candidate,PLATFORMS]])));
+      const manifest = await Bun.file(file).json();
+      writeFileSync(file,JSON.stringify({...manifest,versions:manifest.versions.filter((row:{version:string})=>row.version===fixture.candidate)}));
       expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000}))
-        .toEqual({failure:`supported-version-missing:${fixture.versions[0]}`});
-      writeFileSync(file,JSON.stringify(hostManifest([[fixture.versions[0]!,PLATFORMS],[fixture.candidate,["win32","linux"]]])));
+        .toEqual({failure:"supported-active-transition-invalid"});
+      manifest.versions.find((row:{version:string})=>row.version===fixture.candidate).platforms=["win32","linux"];
+      writeFileSync(file,JSON.stringify(manifest));
       expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000}))
-        .toEqual({failure:`supported-platform-missing:${fixture.candidate}:darwin`});
+        .toEqual({failure:`supported-platforms-invalid:${fixture.candidate}`});
       expect(fixture.requests()).toEqual(requests);
     } finally { await fixture.close(); }
   },90_000);
 
-  test("поддельный sourceHash снимка кандидата отклонён настоящим drift", async () => {
+  test("самосогласованная подделка источника и baseline кандидата отклонена независимым экспортом", async () => {
     const fixture = await semanticRuntimeFixture();
     try {
       fixture.applyCandidate(fixture.checkout);
       const rootsBefore = measurementRoots();
       const file = join(fixture.checkout,snapshotPath(fixture.candidate,"darwin"));
       const snapshot = JSON.parse(await Bun.file(file).text());
-      snapshot.settings["theme.dark"].sourceHash = "e".repeat(64);
-      writeFileSync(file,JSON.stringify(snapshot));
+      const source = snapshot.settings["theme.dark"];
+      source.label = "Forged but internally consistent source";
+      const {sourceHash: _oldHash, ...metadata} = source;
+      source.sourceHash = computeSourceHash(metadata);
+      const bytes = JSON.stringify(snapshot);
+      writeFileSync(file,bytes);
+      const supportFile = join(fixture.checkout,SUPPORTED_HOSTS);
+      const manifest = await Bun.file(supportFile).json();
+      manifest.versions.find((row:{version:string})=>row.version===fixture.candidate).baselines.darwin=createHash("sha256").update(bytes).digest("hex");
+      writeFileSync(supportFile,JSON.stringify(manifest));
       expect(await collectSemanticEvidence(fixture.checkout,fixture.base,fixture.candidate,fixture.versions,[T],undefined,{registry:fixture.registry,deadlineMs:30_000}))
-        .toEqual({failure:`drift-run-failed:${fixture.candidate}-darwin`});
+        .toEqual({failure:`candidate-snapshot-source-mismatch:${fixture.candidate}-darwin`});
       expect(measurementRoots()).toEqual(rootsBefore);
     } finally { await fixture.close(); }
   },90_000);
@@ -747,7 +749,7 @@ describe("манифест поддержанных версий читаетс�
   }
 
   test("читает объявленные версии в порядке манифеста", async () => {
-    const root = manifestRoot(hostManifest([["18.8.4", PLATFORMS], ["18.9.0", ["win32"]]]));
+    const root = manifestRoot(hostManifest([["18.8.4", PLATFORMS], ["18.9.0", PLATFORMS]]));
     try {
       expect(await claimedVersions(root)).toEqual(["18.8.4", "18.9.0"]);
     } finally {
@@ -757,17 +759,17 @@ describe("манифест поддержанных версий читаетс�
 
   test("отказывает на дублях, невалидном semver и неизвестной форме", async () => {
     const cases: readonly (readonly [unknown, string])[] = [
-      [hostManifest([["18.8.4", PLATFORMS], ["18.8.4", ["linux"]]]), "supported-version-duplicate:18.8.4"],
-      [hostManifest([["18.8.4", ["win32", "win32"]]]), "supported-platform-duplicate:18.8.4:win32"],
-      [{ schemaVersion: 1, versions: [{ version: "18.8", platforms: ["win32"] }] }, "supported-version-invalid"],
-      [{ schemaVersion: 1, versions: [{ version: "18.8.4" }] }, "supported-platforms-invalid:18.8.4"],
-      [{ schemaVersion: 1, versions: [{ version: "18.8.4", platforms: [] }] }, "supported-platforms-invalid:18.8.4"],
-      [{ schemaVersion: 1, versions: [{ version: "18.8.4", platforms: ["win 32"] }] }, "supported-platform-invalid:18.8.4"],
-      [{ schemaVersion: 1, versions: [{ version: "18.8.4", platforms: ["win32"] }] }, "supported-package-invalid:18.8.4"],
+      [hostManifest([["18.8.4", PLATFORMS], ["18.8.4", PLATFORMS]]), "supported-version-overlap:18.8.4"],
+      [hostManifest([["18.8.4", ["win32", "win32", "linux"]]]), "supported-platforms-invalid:18.8.4"],
+      [hostManifest([["18.8",PLATFORMS]]), "supported-version-invalid:18.8"],
+      [hostManifest([["18.8.4",[]]]), "supported-platforms-invalid:18.8.4"],
+      [hostManifest([["18.8.4",["win 32","linux","darwin"]]]), "supported-platforms-invalid:18.8.4"],
+      [{ ...hostManifest([["18.8.4",PLATFORMS]]), versions:[{version:"18.8.4",package:"wrong",platforms:PLATFORMS}] }, "supported-package-invalid:18.8.4"],
       [{ schemaVersion: 1, versions: [] }, "supported-hosts-invalid"],
-      [{ schemaVersion: 2, versions: [{ version: "18.8.4", platforms: ["win32"] }] }, "supported-hosts-invalid"],
-      [{ versions: [{ version: "18.8.4", platforms: ["win32"] }] }, "supported-hosts-invalid"],
-      [{ schemaVersion: 1, versions: [null] }, "supported-hosts-invalid"],
+      [{ schemaVersion: 2, versions: [] }, "supported-hosts-schema-invalid"],
+      [{ versions: [] }, "supported-hosts-schema-invalid"],
+      [{ schemaVersion: 1, versions: [null] }, "supported-active-row-invalid"],
+      [{ schemaVersion:1,versions:[{version:"18.8.4",package:"omp-host-1884",platforms:PLATFORMS}] }, "supported-baselines-invalid:18.8.4"],
       ["{not-json", "supported-hosts-unreadable"],
     ];
     for (const [manifest, reason] of cases) {

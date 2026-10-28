@@ -312,11 +312,10 @@ function requireCheckRun(repository: string, runId: string, targetCommitSha: str
 export type CheckRunOutcome = {kind: "succeeded"; id: string} | {kind: "failed"; conclusion: string} | {kind: "pending"};
 
 /**
- * Read the exact tag-commit `check.yml` outcome from a run listing.
+ * Read the exact commit-bound `check.yml` outcome from a run listing.
  *
- * A `check.yml` run that finished unsuccessfully is a refusal, never something to wait out;
- * only "no finished run yet" is pending. A run of another workflow, or one whose head does not
- * match, is not evidence about this commit at all.
+ * An unsuccessful check is a refusal, never something to wait out; only "no finished run yet" is pending.
+ * A different workflow or head is not evidence about this commit.
  */
 export function checkRunOutcome(rows: unknown, sha: string): CheckRunOutcome {
   if (!Array.isArray(rows)) return {kind: "pending"};
@@ -333,11 +332,11 @@ export function checkRunOutcome(rows: unknown, sha: string): CheckRunOutcome {
 }
 
 /**
- * Wait for the exact tag-commit `check.yml` run instead of querying once.
+ * Wait for the exact release commit's `check.yml` run instead of querying once.
  *
- * A tag push starts its own check run, and `release.yml` finishes long before that run does;
- * a single `status=completed` query reproduces the observed v0.4.0 race. Polling keeps the
- * gate genuine: a failed or absent run still refuses, only the timing is patient.
+ * `check.yml` runs on the exact-head branch push and on the merge/main push; it has no tag trigger. The
+ * release workflow may finish before the main-push check run does, so a single completed-only query races.
+ * Polling keeps the gate genuine: a failed or absent exact-SHA run still refuses, only timing is patient.
  */
 export async function waitForCheckRun(repository: string, sha: string, timeoutMs: number): Promise<string> {
   if (!SHA.test(sha)) throw new Error("marketplace-check-run-sha-invalid");

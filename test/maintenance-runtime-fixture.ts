@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSourceSnapshot } from "../src/report";
 import { hostAliasOf } from "../scripts/maintenance/measurement-environment";
-import { SNAPSHOT_DIR, SUPPORTED_HOSTS, snapshotPath } from "../scripts/maintenance/paths";
+import { SNAPSHOT_DIR, SUPPORTED_HOSTS, snapshotPath, supportWindow } from "../scripts/maintenance/paths";
 import { withInstallLock } from "./bun-install-lock";
 
-export const FIXTURE_PLATFORMS = ["win32", "linux", "darwin"] as const;
+export const FIXTURE_PLATFORMS = ["win32", "darwin", "linux"] as const;
 export const FIXTURE_ADDED = ["terminal.programStatus", "tts.localSpeed", "speech.speed", "bash.gitGuard", "worktree.onStart", "worktree.onExit"] as const;
 const repository = join(import.meta.dir, "..");
 export function fixtureGit(root: string, args: readonly string[]): string {
@@ -76,12 +76,12 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     packument["dist-tags"].latest = version;
     await writeFile(packumentPath,JSON.stringify(packument));
   }
-  await publish("@oh-my-pi/pi-utils","1.0.0",{"index.js":"export const fixtureUtils = true;"});
   for (const version of [...versions,candidate]) {
     const schemas = Object.fromEntries(FIXTURE_PLATFORMS.map(platform => [platform,schema(version === candidate,platform)]));
     await publish("@oh-my-pi/pi-coding-agent",version,{"config/all-settings.js":`const schemas = ${JSON.stringify(schemas)}; export function orderedSettings() { return Object.entries(schemas[process.platform]).map(([id,definition]) => ({id,definition})); }`});
+    for (const name of ["utils","natives","tui"]) await publish(`@oh-my-pi/pi-${name}`,version,{"index.js":"export const fixturePackage = true;"});
   }
-  for (const file of ["scripts/check-coverage.ts","scripts/diff-upstream.ts","scripts/matrix-host.ts","scripts/matrix-registry-worker.ts","scripts/maintenance/paths.ts","src/report.ts","src/source.ts","src/source-templates.ts","src/host-types.ts","src/translations/types.ts","src/translations/resolve.ts"]) {
+  for (const file of ["scripts/check-coverage.ts","scripts/diff-upstream.ts","scripts/matrix-host.ts","scripts/matrix-registry-worker.ts","scripts/maintenance/paths.ts","scripts/maintenance/policy.ts","src/report.ts","src/source.ts","src/source-templates.ts","src/host-types.ts","src/translations/types.ts","src/translations/resolve.ts"]) {
     mkdirSync(join(checkout,file,".."),{recursive:true}); copyFileSync(join(repository,file),join(checkout,file));
   }
   writeFileSync(join(checkout,"src/translations/ru.ts"),`import catalog from "./ru-catalog.json"; export const ru = catalog;`);
@@ -98,14 +98,25 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     }
     return JSON.stringify({locale:"ru",settings},null,2)+"\n";
   };
-  const manifest = (candidateIncluded: boolean) => ({name:"omp-settings-ru",version:candidateIncluded?"0.6.0":"0.5.0",type:"module",peerDependencies:{},devDependencies:{"@oh-my-pi/pi-utils":"1.0.0",...Object.fromEntries((candidateIncluded?[...versions,candidate]:versions).map(version => [hostAliasOf(version),`npm:@oh-my-pi/pi-coding-agent@${version}`]))}});
-  const supported = (included: boolean) => ({schemaVersion:1,versions:(included?[...versions,candidate]:versions).map(version => ({version,package:hostAliasOf(version),platforms:FIXTURE_PLATFORMS}))});
+  const manifest = (candidateIncluded: boolean) => {
+    const activeVersions = candidateIncluded ? supportWindow([...versions, candidate]) : supportWindow(versions);
+    const pin = candidateIncluded ? candidate : versions[versions.length-1]!;
+    return { name:"omp-settings-ru", version:candidateIncluded?"0.6.0":"0.5.0", type:"module", packageManager:"bun@1.4.2", peerDependencies:{"@oh-my-pi/pi-coding-agent":activeVersions.join(" || "),"@oh-my-pi/pi-utils":activeVersions.join(" || ")}, devDependencies:{...Object.fromEntries(["coding-agent","utils","natives","tui"].map(name=>[`@oh-my-pi/pi-${name}`,pin])),...Object.fromEntries(activeVersions.map(version => [hostAliasOf(version),`npm:@oh-my-pi/pi-coding-agent@${version}`]))}};
+  };
+  const supported = (target: string, included: boolean) => {
+    const active = included ? supportWindow([...versions,candidate]) : supportWindow(versions);
+    const overflow = (included ? [...new Set([...versions,candidate])] : versions).filter(version => !active.includes(version));
+    const row = (version: string) => ({version,package:hostAliasOf(version),platforms:FIXTURE_PLATFORMS,baselines:Object.fromEntries(FIXTURE_PLATFORMS.map(platform => [platform,createHash("sha256").update(readFileSync(join(target,snapshotPath(version,platform)))).digest("hex")]))});
+    return {schemaVersion:1,versions:active.map(row),historical:overflow.map(row)};
+  };
   function data(target: string, included: boolean) {
     mkdirSync(join(target,SNAPSHOT_DIR),{recursive:true});
-    writeFileSync(join(target,SUPPORTED_HOSTS),JSON.stringify(supported(included)));
-    for (const version of included?[...versions,candidate]:versions) for (const platform of FIXTURE_PLATFORMS) writeFileSync(join(target,snapshotPath(version,platform)),JSON.stringify(buildSourceSnapshot({version,platform,schema:schema(version===candidate,platform)})));
+    const allVersions = included ? [...new Set([...versions,candidate])] : versions;
+    for (const version of allVersions) for (const platform of FIXTURE_PLATFORMS) writeFileSync(join(target,snapshotPath(version,platform)),JSON.stringify(buildSourceSnapshot({version,platform,schema:schema(version===candidate,platform)})));
+    const rows = supported(target, included);
+    writeFileSync(join(target,SUPPORTED_HOSTS),JSON.stringify(rows));
     writeFileSync(join(target,"src/translations/ru-catalog.json"),catalog(included));
-    writeFileSync(join(target,"src/translations/variant-review.json"),JSON.stringify({variants:[]}));
+    writeFileSync(join(target,"src/translations/variant-review.json"),JSON.stringify({semanticReview:"disabled",variants:[]}));
     writeFileSync(join(target,"package.json"),JSON.stringify(manifest(included),null,2));
   }
   async function install() {

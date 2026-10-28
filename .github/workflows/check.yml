@@ -2,7 +2,10 @@
 name: check
 
 on:
+  # Branch pushes only. A tag names a release commit that `release.yml` proves itself, and the
+  # commit's own main push run is the exact-SHA proof the release helpers read.
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -13,8 +16,12 @@ concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
+# A same-repository pull request already produced this head's push run, and that push run is the
+# required source. Only a fork head, which cannot push here, needs a run of its own; it receives
+# the read-only token and no write credentials.
 jobs:
   matrix:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     outputs:
       hosts: ${{ steps.hosts.outputs.matrix }}
@@ -29,6 +36,47 @@ jobs:
           bun-version: 1.4.2
       - id: hosts
         run: echo "matrix=$(bun scripts/check-matrix.ts --ci-matrix)" >> "$GITHUB_OUTPUT"
+
+  # One shared suite for the whole supported window: typecheck, the full test run and the
+  # panel/release documents are proven once, not once per version and platform pair.
+  shared:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # The suite runs against the dev-pinned host, the same exact version `release.yml` proves.
+      - name: Resolve the dev-pinned host version
+        id: host-version
+        shell: bash
+        run: echo "version=$(bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).devDependencies["@oh-my-pi/pi-coding-agent"])')" >> "$GITHUB_OUTPUT"
+      - name: Prepare exact native updater host
+        id: updater-host
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOST_VERSION: ${{ steps.host-version.outputs.version }}
+        run: bun scripts/ci/prepare-host.ts "$HOST_VERSION" linux
+      - run: bun run typecheck
+      - run: bun run test
+        env:
+          OMP_UPDATER_EXECUTABLE: ${{ steps.updater-host.outputs.executable }}
+          OMP_UPDATER_HOST_VERSION: ${{ steps.host-version.outputs.version }}
+      - run: bun run smoke
+      - run: bun run smoke:panel
+      - run: bun run release:check
+
   check:
     needs: matrix
     name: check (${{ matrix.os }}, ${{ matrix.version }})
@@ -53,21 +101,13 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun run typecheck
       - name: Prepare exact native updater host
         id: updater-host
         env:
           GH_TOKEN: ${{ github.token }}
         run: bun scripts/ci/prepare-host.ts ${{ matrix.version }} ${{ matrix.platform }}
-      - run: bun run test
-        env:
-          OMP_UPDATER_EXECUTABLE: ${{ steps.updater-host.outputs.executable }}
-          OMP_UPDATER_HOST_VERSION: ${{ matrix.version }}
       - run: bun scripts/check-coverage.ts ${{ matrix.version }} ${{ matrix.platform }}
       - run: bun scripts/diff-upstream.ts ${{ matrix.version }} ${{ matrix.platform }}
-      - run: bun run smoke
-      - run: bun run smoke:panel
-      - run: bun run release:check
       - name: Exercise fixed native installed host
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,12 +118,15 @@ jobs:
       # marketplace clone of the working tree must load the translation.
       - name: Exercise reviewed source through the native marketplace channel
         run: bun scripts/distribution-smoke.ts --source --executable "${{ steps.updater-host.outputs.executable }}"
+      # The receipt file name is the artifact's durable content name; the attempt is added to the
+      # artifact name so a rerun cannot present an older attempt's receipt as this attempt's proof.
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: installed-smoke-${{ matrix.version }}-${{ matrix.platform }}
+          name: installed-smoke-${{ matrix.version }}-${{ matrix.platform }}-${{ github.run_attempt }}
           path: installed-smoke-${{ matrix.version }}-${{ matrix.platform }}.json
 
   hygiene:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -91,10 +134,17 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      # Composition of the tracked tree only: no dependency install is needed to list it.
+      - name: Refuse private or service artifacts in the tracked tree
+        run: bun scripts/check-repository.ts
       - name: check markdown links
         run: npx --yes markdown-link-check@3.13.7 --config .github/markdown-link-check.json README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/faq.md docs/glossary.md docs/architecture.md docs/screenshots.md docs/maintenance.md
       - name: scan for secrets

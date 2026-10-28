@@ -11,11 +11,15 @@ import rawPolicy from "../maintenance.config.json";
 import { finalizeCandidate } from "../scripts/maintenance/actions-publish";
 import { snapshotValue } from "../scripts/maintenance/snapshots";
 import { validatePublishedCandidate, verifyCommittedArtifacts } from "../scripts/maintenance/actions-candidate";
-import { identitiesOf, markerPairsOf, readCatalogAtCommit, translationIdentitiesOf } from "../scripts/maintenance/semantic";
-import type { BaselineSnapshot } from "../src/report";
+import { verifyCandidate } from "../scripts/maintenance/actions-verify";
 import { trustedReleaseDocuments, verifyReleaseDocuments } from "../scripts/maintenance/release-documents";
+import { SUPPORTED_HOSTS } from "../scripts/maintenance/paths";
+import { identitiesOf, markerPairsOf, catalogDelta, readCatalogAtCommit, translationIdentitiesOf } from "../scripts/maintenance/semantic";
+import type { BaselineSnapshot } from "../src/report";
 import { computeSourceHash } from "../src/source";
+import { ensureCheckRun } from "../scripts/maintenance/check-recovery";
 import { recoveryFixture } from "./maintenance-actions-fixture";
+import { FIXTURE_PLATFORMS, fixtureGit, semanticRuntimeFixture } from "./maintenance-runtime-fixture";
 
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -246,116 +250,106 @@ describe("release documents travel through the candidate commit", () => {
   });
 });
 
+for (const fault of ["dependency", "history"] as const) test(`production verify rejects invalid ${fault} before any dependency subprocess`, async () => {
+  const fixture = await semanticRuntimeFixture(["18.8.1", "18.8.2", "18.8.3", "18.8.4"], "18.8.7");
+  const artifact = join(await directory(), "artifact"); await mkdir(artifact);
+  try {
+    fixture.applyCandidate(fixture.checkout);
+    // Prepared artifacts carry the accepted support rows; completeSupport alone performs rotation.
+    await writeFile(join(fixture.checkout, SUPPORTED_HOSTS), fixtureGit(fixture.checkout, ["show", `${fixture.base}:${SUPPORTED_HOSTS}`]));
+    if (fault === "dependency") {
+      const pkg = await Bun.file(join(fixture.checkout, "package.json")).json(); pkg.devDependencies["unapproved-package"] = "1.0.0";
+      await writeFile(join(fixture.checkout, "package.json"), JSON.stringify(pkg));
+    } else {
+      const support = await Bun.file(join(fixture.checkout, SUPPORTED_HOSTS)).json(); support.historical[0].baselines.linux = "a".repeat(64);
+      await writeFile(join(fixture.checkout, SUPPORTED_HOSTS), JSON.stringify(support));
+    }
+    const candidate = { ...manifest(fixture.base), upstreamVersion: fixture.candidate };
+    for (const path of candidatePaths(fixture.candidate)) {
+      const file = Bun.file(join(fixture.checkout, path)); if (!await file.exists()) continue;
+      await mkdir(join(artifact, "data", path, ".."), { recursive: true }); await writeFile(join(artifact, "data", path), await file.bytes());
+    }
+    await writeBundleManifest(artifact, candidate);
+    const spawn = Bun.spawn; const spawnSync = Bun.spawnSync; const dependencyCommands: string[][] = [];
+    const guard = (command: string[]) => { if (command.includes("install")) { dependencyCommands.push(command); throw new Error("unexpected-dependency-subprocess"); } };
+    spyOn(Bun, "spawn").mockImplementation(((command: string[], options: object) => { guard(command); return spawn(command, options); }) as typeof Bun.spawn);
+    spyOn(Bun, "spawnSync").mockImplementation(((command: string[], options: object) => { guard(command); return spawnSync(command, options); }) as typeof Bun.spawnSync);
+    try {
+      await expect(verifyCandidate(fixture.checkout, artifact, validatePolicy(rawPolicy))).rejects.toThrow(fault === "dependency" ? "package-dependency-changed:unapproved-package" : "supported-history-transition-invalid");
+      expect(dependencyCommands).toEqual([]);
+    } finally { mock.restore(); }
+  } finally { await fixture.close(); }
+}, 120000);
+
 /**
  * Полный кандидат в форме, которую принимает публикация: bundle, patch, артефакт и proof.json.
  *
  * Проверяется именно то, что нельзя увидеть в одном документе: окончательный `proof.semantic.changedPaths`
  * обязан совпасть с diff коммита, включая README/CHANGELOG/upgrade-report, а сами документы — с доверенным
- * пересчётом. Никакого сетевого или нативного шага здесь нет: это границы артефакта и коммита.
+ * пересчётом. Используется настоящий изолированный npm registry; публичной сети и native smoke нет.
  */
+
 test("candidate proof carries README, CHANGELOG and report as the exact commit diff", async () => {
-  const root = await directory(); const repo = join(root, "repo"); const artifact = join(root, "artifact");
-  await mkdir(repo); await mkdir(artifact);
-  git(repo, "init", "-b", "main");
-  const BASE = "18.8.7"; const UPSTREAM = "18.9.0"; const VERSIONS = [BASE, UPSTREAM] as const;
-  const PLATFORMS = ["win32", "darwin", "linux"] as const;
-  const catalogPath = "src/translations/ru-catalog.json";
-  const write = async (target: string, path: string, text: string) => { await mkdir(join(target, path, ".."), { recursive: true }); await writeFile(join(target, path), text); };
-  const source = (label: string) => ({ tab: "General", group: null, label, description: `${label} description`, warning: null, options: null });
-  const settings = (version: string) => version === UPSTREAM ? { "theme.dark": source("Dark theme"), "composer.predictions": source("Predictions") } : { "theme.dark": source("Dark theme") };
-  const snapshot = (version: string, platform: string) => JSON.stringify({ version, platform, settings: Object.fromEntries(Object.entries(settings(version)).map(([path, value]) => [path, { sourceHash: computeSourceHash(value), ...value }])) });
-  const catalogText = (includeCandidate: boolean) => JSON.stringify({ locale: "ru", settings: {
-    "theme.dark": { variants: [{ sourceHash: computeSourceHash(source("Dark theme")), label: "Тёмная тема", description: "Тёмный фон", platforms: [...PLATFORMS], observedIn: [BASE] }] },
-    ...(includeCandidate ? { "composer.predictions": { variants: [{ sourceHash: computeSourceHash(source("Predictions")), label: "Предсказания", description: "Подсказки ввода", platforms: [...PLATFORMS], observedIn: [UPSTREAM] }] } } : {}),
-  } }, null, 2) + "\n";
-  /** Покрытие точных пар «версия × платформа»: доказательство требует полного и совпадающего измерения. */
-  const coverage = [...VERSIONS].flatMap(version => PLATFORMS.map(platform => ({ version, platform, complete: version === UPSTREAM ? 2 : 1, total: version === UPSTREAM ? 2 : 1 })));
+  const fixture = await semanticRuntimeFixture(["18.8.4"], "18.8.7");
+  try {
+  const root = await directory(); const repo = fixture.checkout; const artifact = join(root, "artifact"); await mkdir(artifact);
+  const policy = validatePolicy(rawPolicy); const BASE = fixture.versions[0]!; const UPSTREAM = fixture.candidate; const VERSIONS = [BASE, UPSTREAM] as const;
   const README = "# omp-settings-ru\n\n## установка\n\n```text\nomp plugin install omp-settings-ru@omp-settings-ru\n```\n\n<!-- omp-supported:start -->\n## старая таблица\n<!-- omp-supported:end -->\n\n## подробнее\n\n[FAQ](docs/faq.md).\n";
   const CHANGELOG = "# изменения\n\n## [0.5.0](https://example.invalid/v0.5.0) — 2026-10-10\n\n- прошлый выпуск\n";
-  const peer = VERSIONS.join(" || ");
-  /** Манифест сохраняет исторические пины хостов: новая версия добавляет алиас, старые остаются. */
-  const manifestText = (hostVersions: readonly string[], release: string) => JSON.stringify({
-    name: "omp-settings-ru", version: release,
-    peerDependencies: { "@oh-my-pi/pi-coding-agent": peer, "@oh-my-pi/pi-utils": peer },
-    devDependencies: {
-      "@oh-my-pi/pi-coding-agent": hostVersions.at(-1),
-      ...Object.fromEntries(hostVersions.map(hostVersion => [`omp-host-${hostVersion.replaceAll(".", "")}`, `npm:@oh-my-pi/pi-coding-agent@${hostVersion}`])),
-    },
-  }, null, 2) + "\n";
-  const supportText = (versions: readonly string[]) => JSON.stringify({ schemaVersion: 1, versions: versions.map(version => ({
-    version, package: `omp-host-${version.replaceAll(".", "")}`, platforms: [...PLATFORMS],
-    baselines: Object.fromEntries(PLATFORMS.map(platform => [platform, createHash("sha256").update(snapshot(version, platform)).digest("hex")])),
-  })) }, null, 2) + "\n";
-
-  const base = {
-    "README.md": README, "CHANGELOG.md": CHANGELOG, [catalogPath]: catalogText(false),
-    "src/translations/variant-review.json": JSON.stringify({ schemaVersion: 1, variants: [], semanticReview: "disabled" }),
-    "package.json": manifestText([BASE], "0.5.0"), "test/fixtures/host-snapshots/supported-hosts.json": supportText([BASE]),
-  };
-  for (const [path, text] of Object.entries(base)) await write(repo, path, text);
-  for (const platform of PLATFORMS) await write(repo, `test/fixtures/host-snapshots/${BASE}-${platform}.json`, snapshot(BASE, platform));
-  git(repo, "add", "."); git(repo, "commit", "-m", "base");
-  const baseSha = git(repo, "rev-parse", "HEAD");
-
-  const candidate: Candidate = { ...manifest(baseSha) as Candidate, upstreamVersion: UPSTREAM, releaseVersion: "0.6.0" };
-  // Данные кандидата пишутся до генерации: документы строятся из фактических снимков рабочего дерева.
-  for (const [path, text] of Object.entries({
-    [catalogPath]: catalogText(true), "package.json": manifestText([BASE, UPSTREAM], "0.6.0"),
-    "test/fixtures/host-snapshots/supported-hosts.json": supportText([BASE, UPSTREAM]),
-  })) await write(repo, path, text);
-  for (const platform of PLATFORMS) await write(repo, `test/fixtures/host-snapshots/${UPSTREAM}-${platform}.json`, snapshot(UPSTREAM, platform));
-  const documents = await trustedReleaseDocuments({ candidate, versions: [...VERSIONS], coverage, source: { kind: "worktree", worktree: repo } });
-  for (const [path, text] of Object.entries({ "README.md": documents.readme, "CHANGELOG.md": documents.changelog, "upgrade-report.md": documents.report })) await write(repo, path, text);
-  git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
-  const headSha = git(repo, "rev-parse", "HEAD");
-  const committed = git(repo, "diff", "--name-only", baseSha, headSha).split("\n").filter(Boolean).sort();
-  // Доказательство строится теми же функциями, что и в проверке: набор путей — окончательный, уже с документами.
-  const before = readCatalogAtCommit(repo, baseSha);
-  const after = readCatalogAtCommit(repo, headSha);
-  const snapshots = [...VERSIONS].flatMap(version => PLATFORMS.map(platform => JSON.parse(git(repo, "show", `${headSha}:test/fixtures/host-snapshots/${version}-${platform}.json`)) as BaselineSnapshot));
+  const write = async (path: string, text: string) => { await mkdir(join(repo, path, ".."), { recursive: true }); await writeFile(join(repo, path), text); };
+  await write("README.md", README); await write("CHANGELOG.md", CHANGELOG);
+  fixtureGit(repo, ["add", "README.md", "CHANGELOG.md"]); fixtureGit(repo, ["commit", "-m", "accepted documents"]);
+  const baseSha = fixtureGit(repo, ["rev-parse", "HEAD"]);
+  const candidate: Candidate = { schemaVersion: 1, repository: policy.repository, runId: "123", runAttempt: "2", baseSha, upstreamVersion: UPSTREAM, releaseVersion: "0.6.0", semanticReview: "disabled", files: [] };
+  fixture.applyCandidate(repo);
+  const coverage = VERSIONS.flatMap(version => FIXTURE_PLATFORMS.map(async platform => {
+    const snapshot = await Bun.file(join(repo, "test/fixtures/host-snapshots", `${version}-${platform}.json`)).json() as BaselineSnapshot;
+    const total = Object.keys(snapshot.settings).length;
+    return { version, platform, complete: total, total };
+  }));
+  const resolvedCoverage = await Promise.all(coverage);
+  const documents = await trustedReleaseDocuments({ candidate, versions: [...VERSIONS], coverage: resolvedCoverage, source: { kind: "worktree", worktree: repo } });
+  await write("README.md", documents.readme); await write("CHANGELOG.md", documents.changelog); await write("upgrade-report.md", documents.report);
+  fixtureGit(repo, ["add", "-A"]); fixtureGit(repo, ["commit", "-m", `chore: support OMP ${UPSTREAM}`]);
+  const headSha = fixtureGit(repo, ["rev-parse", "HEAD"]);
+  const committed = fixtureGit(repo, ["diff", "--name-only", baseSha, headSha]).split("\n").filter(Boolean).sort();
+  const before = readCatalogAtCommit(repo, baseSha); const after = readCatalogAtCommit(repo, headSha);
+  const snapshots = VERSIONS.flatMap(version => FIXTURE_PLATFORMS.map(platform => JSON.parse(fixtureGit(repo, ["show", `${headSha}:test/fixtures/host-snapshots/${version}-${platform}.json`])) as BaselineSnapshot));
+  const baseSnapshots = ["win32", "linux", "darwin"].map(platform => JSON.parse(fixtureGit(repo, ["show", `${baseSha}:test/fixtures/host-snapshots/${BASE}-${platform}.json`])) as BaselineSnapshot);
+  const delta = catalogDelta(after, before, snapshots, baseSnapshots); if ("failure" in delta) throw new Error(delta.failure);
   const evidence = {
-    candidateVersion: UPSTREAM, supportedVersions: [...VERSIONS], coverage,
-    drift: [...VERSIONS].flatMap(version => PLATFORMS.map(platform => ({ version, platform, added: 0, removed: 0, changed: 0 }))),
-    reviewRows: [], reviewRequired: false, changedPaths: committed,
-    changedCatalogVariants: after.filter(entry => !before.some(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash && entry.platforms.every(platform => old.platforms.includes(platform))))
-      .map(entry => ({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms: [...entry.platforms].sort() })),
-    identities: identitiesOf(after), identitiesBefore: identitiesOf(before),
-    translationIdentities: translationIdentitiesOf(after), translationIdentitiesBefore: translationIdentitiesOf(before),
-    markerPairs: markerPairsOf(after, snapshots),
+    candidateVersion: UPSTREAM, supportedVersions: [...VERSIONS], coverage: resolvedCoverage,
+    drift: VERSIONS.flatMap(version => FIXTURE_PLATFORMS.map(platform => ({ version, platform, added: 0, removed: 0, changed: 0 }))),
+    reviewRows: [], reviewRequired: false, changedPaths: committed, changedCatalogVariants: delta.variants,
+    identities: identitiesOf(after), identitiesBefore: identitiesOf(before), translationIdentities: translationIdentitiesOf(after), translationIdentitiesBefore: translationIdentitiesOf(before), markerPairs: markerPairsOf(after, snapshots),
   };
-  // Все три пользовательских документа входят в доказательство: это и есть «README/CHANGELOG/report в выпуске».
-  expect(evidence.changedPaths).toEqual(expect.arrayContaining(["README.md", "CHANGELOG.md", "upgrade-report.md"]));
-  const bundlePath = join(artifact, "candidate.bundle");
-  git(repo, "update-ref", "refs/heads/maintenance-candidate", headSha);
-  git(repo, "bundle", "create", bundlePath, "refs/heads/maintenance-candidate", `^${baseSha}`);
+  expect(committed).toEqual(expect.arrayContaining(["README.md", "CHANGELOG.md", "upgrade-report.md", "bun.lock"]));
+  fixtureGit(repo, ["update-ref", "refs/heads/maintenance-candidate", headSha]); fixtureGit(repo, ["bundle", "create", join(artifact, "candidate.bundle"), "refs/heads/maintenance-candidate", `^${baseSha}`]);
   await writeFile(join(artifact, "candidate.patch"), Bun.spawnSync(["git", "diff", "--binary", "--full-index", "--no-renames", baseSha, headSha], { cwd: repo, stdout: "pipe" }).stdout);
-  // Байты артефакта — ровно байты коммита: снимки фикстуры не завершаются переводом строки, а README — да.
-  for (const path of committed) await write(artifact, `data/${path}`, gitFile(repo, headSha, path));
-  const digest = (path: string) => createHash("sha256").update(git(repo, "show", `${headSha}:${path}`) + "\n").digest("hex");
-  await writeFile(join(artifact, "proof.json"), JSON.stringify({
-    baseSha, upstreamVersion: UPSTREAM, releaseVersion: "0.6.0", semanticReview: "disabled", nativeSmoke: "passed",
-    catalogSha256: digest(catalogPath), manifestSha256: digest("src/translations/variant-review.json"), semantic: evidence,
-  }, null, 2) + "\n");
+  for (const path of committed) { await mkdir(join(artifact, "data", path, ".."), { recursive: true }); await writeFile(join(artifact, "data", path), Bun.spawnSync(["git", "show", `${headSha}:${path}`], { cwd: repo, stdout: "pipe" }).stdout); }
+  const digest = (path: string) => createHash("sha256").update(fixtureGit(repo, ["show", `${headSha}:${path}`]) + "\n").digest("hex");
+  await writeFile(join(artifact, "proof.json"), JSON.stringify({ baseSha, upstreamVersion: UPSTREAM, releaseVersion: "0.6.0", semanticReview: "disabled", nativeSmoke: "passed", catalogSha256: digest("src/translations/ru-catalog.json"), manifestSha256: digest("src/translations/variant-review.json"), semantic: evidence }, null, 2) + "\n");
   await writeBundleManifest(artifact, { ...candidate, headSha });
-  const published = await validatePublishedCandidate(repo, artifact, validatePolicy(rawPolicy));
-  expect(published.headSha).toBe(headSha);
-  // Окончательные пути доказательства — ровно diff коммита, без лишних и без пропущенных документов.
-  const proof = await Bun.file(join(artifact, "proof.json")).json();
-  expect(proof.semantic.changedPaths).toEqual(committed);
-  // Доказательство, потерявшее пользовательский документ, не принимается: README не «вне» выпуска.
-  await writeFile(join(artifact, "proof.json"), JSON.stringify({ ...proof, semantic: { ...proof.semantic, changedPaths: committed.filter(path => path !== "README.md") } }, null, 2) + "\n");
-  await writeBundleManifest(artifact, { ...candidate, headSha });
-  await expect(validatePublishedCandidate(repo, artifact, validatePolicy(rawPolicy))).rejects.toThrow("candidate-verification-paths-mismatch");
-  await writeFile(join(artifact, "proof.json"), JSON.stringify(proof, null, 2) + "\n");
-  await writeBundleManifest(artifact, { ...candidate, headSha });
-  // Подмена README вне блока после пересчёта proof, patch и bundle отвергается финальной сверкой документа.
-  await write(repo, "README.md", documents.readme.replace("omp plugin install omp-settings-ru@omp-settings-ru", "omp plugin install attacker/marketplace"));
-  git(repo, "add", "."); git(repo, "commit", "-m", `chore: support OMP ${UPSTREAM}`);
-  const tampered = git(repo, "rev-parse", "HEAD");
-  await expect(verifyReleaseDocuments(repo, { ...published, headSha: tampered }, [...VERSIONS], coverage))
-    .rejects.toThrow("candidate-release-content-mismatch:README.md");
-}, 60000);
-
+  const published = await validatePublishedCandidate(repo, artifact, policy, fixture.registry); expect(published.headSha).toBe(headSha);
+  const proof = await Bun.file(join(artifact, "proof.json")).json(); expect(proof.semantic.changedPaths).toEqual(committed);
+  await writeFile(join(artifact, "proof.json"), JSON.stringify({ ...proof, semantic: { ...proof.semantic, changedPaths: committed.filter(path => path !== "README.md") } }, null, 2) + "\n"); await writeBundleManifest(artifact, { ...candidate, headSha });
+  await expect(validatePublishedCandidate(repo, artifact, policy, fixture.registry)).rejects.toThrow("candidate-verification-paths-mismatch");
+  await writeFile(join(artifact, "proof.json"), JSON.stringify(proof, null, 2) + "\n"); await writeBundleManifest(artifact, { ...candidate, headSha });
+  const originalLock = await Bun.file(join(repo, "bun.lock")).text();
+  const changedLock = originalLock.replace(/sha512-[A-Za-z0-9+/=]+/, `sha512-${"A".repeat(86)}==`);
+  expect(changedLock).not.toBe(originalLock);
+  await write("bun.lock", changedLock); fixtureGit(repo, ["add", "bun.lock"]); fixtureGit(repo, ["commit", "--amend", "--no-edit"]);
+  const lockHead = fixtureGit(repo, ["rev-parse", "HEAD"]);
+  fixtureGit(repo, ["update-ref", "refs/heads/maintenance-candidate", lockHead]);
+  await rm(join(artifact, "candidate.bundle"));
+  fixtureGit(repo, ["bundle", "create", join(artifact, "candidate.bundle"), "refs/heads/maintenance-candidate", `^${baseSha}`]);
+  await writeFile(join(artifact, "candidate.patch"), Bun.spawnSync(["git", "diff", "--binary", "--full-index", "--no-renames", baseSha, lockHead], { cwd: repo, stdout: "pipe" }).stdout);
+  await writeFile(join(artifact, "data/bun.lock"), changedLock); await writeBundleManifest(artifact, { ...candidate, headSha: lockHead });
+  await expect(validatePublishedCandidate(repo, artifact, policy, fixture.registry)).rejects.toThrow("lock-mismatch:packages");
+  await write("README.md", documents.readme.replace("omp plugin install omp-settings-ru@omp-settings-ru", "omp plugin install attacker/marketplace")); fixtureGit(repo, ["add", "README.md"]); fixtureGit(repo, ["commit", "-m", `chore: support OMP ${UPSTREAM}`]);
+  const tampered = fixtureGit(repo, ["rev-parse", "HEAD"]); await expect(verifyReleaseDocuments(repo, { ...published, headSha: tampered }, VERSIONS, resolvedCoverage)).rejects.toThrow("candidate-release-content-mismatch:README.md");
+  } finally { await fixture.close(); }
+}, 120000);
 test("expired owned candidate is closed and exact bare remote branch retired without mutating main", async () => {
   const root = await directory(); const repo = join(root, "repo"); const bare = join(root, "origin.git"); await mkdir(repo);
   git(repo, "init", "-b", "main"); await writeFile(join(repo, "CHANGELOG.md"), "base\n"); git(repo, "add", "CHANGELOG.md"); git(repo, "commit", "-m", "base");
@@ -471,3 +465,72 @@ for (const mode of ["merge-without-tag", "draft", "manual-draft", "manual-advanc
     expect(state).toMatchObject({ published: true, draft: false, reruns: mode === "draft" || mode === "manual-draft" || mode === "manual-advanced" ? 1 : 0 });
   } finally { mock.restore(); await fixture.cleanup(); }
 }, 30000);
+
+function recoveryTestGithub(runs: readonly Record<string, unknown>[], options: { rerun?: (id: number) => void; attempts?: Record<number, Record<string, unknown>> } = {}): HostedGitHub {
+  const policy = validatePolicy(rawPolicy);
+  let runIndex = 0;
+  const attempts = options.attempts ?? {};
+  const github = Object.create(HostedGitHub.prototype) as HostedGitHub & { policy: typeof policy };
+  Object.defineProperty(github, "policy", { value: policy });
+  github.list = async (path: string) => path.includes("/jobs") ? [{ id: 9001, run_id: 501, run_attempt: 1, name: "check (ubuntu-latest, 18.9.0)", conclusion: "failure", steps: [{ name: "Run tests", conclusion: "failure" }] }] : [runs[Math.min(runIndex++, runs.length - 1)]!];
+  github.api = async (path: string) => {
+    const match = path.match(/actions\/runs\/(\d+)\/attempts\/(\d+)/);
+    return match ? attempts[Number(match[2])] : undefined;
+  };
+  github.command = async () => { options.rerun?.(501); return ""; };
+  const checks = new HostedGitHub(policy, "fixture").checks;
+  checks.checksFor = async () => {
+    const run = runs[Math.min(Math.max(0, runIndex - 1), runs.length - 1)]!;
+    const names = [...policy.requiredCheckPlatforms.map(pair => policy.requiredCheckTemplate.replaceAll("{os}", pair.os).replaceAll("{version}", "18.9.0")), ...policy.additionalRequiredChecks];
+    return names.map((name, id) => ({id, name, headSha: String(run.head_sha), status: "completed", conclusion: "success", workflowPath: ".github/workflows/check.yml", event: "push", workflowRunId: Number(run.id), workflowAttempt: Number(run.run_attempt), headBranch: String(run.head_branch)}));
+  };
+  Object.defineProperty(github, "checks", { value: checks });
+  return github;
+}
+
+test("check recovery reruns failed workflow and accepts the new successful attempt", async () => {
+  let reruns = 0;
+  const repository = validatePolicy(rawPolicy).repository;
+  const run = (attempt: number, conclusion: string, status = "completed") => ({ id: 501, run_attempt: attempt, path: ".github/workflows/check.yml", event: "push", head_sha: "a".repeat(40), head_branch: "main", status, conclusion, repository: { full_name: repository } });
+  const github = recoveryTestGithub([run(1, "failure"), run(2, "success")], { rerun: () => { reruns++; }, attempts: { 2: run(2, "success") } });
+  const sleep = Bun.sleep; spyOn(Bun, "sleep").mockImplementation((() => sleep(1)) as typeof Bun.sleep);
+  await ensureCheckRun(github, "a".repeat(40), ["18.9.0"], "main");
+  expect(reruns).toBe(1);
+});
+
+test("check recovery accepts cancelled attempt only after failed-job rerun", async () => {
+  let reruns = 0;
+  const repository = validatePolicy(rawPolicy).repository;
+  const run = (attempt: number, conclusion: string) => ({ id: 501, run_attempt: attempt, path: ".github/workflows/check.yml", event: "push", head_sha: "b".repeat(40), head_branch: "main", status: "completed", conclusion, repository: { full_name: repository } });
+  const github = recoveryTestGithub([run(1, "cancelled"), run(2, "success")], { rerun: () => { reruns++; }, attempts: { 2: run(2, "success") } });
+  await ensureCheckRun(github, "b".repeat(40), ["18.9.0"], "main");
+  expect(reruns).toBe(1);
+});
+
+test("check recovery refuses to reset an exhausted attempt budget after restart", async () => {
+  let reruns = 0;
+  const repository = validatePolicy(rawPolicy).repository;
+  const run = { id: 501, run_attempt: 3, path: ".github/workflows/check.yml", event: "push", head_sha: "c".repeat(40), head_branch: "main", status: "completed", conclusion: "failure", repository: { full_name: repository } };
+  const github = recoveryTestGithub([run], { rerun: () => { reruns++; } });
+  await expect(ensureCheckRun(github, "c".repeat(40), ["18.9.0"], "main")).rejects.toThrow("candidate-checks-retries-exhausted:501");
+  expect(reruns).toBe(0);
+});
+
+test("check recovery refuses a rerun when no new attempt starts", async () => {
+  let clock = 0;
+  const now = spyOn(Date, "now").mockImplementation(() => clock);
+  const sleep = spyOn(Bun, "sleep").mockImplementation((ms: number | Date) => { clock += typeof ms === "number" ? ms : ms.getTime(); return Promise.resolve(); });
+  try {
+    const repository = validatePolicy(rawPolicy).repository;
+    const run = { id: 501, run_attempt: 1, path: ".github/workflows/check.yml", event: "push", head_sha: "d".repeat(40), head_branch: "main", status: "completed", conclusion: "failure", repository: { full_name: repository } };
+    const github = recoveryTestGithub([run], { attempts: {} });
+    let posts = 0;
+    github.command = async () => { posts++; throw new Error("This workflow is already running"); };
+    await expect(ensureCheckRun(github, "d".repeat(40), ["18.9.0"], "main")).rejects.toThrow("check-rerun-not-started:501");
+    expect(clock).toBe(60_000);
+    expect(posts).toBe(1);
+  } finally {
+    sleep.mockRestore();
+    now.mockRestore();
+  }
+});

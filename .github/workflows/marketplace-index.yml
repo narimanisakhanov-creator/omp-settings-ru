@@ -1,4 +1,5 @@
 name: marketplace-index
+run-name: marketplace-index ${{ inputs.tag || github.event.workflow_run.head_branch }}
 on:
   workflow_run:
     workflows: [release]

@@ -4,10 +4,13 @@ import { join } from "node:path";
 import { CATALOG_PATH, parseCatalogJSON, readCatalogJSON, translationFieldsHash } from "./catalog";
 import type { LocalePack, SourcePlatform } from "../../src/translations/types";
 import type { BaselineSnapshot } from "../../src/report";
-import { approvedDelta, dispose, hostAliasOf, lockVerdict, prepareToolRoot } from "./measurement-environment";
-import { SUPPORTED_HOSTS, snapshotPath } from "./paths";
-import type { ControllerPolicy } from "./contracts";
+import { snapshotValue } from "./snapshots";
+import { approvedDelta, dispose, exportHostSnapshot, hostAliasOf, lockVerdict, prepareToolRoot, type ApprovedDelta } from "./measurement-environment";
+import { SUPPORTED_HOSTS, SNAPSHOT_PLATFORMS, evidenceHosts, supportWindow, validateSupportedHostsManifest, snapshotPath, type SupportedHostsManifest } from "./paths";
+import { asRecord } from "./json";
+import { compareVersions } from "./policy";
 
+import type { ControllerPolicy } from "./contracts";
 /** Candidate catalog bytes are strict JSON data; executable code always comes from the accepted base. */
 
 export interface OptionTranslation {
@@ -213,39 +216,67 @@ export async function measurementChanges(worktree: string, baseSha: string): Pro
   return changed;
 }
 
-/** Допустимые изменения манифеста: версия плагина и пин хоста OMP для новой версии кандидата. */
-const HOST_ALIAS = /^omp-host-\d+$/;
-const OMP_PACKAGE = /^@oh-my-pi\/pi-(coding-agent|natives|tui|utils)$/;
-const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies"] as const;
 
-function sortedJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(sortedJson).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${sortedJson(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
+/** Compare JSON meaning without making property order part of the manifest contract. */
+function canonicalJSON(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJSON).join(",")}]`;
+  const record = asRecord(value);
+  return record ? `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJSON(record[key])}`).join(",")}}` : JSON.stringify(value);
 }
 
-function dependencyViolations(before: unknown, after: unknown, candidateVersion: string): string[] {
-  const left = (typeof before === "object" && before !== null ? before : {}) as Record<string, unknown>;
-  const right = (typeof after === "object" && after !== null ? after : {}) as Record<string, unknown>;
-  const violations: string[] = [];
-  for (const name of [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()) {
-    const oldValue = left[name];
-    const newValue = right[name];
-    if (sortedJson(oldValue) === sortedJson(newValue)) continue;
-    // Разрешено ровно одно: пин хоста OMP. Актуальный пакет-алиас указывает на версию кандидата, а
-    // peer/range-запись того же семейства обязана упоминать эту версию.
-    if (!HOST_ALIAS.test(name) && !OMP_PACKAGE.test(name)) {
-      violations.push(`package-dependency-changed:${name}`);
-      continue;
-    }
-    if (typeof newValue !== "string" || !newValue.includes(candidateVersion)) {
-      violations.push(`package-dependency-unverified:${name}`);
-    }
+/** The accepted executable aliases must describe exactly the accepted active support. */
+function acceptedAliasesFailure(accepted: Record<string, unknown>, support: SupportedHostsManifest): string | undefined {
+  const expected = Object.fromEntries(support.versions.map(row => [row.package, `npm:@oh-my-pi/pi-coding-agent@${row.version}`]));
+  const actual = Object.fromEntries(Object.entries(asRecord(accepted.devDependencies) ?? {}).filter(([name]) => name.startsWith("omp-host-")));
+  return canonicalJSON(actual) === canonicalJSON(expected) ? undefined : "accepted-active-aliases-invalid";
+}
+
+interface ValidatedSupportTransition {
+  readonly base: SupportedHostsManifest;
+  readonly after: SupportedHostsManifest;
+  readonly baseSnapshots: readonly BaselineSnapshot[];
+  readonly afterSnapshots: readonly BaselineSnapshot[];
+}
+
+/** Freeze every preexisting row and snapshot before installing any candidate dependency. */
+async function validatedSupportTransition(worktree: string, baseSha: string, candidateVersion: string): Promise<ValidatedSupportTransition> {
+  const blob = gitBytes(worktree, ["show", `${baseSha}:${SUPPORTED_HOSTS}`]);
+  if (blob.code !== 0) throw new Error("supported-hosts-baseline-unavailable");
+  const base = validateSupportedHostsManifest(JSON.parse(new TextDecoder().decode(blob.stdout)));
+  const after = validateSupportedHostsManifest(await Bun.file(join(worktree, SUPPORTED_HOSTS)).json());
+  const {versions: _beforeActive, historical: _beforeHistory, ...baseFields} = base;
+  const {versions: _afterActive, historical: _afterHistory, ...afterFields} = after;
+  if (canonicalJSON(baseFields) !== canonicalJSON(afterFields)) throw new Error("supported-fields-changed");
+  const oldRows = evidenceHosts(base);
+  if (oldRows.some(row => row.version === candidateVersion)) throw new Error(`supported-candidate-already-present:${candidateVersion}`);
+  if (base.versions.some(row => compareVersions(row.version, candidateVersion) >= 0)) throw new Error("supported-candidate-not-newer");
+  const active = supportWindow([...base.versions.map(row => row.version), candidateVersion]);
+  if (canonicalJSON(after.versions.map(row => row.version)) !== canonicalJSON(active)) throw new Error("supported-active-transition-invalid");
+  const history = [...(base.historical ?? []), ...base.versions.filter(row => !active.includes(row.version))].sort((a,b) => compareVersions(a.version,b.version));
+  if (canonicalJSON(after.historical) !== canonicalJSON(history)) throw new Error("supported-history-transition-invalid");
+  for (const row of base.versions.filter(row => active.includes(row.version))) {
+    if (canonicalJSON(after.versions.find(next => next.version === row.version)) !== canonicalJSON(row)) throw new Error(`supported-row-changed:${row.version}`);
   }
-  return violations;
+  const baseSnapshots: BaselineSnapshot[] = [];
+  for (const row of oldRows) for (const platform of row.platforms) {
+    const path = snapshotPath(row.version,platform);
+    const accepted = gitBytes(worktree,["show",`${baseSha}:${path}`]);
+    const file = Bun.file(join(worktree,path));
+    if (accepted.code !== 0 || !await file.exists()) throw new Error(`historical-snapshot-changed:${row.version}-${platform}`);
+    const bytes = await file.bytes();
+    if (!Buffer.from(accepted.stdout).equals(Buffer.from(bytes)) || createHash("sha256").update(bytes).digest("hex") !== row.baselines?.[platform]) throw new Error(`historical-snapshot-changed:${row.version}-${platform}`);
+    baseSnapshots.push(snapshotValue(JSON.parse(new TextDecoder().decode(bytes)),row.version,platform));
+  }
+  const candidate = after.versions.find(row => row.version === candidateVersion)!;
+  const candidateSnapshots: BaselineSnapshot[] = [];
+  for (const platform of SNAPSHOT_PLATFORMS) {
+    try {
+      const bytes = await Bun.file(join(worktree,snapshotPath(candidateVersion,platform))).bytes();
+      if (createHash("sha256").update(bytes).digest("hex") !== candidate.baselines?.[platform]) throw new Error("baseline-mismatch");
+      candidateSnapshots.push(snapshotValue(JSON.parse(new TextDecoder().decode(bytes)),candidateVersion,platform));
+    } catch { throw new Error(`candidate-snapshot-source-mismatch:${candidateVersion}-${platform}`); }
+  }
+  return {base,after,baseSnapshots,afterSnapshots:[...baseSnapshots,...candidateSnapshots]};
 }
 
 /**
@@ -254,23 +285,21 @@ function dependencyViolations(before: unknown, after: unknown, candidateVersion:
  * сравнение байтов lockfile здесь намеренно не применяется.
  */
 export async function packageChanges(worktree: string, baseSha: string, candidateVersion: string): Promise<readonly string[]> {
-  const violations: string[] = [];
   const blob = gitBytes(worktree, ["show", `${baseSha}:package.json`]);
   if (blob.code !== 0) throw new Error("package-baseline-unavailable");
   const file = Bun.file(`${worktree}/package.json`);
   if (!await file.exists()) throw new Error("package-json-missing");
   const before = JSON.parse(new TextDecoder().decode(blob.stdout)) as Record<string, unknown>;
   const after = JSON.parse(await file.text()) as Record<string, unknown>;
-  for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
-    if (key === "version" || (DEPENDENCY_FIELDS as readonly string[]).includes(key)) continue;
-    if (sortedJson(before[key]) !== sortedJson(after[key])) violations.push(`package-field-changed:${key}`);
-  }
-  for (const field of DEPENDENCY_FIELDS) {
-    violations.push(...dependencyViolations(before[field], after[field], candidateVersion));
-  }
-  const lockFile = Bun.file(`${worktree}/bun.lock`);
-  if (!await lockFile.exists()) violations.push("bun-lock-missing");
-  return violations;
+  const baseSupported = gitBytes(worktree, ["show", `${baseSha}:${SUPPORTED_HOSTS}`]);
+  if (baseSupported.code !== 0) return ["supported-hosts-baseline-unavailable"];
+  const manifest = validateSupportedHostsManifest(JSON.parse(new TextDecoder().decode(baseSupported.stdout)));
+  const aliasFailure = acceptedAliasesFailure(before, manifest);
+  if (aliasFailure) return [aliasFailure];
+  const approved = approvedDelta(before, after, candidateVersion);
+  if ("failure" in approved) return [approved.failure];
+  if (!await Bun.file(`${worktree}/bun.lock`).exists()) return ["bun-lock-missing"];
+  return [];
 }
 
 /**
@@ -285,40 +314,8 @@ export async function claimedVersions(worktree: string): Promise<readonly string
   const file = Bun.file(join(worktree, SUPPORTED_HOSTS));
   if (!await file.exists()) throw new Error("supported-hosts-unreadable");
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(await file.text()) as unknown;
-  } catch {
-    throw new Error("supported-hosts-unreadable");
-  }
-  if (typeof parsed !== "object" || parsed === null) throw new Error("supported-hosts-invalid");
-  const record = parsed as { schemaVersion?: unknown; versions?: unknown };
-  if (record.schemaVersion !== 1 || !Array.isArray(record.versions) || record.versions.length === 0) {
-    throw new Error("supported-hosts-invalid");
-  }
-  const seenVersions = new Set<string>();
-  const seenPairs = new Set<string>();
-  const versions: string[] = [];
-  for (const raw of record.versions) {
-    if (typeof raw !== "object" || raw === null) throw new Error("supported-hosts-invalid");
-    const entry = raw as { version?: unknown; platforms?: unknown; package?: unknown };
-    if (typeof entry.version !== "string" || !/^\d+\.\d+\.\d+$/.test(entry.version)) throw new Error("supported-version-invalid");
-    if (seenVersions.has(entry.version)) throw new Error(`supported-version-duplicate:${entry.version}`);
-    seenVersions.add(entry.version);
-    if (!Array.isArray(entry.platforms) || entry.platforms.length === 0) {
-      throw new Error(`supported-platforms-invalid:${entry.version}`);
-    }
-    for (const platform of entry.platforms) {
-      // Имя платформы — часть пары «версия × платформа», поэтому оно тоже проверяется на форму, а не
-      // приводится к строке: значение из манифеста не должно попасть в сетку измерений произвольным текстом.
-      if (typeof platform !== "string" || !/^[a-z0-9]+$/.test(platform)) throw new Error(`supported-platform-invalid:${entry.version}`);
-      const pair = `${entry.version}\u0000${platform}`;
-      if (seenPairs.has(pair)) throw new Error(`supported-platform-duplicate:${entry.version}:${platform}`);
-      seenPairs.add(pair);
-    }
-    if (entry.package !== hostAliasOf(entry.version)) throw new Error(`supported-package-invalid:${entry.version}`);
-    versions.push(entry.version);
-  }
-  return versions;
+  try { parsed = JSON.parse(await file.text()) as unknown; } catch { throw new Error("supported-hosts-unreadable"); }
+  return validateSupportedHostsManifest(parsed).versions.map(row => row.version);
 }
 
 /** Only the effective JSON catalog is a candidate input; old TS layouts are deliberately unsupported. */
@@ -541,23 +538,19 @@ export interface MeasurementEnvironmentOptions {
   readonly registry?: string;
   readonly deadlineMs?: number;
 }
-/** Сбор доказательства: реальные скрипты + фактический каталог + строки ревью + база для сохранности. */
-export async function collectSemanticEvidence(
-  worktree: string,
-  baseSha: string,
-  candidateVersion: string,
-  supportedVersions: readonly string[],
-  changedPaths: readonly string[],
-  /** Манифест ревью: `undefined` — независимого ревью ещё не было (стадия подготовки). */
-  review?: readonly ReviewRow[],
-  environment: MeasurementEnvironmentOptions = {},
-): Promise<SemanticEvidence | { readonly failure: string }> {
-  const deadlineMs = environment.deadlineMs ?? 120_000;
-  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0) return { failure: "measurement-deadline-invalid" };
-  // Набор измеряемых версий — объединение принятой поддержки и поддержки, объявленной кандидатом: заявленную
-  // версию нельзя пропустить в сетке «версия × платформа», и она всё равно обязана быть измерена целиком.
-  // Гейт измерительного кода стоит ДО запуска скриптов: иначе кандидат мог бы переписать измерение и
-  // предъявить его результат как доказательство.
+export interface SemanticPreflight {
+  readonly transition: ValidatedSupportTransition;
+  readonly entries: readonly CatalogEntry[];
+  readonly before: readonly CatalogEntry[];
+  readonly acceptedManifest: string;
+  readonly delta: ApprovedDelta;
+}
+
+/** Shared file/git-only gate: no dependency resolution, installation or candidate execution. */
+export async function semanticPreflight(
+  worktree: string, baseSha: string, candidateVersion: string,
+): Promise<SemanticPreflight | { readonly failure: string }> {
+  // Reject changed measurement code before any dependency subprocess.
   let measurementTouched: readonly string[];
   try {
     measurementTouched = await measurementChanges(worktree, baseSha);
@@ -574,23 +567,10 @@ export async function collectSemanticEvidence(
     return { failure: error instanceof Error ? error.message : String(error) };
   }
   if (packageTouched.length > 0) return { failure: packageTouched[0]! };
-  // Заявленная кандидатом поддержка читается строго и ДО первого подпроцесса: объявленная версия расширяет
-  // сетку измерений, поэтому непроверяемая запись манифеста — отказ, а не молчаливо пропущенная версия.
-  let claimed: readonly string[];
-  try {
-    claimed = await claimedVersions(worktree);
-  } catch (error) {
-    return { failure: error instanceof Error ? error.message : String(error) };
-  }
-  const versions = [...new Set([...supportedVersions, ...claimed, candidateVersion])];
-  const manifest = await Bun.file(join(worktree, SUPPORTED_HOSTS)).json() as { versions: { version: string; platforms: string[] }[] };
-  for (const version of versions) {
-    const record = manifest.versions.find(record => record.version === version);
-    if (!record) return { failure: `supported-version-missing:${version}` };
-    for (const platform of ["win32", "linux", "darwin"]) {
-      if (!record.platforms.includes(platform)) return { failure: `supported-platform-missing:${version}:${platform}` };
-    }
-  }
+  let transition: ValidatedSupportTransition;
+  try { transition = await validatedSupportTransition(worktree,baseSha,candidateVersion); }
+  catch (error) { return { failure: error instanceof Error ? error.message : String(error) }; }
+  // Catalog/history validation also precedes every dependency subprocess.
   // Каталог разбирается статически ДО первого подпроцесса измерения: файл каталога — данные, а не программа,
   // и постороннее утверждение уровня модуля означало бы исполнение неизвестного кода при импорте. Отказ здесь
   // дешевле и точнее отказа измерения и не зависит от того, какие пары хостов вообще поддержаны.
@@ -617,14 +597,30 @@ export async function collectSemanticEvidence(
   }
   const acceptedManifest = gitBytes(worktree, ["show", `${baseSha}:package.json`]);
   if (acceptedManifest.code !== 0) return { failure: "package-baseline-unavailable" };
-  const approved = approvedDelta(
-    JSON.parse(new TextDecoder().decode(acceptedManifest.stdout)),
-    JSON.parse(await Bun.file(`${worktree}/package.json`).text()), candidateVersion,
-  );
+  const accepted = JSON.parse(new TextDecoder().decode(acceptedManifest.stdout)) as Record<string, unknown>;
+  const aliasFailure = acceptedAliasesFailure(accepted, transition.base);
+  if (aliasFailure) return {failure:aliasFailure};
+  const approved = approvedDelta(accepted, JSON.parse(await Bun.file(`${worktree}/package.json`).text()), candidateVersion);
   if ("failure" in approved) return approved;
+  return { transition, entries, before, acceptedManifest: new TextDecoder().decode(acceptedManifest.stdout), delta: approved.delta };
+}
+
+/** Measure accepted code with the independently reconstructed approved graph. */
+export async function collectSemanticEvidence(
+  worktree: string, baseSha: string, candidateVersion: string,
+  _supportedVersions: readonly string[], changedPaths: readonly string[],
+  review?: readonly ReviewRow[], environment: MeasurementEnvironmentOptions = {},
+): Promise<SemanticEvidence | { readonly failure: string }> {
+  const deadlineMs = environment.deadlineMs ?? 120_000;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0) return { failure: "measurement-deadline-invalid" };
+  const preflight = await semanticPreflight(worktree, baseSha, candidateVersion);
+  if ("failure" in preflight) return preflight;
+  const { transition, entries, before, delta } = preflight;
+  const manifest = transition.after;
+  const versions = manifest.versions.map(row => row.version);
   const prepared = await prepareToolRoot({
     checkout: worktree, baseSha, root: join(tmpdir(), `omp-measurement-${randomUUID()}`),
-    delta: approved.delta, deadlineMs, registry: environment.registry,
+    delta, deadlineMs, registry: environment.registry,
   });
   if ("failure" in prepared) return prepared;
   try {
@@ -633,16 +629,24 @@ export async function collectSemanticEvidence(
         return { failure: `host-identity-missing:${hostAliasOf(version)}` };
       }
     }
+    const candidateRow = manifest.versions.find(row => row.version === candidateVersion);
+    if (!candidateRow) return { failure: `supported-version-missing:${candidateVersion}` };
+    for (const platform of candidateRow.platforms) {
+      const exported = await exportHostSnapshot({ root: prepared.root, alias: candidateRow.package, version: candidateRow.version, platform, lock: prepared.lock, deadlineMs });
+      if ("failure" in exported) return { failure: `candidate-snapshot-source-mismatch:${candidateRow.version}-${platform}` };
+      const expected = transition.afterSnapshots.find(snapshot => snapshot.version === candidateRow.version && snapshot.platform === platform)!;
+      let actual: BaselineSnapshot;
+      try { actual = snapshotValue(exported.snapshot, candidateRow.version, platform); }
+      catch { return { failure: `candidate-snapshot-source-mismatch:${candidateRow.version}-${platform}` }; }
+      if (canonicalJSON(actual) !== canonicalJSON(expected)) return { failure: `candidate-snapshot-source-mismatch:${candidateRow.version}-${platform}` };
+    }
     const lock = lockVerdict(prepared.lock, await Bun.file(`${worktree}/bun.lock`).text(), Bun.version);
     if ("failure" in lock) return lock;
     const measured = await collectCoverageAndDrift(prepared.root, versions);
     if ("failure" in measured) return measured;
-    const requirements = await changedCatalogRequirements(worktree, baseSha, versions);
+    const requirements = catalogDelta(entries,before,transition.afterSnapshots,transition.baseSnapshots);
     if ("failure" in requirements) return requirements;
-    const snapshots: BaselineSnapshot[] = [];
-    for (const version of versions) for (const platform of ["win32", "linux", "darwin"]) {
-      snapshots.push(await Bun.file(join(prepared.root, snapshotPath(version, platform))).json() as BaselineSnapshot);
-    }
+    const snapshots = transition.afterSnapshots;
     let markerPairs: SemanticEvidence["markerPairs"];
     try { markerPairs = markerPairsOf(entries, snapshots); }
     catch (error) { return { failure: error instanceof Error ? error.message : String(error) }; }
@@ -659,54 +663,65 @@ export async function collectSemanticEvidence(
   }
 }
 
-/** Review only new identities and platform extensions, never every row in a changed data file. */
+/** Pure semantic delta over the complete active + historical source corpus on both sides. */
+export function catalogDelta(
+  currentEntries: readonly CatalogEntry[], baseEntries: readonly CatalogEntry[],
+  afterSnapshots: readonly BaselineSnapshot[], baseSnapshots: readonly BaselineSnapshot[],
+): { readonly variants: SemanticEvidence["changedCatalogVariants"] } | { readonly failure: string } {
+  const identities = new Set(identitiesOf(currentEntries));
+  const removed = identitiesOf(baseEntries).find(identity => !identities.has(identity));
+  if (removed) return { failure: `historical-identity-removed:${removed}` };
+  const translations = new Set(translationIdentitiesOf(currentEntries));
+  const changed = translationIdentitiesOf(baseEntries).find(identity => !translations.has(identity));
+  if (changed) return { failure: `historical-translation-changed:${changed}` };
+  const observations = (snapshots: readonly BaselineSnapshot[]) => {
+    const result = new Map<string,Set<string>>();
+    for (const snapshot of snapshots) for (const [path,setting] of Object.entries(snapshot.settings)) {
+      const key = `${path}\0${setting.sourceHash}`;
+      const platforms = result.get(key) ?? new Set<string>();
+      platforms.add(snapshot.platform); result.set(key,platforms);
+    }
+    return result;
+  };
+  const observed = observations(afterSnapshots);
+  const oldObserved = observations(baseSnapshots);
+  const variants: {path:string;sourceHash:string;translationHash:string;platforms:readonly string[]}[] = [];
+  for (const entry of currentEntries) {
+    const key = `${entry.path}\0${entry.sourceHash}`;
+    const previous = baseEntries.filter(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash);
+    const platforms = [...(observed.get(key) ?? [])].filter(platform => entry.platforms.includes(platform as SourcePlatform)).sort();
+    const extended = entry.platforms.some(platform => !previous.some(old => old.platforms.includes(platform)))
+      || platforms.some(platform => !oldObserved.get(key)?.has(platform));
+    if (!previous.length || extended) {
+      if (!platforms.length) return { failure: `catalog-variant-without-baseline:${entry.path}:${entry.sourceHash}` };
+      if (platforms.join(",") !== [...entry.platforms].sort().join(",")) return { failure: `catalog-platform-mismatch:${entry.path}:${entry.sourceHash}` };
+      variants.push({path:entry.path,sourceHash:entry.sourceHash,translationHash:entry.translationHash,platforms});
+    }
+  }
+  return {variants};
+}
+
+/** File adapter: registry/active window arguments never narrow the historical source corpus. */
 export async function changedCatalogRequirements(
-  worktree: string, baseSha: string, versions: readonly string[],
-): Promise<{ readonly variants: readonly {
-  readonly path: string; readonly sourceHash: string; readonly translationHash: string; readonly platforms: readonly string[];
-}[] } | { readonly failure: string }> {
+  worktree: string, baseSha: string, _versions: readonly string[],
+): Promise<{ readonly variants: SemanticEvidence["changedCatalogVariants"] } | { readonly failure: string }> {
   try {
     const current = await readCatalog(worktree);
-    const before = readCatalogAtCommit(worktree, baseSha);
-    const identities = new Set(identitiesOf(current));
-    const removed = identitiesOf(before).find(identity => !identities.has(identity));
-    if (removed) return { failure: `historical-identity-removed:${removed}` };
-    const translations = new Set(translationIdentitiesOf(current));
-    const changed = translationIdentitiesOf(before).find(identity => !translations.has(identity));
-    if (changed) return { failure: `historical-translation-changed:${changed}` };
-    const observed = new Map<string, Set<string>>();
-    const oldObserved = new Map<string, Set<string>>();
-    for (const version of versions) for (const platform of ["win32", "linux", "darwin"]) {
-      const path = snapshotPath(version, platform);
-      const file = Bun.file(join(worktree, path));
-      if (!await file.exists()) return { failure: `baseline-missing:${version}-${platform}` };
-      const add = (text: string, target: Map<string, Set<string>>) => {
-        const snapshot = JSON.parse(text) as BaselineSnapshot;
-        for (const [path, setting] of Object.entries(snapshot.settings)) {
-          const key = `${path}\0${setting.sourceHash}`;
-          const platforms = target.get(key) ?? new Set<string>();
-          platforms.add(platform); target.set(key, platforms);
-        }
-      };
-      add(await file.text(), observed);
-      const blob = gitBytes(worktree, ["show", `${baseSha}:${path}`]);
-      if (blob.code === 0) add(new TextDecoder().decode(blob.stdout), oldObserved);
+    const before = readCatalogAtCommit(worktree,baseSha);
+    const afterManifest = validateSupportedHostsManifest(await Bun.file(join(worktree,SUPPORTED_HOSTS)).json());
+    const blob = gitBytes(worktree,["show",`${baseSha}:${SUPPORTED_HOSTS}`]);
+    if (blob.code !== 0) return {failure:"supported-hosts-baseline-unavailable"};
+    const baseManifest = validateSupportedHostsManifest(JSON.parse(new TextDecoder().decode(blob.stdout)));
+    const afterSnapshots: BaselineSnapshot[] = [];
+    const baseSnapshots: BaselineSnapshot[] = [];
+    for (const row of evidenceHosts(afterManifest)) for (const platform of row.platforms) {
+      afterSnapshots.push(snapshotValue(await Bun.file(join(worktree,snapshotPath(row.version,platform))).json(),row.version,platform));
     }
-    const variants: { path: string; sourceHash: string; translationHash: string; platforms: readonly string[] }[] = [];
-    for (const entry of current) {
-      const key = `${entry.path}\0${entry.sourceHash}`;
-      const previous = before.filter(old => old.path === entry.path && old.sourceHash === entry.sourceHash && old.translationHash === entry.translationHash);
-      const platforms = [...(observed.get(key) ?? [])].filter(platform => entry.platforms.includes(platform as SourcePlatform)).sort();
-      const extended = entry.platforms.some(platform => !previous.some(old => old.platforms.includes(platform)))
-        || platforms.some(platform => !oldObserved.get(key)?.has(platform));
-      if (!previous.length || extended) {
-        if (!platforms.length) return { failure: `catalog-variant-without-baseline:${entry.path}:${entry.sourceHash}` };
-        if (platforms.join(",") !== [...entry.platforms].sort().join(",")) return { failure: `catalog-platform-mismatch:${entry.path}:${entry.sourceHash}` };
-        variants.push({ path: entry.path, sourceHash: entry.sourceHash, translationHash: entry.translationHash, platforms });
-      }
+    for (const row of evidenceHosts(baseManifest)) for (const platform of row.platforms) {
+      const source = gitBytes(worktree,["show",`${baseSha}:${snapshotPath(row.version,platform)}`]);
+      if (source.code !== 0) return {failure:`baseline-missing:${row.version}-${platform}`};
+      baseSnapshots.push(snapshotValue(JSON.parse(new TextDecoder().decode(source.stdout)),row.version,platform));
     }
-    return { variants };
-  } catch (error) {
-    return { failure: error instanceof Error ? error.message : String(error) };
-  }
+    return catalogDelta(current,before,afterSnapshots,baseSnapshots);
+  } catch (error) { return {failure:error instanceof Error ? error.message : String(error)}; }
 }

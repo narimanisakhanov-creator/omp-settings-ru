@@ -51,4 +51,15 @@ export interface CheckRun {
   readonly id: number; readonly name: string; readonly headSha: string;
   readonly status: string; readonly conclusion: string;
   readonly workflowPath: string; readonly event: string;
+  readonly workflowRunId?: number; readonly workflowAttempt?: number;
+  readonly headBranch?: string;
+  /** Actual producer attempt; latest-jobs may reuse a successful earlier job. */
+  readonly jobAttempt?: number;
+  readonly workflowStatus?: string; readonly workflowConclusion?: string;
+
+}
+
+export interface CheckWorkflowProof {
+  readonly id: number; readonly attempt: number; readonly headBranch: string;
+  readonly status: string; readonly conclusion: string;
 }

@@ -5,11 +5,12 @@ import { join } from "node:path";
 import type { ControllerPolicy } from "./contracts";
 import { candidatePaths, git, validateBundle, type Candidate } from "./actions-bundle";
 import { applyCandidateData, completeSupport, createCandidateWorktree, removeCandidateWorktree, runTrusted, saveCandidateData } from "./actions-candidate";
-import { collectSemanticEvidence, validateSemantic, type SemanticEvidence } from "./semantic";
+import { collectSemanticEvidence, semanticPreflight, validateSemantic, type SemanticEvidence } from "./semantic";
 import { trustedReleaseDocuments } from "./release-documents";
 import { changedEntries, planPaths, intendedTree, commitApproved } from "./tree";
 import { CATALOG_PATH } from "./catalog";
 import { selectFixedHostAsset, verifyFixedHostBytes } from "../ci/prepare-host";
+import { expectedLock } from "./measurement-environment";
 
 /** Изменения рабочего дерева против политики: посторонний путь блокирует кандидата, а не игнорируется. */
 function policyPaths(worktree: string, policy: ControllerPolicy, candidate: Candidate): readonly string[] {
@@ -26,14 +27,26 @@ export async function verifyCandidate(checkout: string, root: string, policy: Co
   try {
     await applyCandidateData(root, worktree, candidate);
     const versions = await completeSupport(worktree, candidate);
-    await runTrusted(worktree, ["bun", "install", "--ignore-scripts"], policy.deadlinesMs.verification);
-    // Фактические входы кандидата проверяются до первого измерения: измерение не должно обслуживать путь,
-    // который всё равно будет отвергнут.
+    // Reject all candidate-controlled package, support/history and measurement inputs before resolution.
     const inputPaths = policyPaths(worktree, policy, candidate);
+    const preflight = await semanticPreflight(worktree, candidate.baseSha, candidate.upstreamVersion);
+    if ("failure" in preflight) throw new Error(preflight.failure);
+    const lockRoot = await mkdtemp(join(tmpdir(), "omp-actions-lock-"));
+    try {
+      const lock = await expectedLock({
+        acceptedManifest: preflight.acceptedManifest,
+        acceptedLock: git(worktree, ["show", `${candidate.baseSha}:bun.lock`]),
+        delta: preflight.delta, scratch: join(lockRoot, "scratch"), cacheDir: join(lockRoot, "cache"),
+        deadline: Date.now() + policy.deadlinesMs.verification,
+      });
+      if ("failure" in lock) throw new Error(lock.failure);
+      await Bun.write(join(worktree, "bun.lock"), lock.lock);
+    } finally { await rm(lockRoot, { recursive: true, force: true }); }
     const semantic = await collectSemanticEvidence(worktree, candidate.baseSha, candidate.upstreamVersion, versions, inputPaths, undefined, { deadlineMs: policy.deadlinesMs.verification });
     if ("failure" in semantic) throw new Error(semantic.failure);
     const verdict = validateSemantic(semantic, policy, undefined, true);
     if (!verdict.ok) throw new Error(verdict.reason);
+    await runTrusted(worktree, ["bun", "install", "--frozen-lockfile", "--ignore-scripts"], policy.deadlinesMs.verification);
     // Пользовательские документы строятся из уже измеренного: README — от измеренного покрытия, CHANGELOG и
     // отчёт — от каталогов базы/кандидата и снимков старой и новой версии. Ошибка генерации блокирует
     // кандидата, а не подменяется общей строкой выпуска.
@@ -51,7 +64,7 @@ export async function verifyCandidate(checkout: string, root: string, policy: Co
     if (!releaseResponse.ok) throw new Error("native-release-unavailable");
     const asset = selectFixedHostAsset(await releaseResponse.json(), candidate.upstreamVersion, process.platform, process.arch);
     const response = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(policy.deadlinesMs.verification) });
-    if (!response.ok) throw new Error("native-asset-unavailable");
+    if (!response.ok) throw new Error(`github-http-${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer()); verifyFixedHostBytes(bytes, asset);
     nativeRoot = await mkdtemp(join(tmpdir(), "omp-actions-native-"));
     const executable = join(nativeRoot, process.platform === "win32" ? "omp.exe" : "omp");

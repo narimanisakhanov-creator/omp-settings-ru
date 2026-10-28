@@ -1,11 +1,14 @@
+import { ensureCheckRun } from "./check-recovery";
 import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { asRecord, parseStrictJSON } from "./json";
 import { git, stableVersion, validateBundle } from "./actions-bundle";
 import { HostedGitHub, maintenanceBody, type MaintenanceIdentity } from "./actions-github";
 import { SUPPORTED_HOSTS } from "./paths";
 import { validatePublishedCandidate } from "./actions-candidate";
+import { parseArtifact, parseMarketplaceRunOrigin, parsePrepublishArtifactName, parsePrepublishReceipt } from "../release-actions";
 
 export async function publishCandidate(checkout: string, root: string, github: HostedGitHub, artifactId: string): Promise<void> {
   const candidate = await validateBundle(root);
@@ -34,44 +37,67 @@ export async function publishCandidate(checkout: string, root: string, github: H
   if (!created || typeof created.number !== "number" || asRecord(created.head)?.sha !== candidate.headSha || asRecord(created.base)?.sha !== candidate.baseSha) throw new Error("candidate-pr-not-observed");
   await github.checks.markReady(created.number, candidate.headSha!);
 }
-async function waitChecks(github: HostedGitHub, sha: string, versions: readonly string[]): Promise<void> {
-  const deadline = Date.now() + github.policy.deadlinesMs.checks;
-  while (Date.now() < deadline) {
-    const verdict = github.checks.requiredChecksPassed(await github.checks.checksFor(sha), sha, versions);
-    if (verdict.ok) return;
-    if (!verdict.reason.startsWith("check-pending:") && !verdict.reason.startsWith("check-missing:")) throw new Error(verdict.reason);
-    await Bun.sleep(15_000);
-  }
-  throw new Error("candidate-checks-timeout");
+async function waitChecks(github: HostedGitHub, sha: string, versions: readonly string[], branch: string): Promise<void> {
+  await ensureCheckRun(github, sha, versions, branch);
 }
-async function workflowRecovery(github: HostedGitHub, path: "release.yml" | "marketplace-index.yml", tag: string, sha: string, recovered: Set<string>): Promise<boolean> {
+export async function workflowRecovery(github: HostedGitHub, path: "release.yml" | "marketplace-index.yml", tag: string, sha: string, recovered: Set<string>): Promise<boolean> {
   const root = `repos/${github.policy.repository}`;
   const query = path === "release.yml" ? `head_sha=${sha}` : "";
   const listed = await github.list(`${root}/actions/workflows/${path}/runs${query ? `?${query}` : ""}`, "workflow_runs");
   const tagBound = new Set<string>();
+  let unknownBinding = false;
+  let newestUnknownRun = 0;
   if (path === "marketplace-index.yml") for (const run of listed) {
     if (run.path !== ".github/workflows/marketplace-index.yml" || asRecord(run.repository)?.full_name !== github.policy.repository) continue;
+    const origin = parseMarketplaceRunOrigin(run, { repository: github.policy.repository });
     const artifacts = await github.list(`${root}/actions/runs/${run.id}/artifacts`, "artifacts");
-    if (artifacts.some(artifact => artifact.name === `prepublish-${tag}-${run.id}-${run.run_attempt}` && artifact.expired === false && String(asRecord(artifact.workflow_run)?.id) === String(run.id))) tagBound.add(String(run.id));
+    const matching = artifacts.filter(artifact => typeof artifact.name === "string" && artifact.name.startsWith(`prepublish-${tag}-${origin.id}-`));
+    for (const artifact of matching) {
+      const attempt = parsePrepublishArtifactName(String(artifact.name), tag, origin.id);
+      if (Number(attempt) > Number(origin.attempt)) throw new Error("publisher-artifact-attempt-invalid");
+      parseArtifact(artifact, { name: String(artifact.name), id: Number(artifact.id), runId: origin.id, headSha: origin.headSha });
+      const producer = asRecord(await github.api(`${root}/actions/runs/${origin.id}/attempts/${attempt}`));
+      const producerOrigin = parseMarketplaceRunOrigin(producer, { repository: github.policy.repository });
+      if (producerOrigin.id !== origin.id || producerOrigin.attempt !== attempt || producerOrigin.event !== origin.event
+        || producerOrigin.headSha !== origin.headSha || producerOrigin.headBranch !== origin.headBranch) throw new Error("publisher-artifact-origin-invalid");
+      const jobs = await github.list(`${root}/actions/runs/${origin.id}/attempts/${attempt}/jobs?filter=all`, "jobs");
+      const prepublish = jobs.filter(job => job.name === "prepublish" && String(job.run_id) === origin.id
+        && String(job.run_attempt) === attempt && job.head_sha === origin.headSha);
+      const producerJob = prepublish[0];
+      if (prepublish.length !== 1 || typeof producerJob?.id !== "number" || !Number.isSafeInteger(producerJob.id) || producerJob.id <= 0
+        || producerJob.status !== "completed" || producerJob.conclusion !== "success") throw new Error("publisher-prepublish-job-not-successful");
+      const directory = await mkdtemp(join(tmpdir(), "omp-prepublish-proof-"));
+      try {
+        await github.command(["run", "download", origin.id, "--repo", github.policy.repository, "--name", String(artifact.name), "--dir", directory]);
+        const receipt = parsePrepublishReceipt(parseStrictJSON(await readFile(join(directory, "receipt.json"), "utf8")));
+        if (receipt.repository !== github.policy.repository || receipt.tag !== tag || receipt.tagSha !== sha) throw new Error("publisher-receipt-binding-invalid");
+        const release = asRecord(await github.api(`${root}/actions/runs/${receipt.releaseRunId}/attempts/${receipt.releaseRunAttempt}`));
+        if (!release || String(release.id) !== receipt.releaseRunId || String(release.run_attempt) !== receipt.releaseRunAttempt
+          || release.path !== ".github/workflows/release.yml" || asRecord(release.repository)?.full_name !== github.policy.repository
+          || release.head_sha !== sha || release.head_branch !== tag || !["push", "workflow_dispatch"].includes(String(release.event))
+          || release.status !== "completed" || release.conclusion !== "success") throw new Error("publisher-receipt-release-invalid");
+      } finally { await rm(directory, { recursive: true, force: true }); }
+      tagBound.add(origin.id);
+    }
+    // A title is only a deduplication hint. Missing proof is never permission to replace
+    // a possibly related run with a fresh dispatch and thereby reset its durable budget.
+    if (!tagBound.has(origin.id) && (run.display_title === `marketplace-index ${tag}` || artifacts.length === 0)) {
+      unknownBinding = true;
+      newestUnknownRun = Math.max(newestUnknownRun, Number(origin.id));
+    }
   }
   const runs = listed.filter(run => {
     if (run.path !== `.github/workflows/${path}` || asRecord(run.repository)?.full_name !== github.policy.repository || !["push", "workflow_dispatch", "workflow_run"].includes(String(run.event))) return false;
     if (path === "release.yml") return run.head_sha === sha && run.head_branch === tag;
-    // A publisher run is proven by the tag-scoped prepublish artifact of that exact run/attempt,
-    // never by its own head: a workflow_run carries the source workflow head, and a manual
-    // dispatch runs on main, whose head legitimately advances past the merged and tagged commit.
-    if (!tagBound.has(String(run.id))) return false;
-    if (run.event !== "workflow_dispatch") return true;
-    if (run.head_branch !== "main") return false;
-    const inputs = asRecord(run.inputs);
-    if (typeof inputs?.tag === "string") return inputs.tag === tag;
-    const titleTags = typeof run.display_title === "string" ? run.display_title.match(/v\d+\.\d+\.\d+(?:-[\w.-]+)?/g) ?? [] : [];
-    return titleTags.length === 1 && titleTags[0] === tag;
+    return tagBound.has(String(run.id));
   });
   runs.sort((a, b) => Number(b.id) - Number(a.id));
   const run = runs[0];
+  if (run && newestUnknownRun > Number(run.id)) return false;
   if (!run) {
-    if (!recovered.has(path)) {
+    const title = path === "marketplace-index.yml" ? `marketplace-index ${tag}` : undefined;
+    const duplicate = title && listed.some(row => row.display_title === title && row.status !== "completed");
+    if (!recovered.has(path) && !duplicate && !unknownBinding) {
       await github.command(path === "release.yml" ? ["workflow", "run", path, "--repo", github.policy.repository, "--ref", tag] : ["workflow", "run", path, "--repo", github.policy.repository, "--ref", "main", "-f", `tag=${tag}`], true);
       recovered.add(path);
     }
@@ -79,8 +105,14 @@ async function workflowRecovery(github: HostedGitHub, path: "release.yml" | "mar
   }
   if (run.status !== "completed") return false;
   if (run.conclusion !== "success") {
-    const key = `${path}:${run.id}:${run.run_attempt}`;
-    if (!recovered.has(key)) { await github.command(["run", "rerun", String(run.id), "--repo", github.policy.repository, "--failed"], true); recovered.add(key); }
+    if (!["failure", "cancelled", "timed_out"].includes(String(run.conclusion))) throw new Error(`publisher-checks-blocked:${run.id}`);
+    const attempt = Number(run.run_attempt);
+    if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt >= 3) throw new Error(`publisher-checks-retries-exhausted:${run.id}`);
+    const key = `${path}:${run.id}:${attempt}`;
+    if (!recovered.has(key)) {
+      await github.command(["run", "rerun", String(run.id), "--repo", github.policy.repository, "--failed"], true);
+      recovered.add(key);
+    }
     return false;
   }
   if (path === "marketplace-index.yml") throw new Error("publisher-success-without-published-proof");
@@ -113,7 +145,7 @@ export async function finalizeCandidate(checkout: string, version: string, githu
       const manifest = asRecord(parseStrictJSON(git(checkout, ["show", `${candidate.headSha}:${SUPPORTED_HOSTS}`])));
       if (!Array.isArray(manifest?.versions)) throw new Error("candidate-support-invalid");
       versions = manifest.versions.map(row => String(asRecord(row)?.version));
-      await waitChecks(github, identity.headSha, versions);
+      await waitChecks(github, identity.headSha, versions, `upgrade/omp-${version}`);
       if (await github.checks.mainSha() !== identity.baseSha || await github.checks.remoteBranchHead(`upgrade/omp-${version}`) !== identity.headSha) throw new Error("candidate-base-or-head-drift");
       if (pr.draft) await github.checks.markReady(Number(pr.number), identity.headSha);
       mergeSha = (await github.checks.merge(Number(pr.number), identity.headSha)).mergeSha;
@@ -130,7 +162,7 @@ export async function finalizeCandidate(checkout: string, version: string, githu
     versions = manifest.versions.map(row => String(asRecord(row)?.version));
   }
   const tag = `v${identity.releaseVersion}`;
-  await waitChecks(github, mergeSha, versions);
+  await waitChecks(github, mergeSha, versions, github.policy.baseBranch);
   const currentTag = await github.checks.tagTarget(tag);
   if (currentTag && currentTag !== mergeSha) throw new Error("release-tag-conflict");
   if (!currentTag) {

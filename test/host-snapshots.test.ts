@@ -18,12 +18,14 @@ const root = join(import.meta.dir, "..");
 const manifest = JSON.parse(readFileSync(join(root, SUPPORTED_HOSTS), "utf8")) as {
   schemaVersion: number;
   versions: readonly { version: string; platforms: readonly string[]; baselines: Readonly<Record<string, string>> }[];
+  historical?: readonly { version: string; platforms: readonly string[]; baselines: Readonly<Record<string, string>> }[];
 };
+const evidence = [...manifest.versions, ...(manifest.historical ?? [])];
 
 test("канонический каталог содержит ровно объявленные пары версия × платформа", () => {
   expect(manifest.schemaVersion).toBe(1);
   const expected: string[] = [];
-  for (const row of manifest.versions) {
+  for (const row of evidence) {
     expect(row.platforms).toEqual([...SNAPSHOT_PLATFORMS]);
     for (const platform of row.platforms) expected.push(`${row.version}-${platform}.json`);
   }
@@ -33,7 +35,7 @@ test("канонический каталог содержит ровно объ
 
 test("sha256 каждого снимка совпадает с записью манифеста", () => {
   const mismatches: string[] = [];
-  for (const row of manifest.versions) {
+  for (const row of evidence) {
     for (const [platform, expected] of Object.entries(row.baselines)) {
       const actual = createHash("sha256").update(readFileSync(join(root, snapshotPath(row.version, platform)))).digest("hex");
       if (actual !== expected) mismatches.push(`${row.version}-${platform}`);

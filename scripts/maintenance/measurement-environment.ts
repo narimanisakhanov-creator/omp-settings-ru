@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { SNAPSHOT_DIR } from "./paths";
+import { SNAPSHOT_DIR, supportWindow } from "./paths";
 
 /**
  * Доверенная среда измерения.
@@ -13,9 +13,9 @@ import { SNAPSHOT_DIR } from "./paths";
  * 1. **Lockfile.** Законный выпуск добавляет пин нового хоста, а значит и разрешение в `bun.lock`. Сравнение
  *    lock-файла с базой по байтам запрещало бы ровно то изменение, ради которого выпуск и делается. Здесь
  *    lock-файл кандидата сравнивается с тем, который Bun сам считает из **принятого** манифеста с наложенной
- *    строго проверенной дельтой. Дельта выводится из версии кандидата: `omp-host-<версия без точек>` и ровно
- *    `npm:@oh-my-pi/pi-coding-agent@<версия>`. Затравка — базовый lock-файл, поэтому граф посторонних
- *    зависимостей остаётся базовым. Сравнение нормализованное: формат lock-файла — не контракт, а граф
+ *    строго проверенной дельтой. Новый алиас и точная npm-спецификация выводятся из версии кандидата;
+ *    удаляется ровно алиас, выбывший из supportWindow принятых хостов и кандидата. Затравка — базовый
+ *    lock-файл, поэтому граф посторонних зависимостей остаётся базовым. Формат lock-файла — не контракт, а граф
  *    разрешений им является (Bun не переписывает поле `version` рабочего пакета, и это не изменение графа).
  *
  * 2. **Окружение импорта.** Измерение разрешает хост из `node_modules` рабочего дерева, а `node_modules`
@@ -36,13 +36,11 @@ export interface ApprovedHostPin {
   readonly spec: string;
 }
 
-/**
- * Строго проверенная дельта кандидата: версия выпуска, пины новых хостов, диапазоны peer того же семейства и
- * обновлённые прямые пины `@oh-my-pi/pi-*`. Всё остальное манифеста обязано совпасть с принятым.
- */
+/** Строго проверенная дельта кандидата: ротация алиасов, версия выпуска, пины новых хостов и peer-диапазоны. */
 export interface ApprovedDelta {
   readonly releaseVersion: string;
   readonly hostPins: readonly ApprovedHostPin[];
+  readonly removedHostAliases: readonly string[];
   readonly peers: readonly { readonly name: string; readonly value: string }[];
   readonly devPins: readonly { readonly name: string; readonly value: string }[];
 }
@@ -63,9 +61,14 @@ export interface HostIdentity {
 }
 
 const HOST_ALIAS = /^omp-host-([0-9]+)$/;
-const HOST_SPEC = /^npm:@oh-my-pi\/pi-coding-agent@(\d+\.\d+\.\d+)$/;
+const HOST_SPEC = /^npm:@oh-my-pi\/pi-coding-agent@((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/;
 const HOST_PACKAGE = /^@oh-my-pi\/pi-(coding-agent|natives|tui|utils)$/;
-const SEMVER = /^\d+\.\d+\.\d+$/;
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const DEV_HOST_PACKAGES = ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-natives", "@oh-my-pi/pi-tui", "@oh-my-pi/pi-utils"] as const;
+const PEER_HOST_PACKAGES: Readonly<Record<string, true>> = {
+  "@oh-my-pi/pi-coding-agent": true,
+  "@oh-my-pi/pi-utils": true,
+};
 /** Код и конфигурация измерения — только из принятого коммита. */
 const TRUSTED_PATHS = ["scripts", "src", "tsconfig.json", "package.json", "bun.lock", "bunfig.toml"] as const;
 /** Candidate inputs are data only; runtime and measuring code remain accepted bytes. */
@@ -117,18 +120,14 @@ function parsed(text: string): Record<string, unknown> | undefined {
   }
 }
 
-/** Члены диапазона `a || b || c`: версия подтверждается как отдельный член, а не подстрокой. */
-function members(value: string): readonly string[] {
-  return value.split("||").map(part => part.trim()).filter(Boolean);
-}
 
 /**
  * Дельта кандидата к принятому манифесту.
  *
- * Разрешено ровно то, из чего состоит выпуск хоста: версия плагина, прямые пины `@oh-my-pi/pi-*` на версию
- * кандидата, диапазоны peer того же семейства с названной версией и один пин нового хоста, имя которого
- * выводится из версии. Любое другое различие — произвольная зависимость, скрипт или поле — расширение
- * исполняемого кода за пределы измерения, поэтому отказ.
+ * Разрешены версия плагина, четыре точных dev-пина кандидата, один новый алиас хоста и ротация активного
+ * окна. Окно выводится из точных принятых спецификаций; соответствие этих алиасов принятому манифесту
+ * поддержки проверяет вызывающий код. Удаляется ровно overflow, оба peer равны новому окну. Прочие
+ * зависимости, packageManager и поля неизменны: расширять исполняемый код вне измерения нельзя.
  */
 export function approvedDelta(
   accepted: unknown, candidate: unknown, candidateVersion: string,
@@ -137,25 +136,44 @@ export function approvedDelta(
   const after = recordOf(candidate);
   if (!before || !after) return { failure: "manifest-invalid" };
   if (!SEMVER.test(candidateVersion)) return { failure: "manifest-candidate-version-invalid" };
-
   const allowed = new Set(["version", "devDependencies", "peerDependencies"]);
   for (const key of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
     if (allowed.has(key)) continue;
     if (canonical(before[key]) !== canonical(after[key])) return { failure: `manifest-field-changed:${key}` };
   }
-
+  if (typeof before.packageManager !== "string" || !/^bun@(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(before.packageManager)) {
+    return { failure: "manifest-package-manager-invalid" };
+  }
   const releaseVersion = after.version;
   if (typeof releaseVersion !== "string" || !SEMVER.test(releaseVersion)) return { failure: "manifest-release-version-invalid" };
   if (releaseVersion === before.version) return { failure: "manifest-release-version-unverified" };
-
-  const baseDev = stringsOf(before.devDependencies) ?? {};
+  const baseDev = stringsOf(before.devDependencies);
   const nextDev = stringsOf(after.devDependencies);
-  if (!nextDev) return { failure: "manifest-dependencies-invalid" };
+  if (!baseDev || !nextDev) return { failure: "manifest-dependencies-invalid" };
+  const baseHosts: { alias: string; version: string }[] = [];
+  for (const [alias, value] of Object.entries(baseDev)) {
+    if (!alias.startsWith("omp-host-")) continue;
+    const spec = HOST_SPEC.exec(value);
+    if (!HOST_ALIAS.test(alias) || !spec || alias !== hostAliasOf(spec[1]!)) return { failure: `accepted-host-pin-invalid:${alias}` };
+    baseHosts.push({ alias, version: spec[1]! });
+  }
+  if (baseHosts.length === 0) return { failure: "accepted-active-aliases-invalid" };
+  let target: readonly string[];
+  try {
+    target = supportWindow([...baseHosts.map(host => host.version), candidateVersion]);
+  } catch {
+    return { failure: "manifest-candidate-version-invalid" };
+  }
+  if (!target.includes(candidateVersion)) return { failure: "manifest-candidate-version-invalid" };
+  const activeVersions = new Set(target);
+  const removedHostAliases = baseHosts.filter(host => !activeVersions.has(host.version)).map(host => host.alias).sort();
+  const removed = new Set(removedHostAliases);
+  for (const name of Object.keys(baseDev).sort()) {
+    if (!(name in nextDev) && !removed.has(name)) return { failure: `manifest-dependency-removed:${name}` };
+    if (name in nextDev && removed.has(name)) return { failure: `manifest-overflow-alias-retained:${name}` };
+  }
   const devPins: { name: string; value: string }[] = [];
   const hostPins: ApprovedHostPin[] = [];
-  for (const name of Object.keys(baseDev)) {
-    if (!(name in nextDev)) return { failure: `manifest-dependency-removed:${name}` };
-  }
   for (const name of Object.keys(nextDev).sort()) {
     const value = nextDev[name]!;
     if (baseDev[name] === value) continue;
@@ -175,40 +193,37 @@ export function approvedDelta(
     return { failure: `package-dependency-changed:${name}` };
   }
   if (hostPins.length === 0) return { failure: `host-pin-missing:${hostAliasOf(candidateVersion)}` };
-
-  const basePeers = stringsOf(before.peerDependencies) ?? {};
+  for (const name of DEV_HOST_PACKAGES) {
+    if (nextDev[name] !== candidateVersion) return { failure: `package-pin-unverified:${name}` };
+  }
+  const basePeers = stringsOf(before.peerDependencies);
   const nextPeers = stringsOf(after.peerDependencies);
-  if (!nextPeers) return { failure: "manifest-peers-invalid" };
+  if (!basePeers || !nextPeers) return { failure: "manifest-peers-invalid" };
   const peers: { name: string; value: string }[] = [];
+  const peerRange = target.join(" || ");
+  for (const name of Object.keys(PEER_HOST_PACKAGES)) {
+    if (nextPeers[name] !== peerRange) return { failure: `peer-range-unverified:${name}` };
+  }
   for (const name of Object.keys({ ...basePeers, ...nextPeers }).sort()) {
-    const value = nextPeers[name] ?? basePeers[name];
-    if (value === undefined) continue;
-    const previous = basePeers[name];
-    if (!HOST_PACKAGE.test(name)) {
-      if (previous !== value) return { failure: `peer-dependency-changed:${name}` };
+    const value = nextPeers[name];
+    if (!Object.hasOwn(PEER_HOST_PACKAGES, name)) {
+      if (basePeers[name] !== value) return { failure: `peer-dependency-changed:${name}` };
       continue;
     }
-    if (previous === value) continue;
-    // Принятые члены диапазона обязаны выжить: поддержка исторических версий не сужается выпуском.
-    if (previous !== undefined) {
-      for (const member of members(previous)) {
-        if (!members(value).includes(member)) return { failure: `peer-range-narrowed:${name}` };
-      }
-    }
-    if (!members(value).includes(candidateVersion)) return { failure: `peer-range-unverified:${name}` };
-    peers.push({ name, value });
+    if (basePeers[name] !== value) peers.push({ name, value: value! });
   }
-  return { ok: true, delta: { releaseVersion, hostPins, peers, devPins } };
+  return { ok: true, delta: { releaseVersion, hostPins, removedHostAliases, peers, devPins } };
 }
-
 /** Манифест измерения: принятый манифест с наложенной дельтой — иных различий в него попасть не может. */
 export function manifestWithDelta(acceptedManifest: string, delta: ApprovedDelta): string | undefined {
   const manifest = parsed(acceptedManifest);
   if (!manifest) return undefined;
   const next: Record<string, unknown> = { ...manifest, version: delta.releaseVersion };
-  if (delta.devPins.length > 0 || delta.hostPins.length > 0) {
+  if (delta.devPins.length > 0 || delta.hostPins.length > 0 || delta.removedHostAliases.length > 0) {
+    const devDependencies = { ...(stringsOf(manifest.devDependencies) ?? {}) };
+    for (const alias of delta.removedHostAliases) delete devDependencies[alias];
     next.devDependencies = {
-      ...(stringsOf(manifest.devDependencies) ?? {}),
+      ...devDependencies,
       ...Object.fromEntries(delta.devPins.map(pin => [pin.name, pin.value])),
       ...Object.fromEntries(delta.hostPins.map(pin => [pin.alias, pin.spec])),
     };
@@ -233,7 +248,7 @@ function digest(bytes: string | Uint8Array): string {
 function spawnBun(cwd: string, args: readonly string[], deadline: number): { code: number; stdout: string; stderr: string } {
   const remaining = deadline - Date.now();
   if (remaining <= 0) return { code: -1, stdout: "", stderr: "deadline" };
-  const child = Bun.spawnSync(["bun", ...args], { cwd, stdout: "pipe", stderr: "pipe", timeout: remaining });
+  const child = Bun.spawnSync([process.execPath, ...args], { cwd, stdout: "pipe", stderr: "pipe", timeout: remaining });
   return { code: child.exitCode ?? -1, stdout: child.stdout.toString(), stderr: child.stderr.toString() };
 }
 
@@ -265,6 +280,10 @@ export async function expectedLock(input: {
   readonly deadline: number;
   readonly registry?: string;
 }): Promise<({ readonly ok: true } & LockExpectation) | EnvironmentFailure> {
+  const accepted = parsed(input.acceptedManifest);
+  if (!accepted) return { failure: "manifest-invalid" };
+  const packageManager = accepted.packageManager;
+  if (typeof packageManager !== "string" || packageManager !== `bun@${Bun.version}`) return { failure: "lock-bun-version-mismatch" };
   const manifest = manifestWithDelta(input.acceptedManifest, input.delta);
   if (!manifest) return { failure: "manifest-invalid" };
   try {
@@ -379,15 +398,15 @@ export async function hostIdentity(root: string, alias: string, lockText: string
 /** Все объявленные алиасы хостов: и принятые базой, и разрешённые дельтой. */
 export function declaredHostAliases(acceptedManifest: string, delta: ApprovedDelta): readonly { alias: string; version: string }[] {
   const dev = stringsOf(parsed(acceptedManifest)?.devDependencies) ?? {};
+  const removed = new Set(delta.removedHostAliases);
   const declared = new Map<string, string>();
   for (const [name, value] of Object.entries(dev)) {
-    if (!HOST_ALIAS.test(name)) continue;
+    if (!HOST_ALIAS.test(name) || removed.has(name)) continue;
     const spec = HOST_SPEC.exec(value);
     if (spec) declared.set(name, spec[1]!);
   }
   for (const pin of delta.hostPins) declared.set(pin.alias, pin.version);
-  return [...declared].map(([alias, version]) => ({ alias, version }))
-    .sort((left, right) => left.alias.localeCompare(right.alias));
+  return [...declared].map(([alias, version]) => ({ alias, version })).sort((left, right) => left.alias.localeCompare(right.alias));
 }
 
 export interface ToolRoot {

@@ -25,12 +25,12 @@
       "README.md"
     ],
     "requiredCheckTemplate": "check ({os}, {version})",
-    "additionalRequiredChecks": ["hygiene"],
+    "additionalRequiredChecks": ["shared", "hygiene"],
     "deadlinesMs": {
       "precheck": 30000,
       "command": 30000,
       "verification": 1800000,
-      "release": 1200000,
+      "release": 5400000,
       "checks": 2400000
     }
   }
