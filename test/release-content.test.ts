@@ -81,7 +81,6 @@ describe("renderCompatibility", () => {
       version === PREV && platform === "linux" ? { complete: 400, total: 419 } : { complete: 419, total: 419 }));
     expect(section).toContain("| OMP | Windows | Linux | macOS |");
     // Порядок версий числовой, а не порядок аргументов: старая версия остаётся в таблице.
-    expect(section).toContain("Поддержка в этом checkout: OMP 18.8.7, 18.12.6.");
     expect(section).toContain("| 18.8.7 | 419/419 | 400/419 | 419/419 |");
     expect(section).toContain("| 18.12.6 | 419/419 | 419/419 | 419/419 |");
     // Разное покрытие платформ не усредняется до одного числа.

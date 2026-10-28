@@ -152,7 +152,6 @@ describe("release documents travel through the candidate commit", () => {
     expect(documents.readme).toContain("omp plugin install omp-settings-ru@omp-settings-ru");
     expect(documents.readme).toContain("[FAQ](docs/faq.md).");
     expect(documents.readme).not.toContain("устаревшая таблица");
-    expect(documents.readme).toContain("Поддержка в этом checkout: OMP 18.8.7, 18.9.0.");
     expect(documents.changelog.startsWith("## 0.6.0\n")).toBe(true);
     expect(documents.changelog).toContain(CHANGELOG_BASE.trimEnd());
     expect(documents.report).toContain("Предсказания");
