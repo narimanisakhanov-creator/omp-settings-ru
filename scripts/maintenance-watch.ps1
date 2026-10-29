@@ -13,7 +13,7 @@
     `blocked` outcome — stops dispatch until a human intervenes.
 
     Decisions (also printed as one JSON line):
-        busy                      another tick holds the named mutex; exit 0
+        busy                      another tick of the same runtime root holds its mutex; exit 0
         workflow-disabled         upstream-watch is not active; exit 0
         paused                    MAINTENANCE_PAUSED=true; exit 0
         active-run                a run of upstream-watch is queued/running; exit 0
@@ -27,6 +27,13 @@
     Runtime copy, config, state and log live in
     %LOCALAPPDATA%\omp-settings-ru\maintenance and are written by
     scripts/install-maintenance-watch.ps1. The mutable checkout is never executed from a task.
+
+    The mutex that serializes ticks is named after the watch root, so an isolated runtime directory
+    (a test fixture, another profile) never contends with the real scheduled task, while two ticks of
+    the same root still run one at a time.
+
+    OMP_WATCH_PRINT_MUTEX=1 prints the mutex name this root uses as one JSON line and exits 0 without
+    touching the network, the state or the log; the end-to-end tests use it to address that mutex.
 
 .PARAMETER Once
     Run exactly one tick. This is the only tick mode and the default.
@@ -52,7 +59,6 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
 
 $script:TaskName = 'omp-settings-ru-upstream-watch'
-$script:MutexName = 'Local\omp-settings-ru-maintenance'
 $script:LogLimitBytes = 1048576
 $script:CooldownMinutes = 60
 $script:RegistryLimitBytes = 33554432
@@ -66,6 +72,18 @@ function Get-WatchRoot {
     $localAppData = [Environment]::GetEnvironmentVariable('LOCALAPPDATA')
     if ([string]::IsNullOrWhiteSpace($localAppData)) { throw 'localappdata-unavailable' }
     return [IO.Path]::Combine($localAppData, 'omp-settings-ru', 'maintenance')
+}
+
+# The mutex is scoped per watch root: an isolated runtime directory must not contend with the real
+# scheduled task, while two ticks of one root still serialize. Hashing the root keeps the name short,
+# free of path separators and independent of the console encoding (roots may contain Cyrillic).
+function Get-MutexName {
+    param([string]$Root)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Root)) }
+    finally { $sha.Dispose() }
+    $hex = ([BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()
+    return 'Local\omp-settings-ru-maintenance-' + $hex.Substring(0, 16)
 }
 
 function Get-PropertyValue {
@@ -722,12 +740,21 @@ function Invoke-Watch {
     if ($DryRun -and $Status) { Write-Output (ConvertTo-Json -InputObject ([ordered]@{ decision = 'mode-conflict'; exitCode = 1 }) -Compress); exit 1 }
     $root = Get-WatchRoot
 
+    # Test hook: the only way to address the same mutex without duplicating the naming rule in a
+    # caller. It prints the name and stops before the network, the state and the log are touched.
+    if ([Environment]::GetEnvironmentVariable('OMP_WATCH_PRINT_MUTEX') -eq '1') {
+        $payload = [ordered]@{ decision = 'mutex'; mutex = (Get-MutexName -Root $root); root = $root }
+        Write-Output (ConvertTo-Json -InputObject $payload -Compress)
+        exit 0
+    }
+
     if ($Status) {
         Show-WatchStatus -Root $root
         exit 0
     }
 
-    $mutex = New-Object System.Threading.Mutex -ArgumentList $false, $script:MutexName
+    $mutexName = Get-MutexName -Root $root
+    $mutex = New-Object System.Threading.Mutex -ArgumentList $false, $mutexName
     $acquired = $false
     try {
         try { $acquired = $mutex.WaitOne(0) }

@@ -258,6 +258,62 @@ async function tick(space: WatcherWorkspace, args: readonly string[] = [], env: 
   return { code, decision: String(payload.decision ?? ""), payload, stdout, stderr };
 }
 
+/**
+ * The mutex the watcher takes for a root. The name is derived inside the watcher (SHA-256 of the
+ * root), so the test asks the script for it — with `OMP_WATCH_PRINT_MUTEX=1` the tick prints the
+ * name and stops before the network, the state and the log — instead of keeping a second copy of
+ * the formula that could silently drift from `Get-MutexName`.
+ */
+async function mutexName(space: WatcherWorkspace): Promise<string> {
+  const result = await tick(space, [], { OMP_WATCH_PRINT_MUTEX: "1" });
+  expect(result.code).toBe(0);
+  if (typeof result.payload.mutex !== "string") throw new Error("mutex-name-unavailable");
+  return result.payload.mutex;
+}
+
+/**
+ * Starts a PowerShell holder that takes `name` and blocks until `release` exists. The holder must
+ * exit on its own — killing it would leave the named mutex owned by a dying process and leak
+ * "busy" into the remaining cases — so callers release it and await exit in a `finally`.
+ */
+async function holdMutex(name: string, release: string, directory: string) {
+  const holder = join(directory, "hold.ps1");
+  await writeFile(
+    holder,
+    [
+      "param([string]$Release, [string]$Name)",
+      "Set-StrictMode -Version Latest",
+      "$mutex = New-Object System.Threading.Mutex -ArgumentList $false, $Name",
+      "if (-not $mutex.WaitOne(0)) { Write-Output 'blocked'; exit 3 }",
+      "Write-Output 'ready'",
+      "[Console]::Out.Flush()",
+      "while (-not (Test-Path -LiteralPath $Release)) { Start-Sleep -Milliseconds 50 }",
+      "[void]$mutex.ReleaseMutex()",
+    ].join("\n"),
+  );
+  const child = Bun.spawn([POWERSHELL, "-NoProfile", "-NonInteractive", "-File", holder, release, name], { stdout: "pipe", stderr: "ignore" });
+  const reader = child.stdout.getReader();
+  const decoder = new TextDecoder();
+  let seen = "";
+  while (!seen.includes("ready") && !seen.includes("blocked")) {
+    const next = await reader.read();
+    if (next.done) break;
+    seen += decoder.decode(next.value);
+  }
+  reader.releaseLock();
+  return { child, seen };
+}
+
+/** Releases a holder started by `holdMutex` and waits until it has exited. */
+async function releaseHolder(child: { exited: Promise<number>; kill: () => void }, release: string) {
+  await writeFile(release, "release\n");
+  // A real OS process either exits or does not; fake timers cannot advance that clock. The race is a
+  // watchdog that turns a wedged holder into a killed one instead of a hung test.
+  const exited = await Promise.race([child.exited, Bun.sleep(15_000).then(() => null)]);
+  if (exited === null) child.kill();
+  await child.exited;
+}
+
 /** Healthy accepted state: three supported versions, matching registry window, nothing pending. */
 function healthyApi(overrides: Record<string, ScenarioResponse> = {}): Record<string, ScenarioResponse> {
   return {
@@ -579,48 +635,44 @@ describe("watcher domain decisions", () => {
     const space = await workspace("busy", false);
     registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
     await writeScenario(space, { api: healthyApi() });
-    const holder = join(space.root, "hold.ps1");
     const release = join(space.root, "release.txt");
-    await writeFile(
-      holder,
-      [
-        "param([string]$Release)",
-        "Set-StrictMode -Version Latest",
-        "$mutex = New-Object System.Threading.Mutex -ArgumentList $false, 'Local\\omp-settings-ru-maintenance'",
-        "if (-not $mutex.WaitOne(0)) { Write-Output 'blocked'; exit 3 }",
-        "Write-Output 'ready'",
-        "[Console]::Out.Flush()",
-        "while (-not (Test-Path -LiteralPath $Release)) { Start-Sleep -Milliseconds 50 }",
-        "[void]$mutex.ReleaseMutex()",
-      ].join("\n"),
-    );
-    const child = Bun.spawn([POWERSHELL, "-NoProfile", "-NonInteractive", "-File", holder, release], { stdout: "pipe", stderr: "ignore" });
-    let ready = false;
+    const name = await mutexName(space);
+    const { child, seen } = await holdMutex(name, release, space.root);
     try {
-      const reader = child.stdout.getReader();
-      const decoder = new TextDecoder();
-      let seen = "";
-      while (!seen.includes("ready") && !seen.includes("blocked")) {
-        const next = await reader.read();
-        if (next.done) break;
-        seen += decoder.decode(next.value);
-      }
-      reader.releaseLock();
       // A holder that could not take the mutex proves nothing, so say so instead of flaking.
       expect(seen).toContain("ready");
-      ready = true;
       const result = await tick(space);
       expect(result.decision).toBe("busy");
       expect(result.code).toBe(0);
       expect(await calls(space)).toEqual([]);
     } finally {
-      // The holder must exit while still holding nothing; killing it would leave the named mutex
-      // owned by a dying process and leak "busy" into the remaining cases.
-      await writeFile(release, "release\n");
-      const exited = await Promise.race([child.exited, Bun.sleep(15_000).then(() => null)]);
-      if (exited === null) child.kill();
-      await child.exited;
-      expect(ready || child.exitCode !== null).toBe(true);
+      await releaseHolder(child, release);
+    }
+  });
+
+  it("does not let one root block a tick of another root", async () => {
+    const held = await workspace("mutex-held", false);
+    const other = await workspace("mutex-other", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
+    await writeScenario(held, { api: healthyApi() });
+    await writeScenario(other, { api: healthyApi() });
+    const release = join(held.root, "release.txt");
+    const heldName = await mutexName(held);
+    // Distinct roots must map to distinct mutexes, otherwise the rest of the case proves nothing.
+    expect(heldName).not.toBe(await mutexName(other));
+    const { child, seen } = await holdMutex(heldName, release, held.root);
+    try {
+      expect(seen).toContain("ready");
+      const blocked = await tick(held);
+      expect(blocked.decision).toBe("busy");
+      expect(blocked.code).toBe(0);
+      const free = await tick(other);
+      expect(free.decision).toBe("dispatched");
+      expect(free.code).toBe(0);
+      expect(await dispatches(other)).toHaveLength(1);
+      expect(await dispatches(held)).toEqual([]);
+    } finally {
+      await releaseHolder(child, release);
     }
   });
 
