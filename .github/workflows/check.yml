@@ -14,7 +14,9 @@ permissions:
 
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: true
+  # The main push run is the only exact-SHA proof `finalize` accepts; cancelling it makes the
+  # next push unrecoverable. Pull-request and branch runs keep cancelling stale heads.
+  cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 # A same-repository pull request already produced this head's push run, and that push run is the
 # required source. Only a fork head, which cannot push here, needs a run of its own; it receives

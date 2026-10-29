@@ -9,12 +9,16 @@
     tags or publishes: it only reads accepted `main` state, the npm registry and the owned pull
     requests, and asks the hosted pipeline to look.
 
+    A durable block — the last completed run on the current `main` recording a nonretryable
+    `blocked` outcome — stops dispatch until a human intervenes.
+
     Decisions (also printed as one JSON line):
         busy                      another tick holds the named mutex; exit 0
         workflow-disabled         upstream-watch is not active; exit 0
         paused                    MAINTENANCE_PAUSED=true; exit 0
         active-run                a run of upstream-watch is queued/running; exit 0
         no-work                   published state already equals the registry window; exit 0
+        blocked                   the last completed run on this base ended nonretryably; exit 0
         cooldown                  a run or a previous intent is younger than 60 minutes; exit 0
         dispatched                one dispatch was accepted; exit 0
         dispatch                  dry run: a dispatch would be sent; exit 0
@@ -415,6 +419,55 @@ function Get-OwnedCandidateState {
     return $pending.Count
 }
 
+function Get-DurableBlock {
+    param([pscustomobject]$Config, $Runs, [string]$BaseSha)
+    if ([string]::IsNullOrEmpty($BaseSha)) { return }
+    $newest = $null
+    $newestAt = $null
+    foreach ($run in @($Runs)) {
+        if ([string](Get-PropertyValue $run 'head_sha') -ne $BaseSha) { continue }
+        if ([string](Get-PropertyValue $run 'status') -ne 'completed') { continue }
+        $at = $null
+        $stamp = [string](Get-PropertyValue $run 'created_at')
+        if (-not [string]::IsNullOrEmpty($stamp)) {
+            $parsed = [datetimeoffset]::MinValue
+            if ([datetimeoffset]::TryParse($stamp, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)) { $at = $parsed }
+        }
+        if ($null -eq $newest) { $newest = $run; $newestAt = $at; continue }
+        if ($null -eq $at) { continue }
+        if ($null -eq $newestAt -or $at -gt $newestAt) { $newest = $run; $newestAt = $at }
+    }
+    if ($null -eq $newest) { return }
+    $runId = [string](Get-PropertyValue $newest 'id')
+    if ($runId -notmatch '^[1-9][0-9]{0,19}$') { return }
+    $attempt = [string](Get-PropertyValue $newest 'run_attempt')
+    if ([string]::IsNullOrEmpty($attempt)) { $attempt = '1' }
+    if ($attempt -notmatch '^[1-9][0-9]{0,5}$') { return }
+
+    # Reading the outcome is best effort: any failure keeps the previous dispatch behaviour.
+    $name = 'maintenance-outcome-' + $runId + '-' + $attempt
+    $temp = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'omp-maintenance-outcome-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path $temp -Force | Out-Null
+        $download = Invoke-GhRaw -GhArguments @('run', 'download', $runId, '--repo', $Config.Repository, '--name', $name, '--dir', $temp)
+        if ($download.Code -ne 0) { return }
+        $path = [IO.Path]::Combine($temp, 'maintenance-outcome.json')
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+        $outcome = $null
+        try { $outcome = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($path)) } catch { return }
+        if ($null -eq $outcome) { return }
+        if ([string](Get-PropertyValue $outcome 'outcome') -ne 'blocked') { return }
+        if ((Get-PropertyValue $outcome 'retryable') -ne $false) { return }
+        # Only a code travels out of the artifact: the same alphabet the log writer keeps.
+        $reason = [string](Get-PropertyValue $outcome 'reason')
+        if ($reason -notmatch '^[A-Za-z0-9:._/-]{1,300}$') { return }
+        return ('outcome-blocked:' + $reason)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Invoke-WatchTick {
     param([pscustomobject]$Config, [string]$Root, [bool]$DryRun)
     $script:GhPath = $Config.Gh
@@ -532,6 +585,15 @@ function Invoke-WatchTick {
         elseif ((Compare-StableVersion -Left $pin -Right ([string]$window[$window.Count - 1])) -ne 0) {
             $needsDispatch = $true
             $details.reason = 'main-pin-mismatch'
+        }
+
+        if ($needsDispatch) {
+            $blockReason = Get-DurableBlock -Config $Config -Runs $runs -BaseSha $baseSha
+            if ($null -ne $blockReason) {
+                $state.decision = 'blocked'
+                $details.reason = $blockReason
+                return New-TickResult 'blocked' 0 $state $details
+            }
         }
 
         if (-not $needsDispatch) {

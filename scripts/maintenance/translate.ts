@@ -1,6 +1,7 @@
 import type { BaselineSnapshot } from "../../src/report";
 import type { LocalePack, OptionTranslation, SourcePlatform, SourceVariant } from "../../src/translations/types";
 import { descriptionTemplates } from "../../src/source-templates";
+import { matchingTemplate } from "../../src/source";
 import { markers, missingMarkers } from "./semantic";
 import type { ModelJSONResponse, ModelMessage } from "./model";
 import { translationFieldsHash } from "./catalog";
@@ -121,7 +122,10 @@ export async function translateCandidate(input: TranslationInput): Promise<Trans
     if (!previous) {
       const translated = await input.request(translationMessages(item.path, item.source, glossary, priorPathVariant));
       body = strictBody(translated.value, item.source, item.path);
-      variant = { sourceHash: item.sourceHash, label: body.label, description: body.description, ...(body.warning === undefined ? {} : { warning: body.warning }), ...(descriptionTemplates[item.path] ? { descriptionSource: descriptionTemplates[item.path] } : {}), ...(body.options === undefined ? {} : { options: body.options }), platforms, observedIn };
+      // Provenance is stamped only when a reviewed edition actually matches the live text; an unmatched
+      // rewording keeps its raw identity and is translated without live hint substitution.
+      const descriptionSource = matchingTemplate(item.source.description, descriptionTemplates[item.path]);
+      variant = { sourceHash: item.sourceHash, label: body.label, description: body.description, ...(body.warning === undefined ? {} : { warning: body.warning }), ...(descriptionSource === undefined ? {} : { descriptionSource }), ...(body.options === undefined ? {} : { options: body.options }), platforms, observedIn };
     } else if (changed) {
       body = { label: previous.label!, description: previous.description!, ...(previous.warning === undefined ? {} : { warning: previous.warning }), ...(previous.options === undefined ? {} : { options: previous.options }) };
       strictBody(body, item.source, item.path);

@@ -7,7 +7,7 @@ import type { LocalePack, SettingTranslation, SettingTranslationFields, SourceVa
 
 // Reviewed template path; the literal wording stays owned by src/source-templates.ts.
 const TEMPLATED_PATH = "spelling.autocomplete";
-const TEMPLATE = descriptionTemplates[TEMPLATED_PATH]!;
+const TEMPLATE = descriptionTemplates[TEMPLATED_PATH]![0]!;
 const templatedUi: HostUiMetadata = {
   tab: "completion",
   label: "Autocomplete",
@@ -143,6 +143,36 @@ describe("reviewed templates", () => {
     const reworded = buildCoverageReport(withKeybindings("Completions are shown while typing"), locale);
     expect(reworded.sourceHashMismatches).toEqual([TEMPLATED_PATH]);
     expect(reworded.untranslatedPaths).toEqual([TEMPLATED_PATH]);
+  });
+
+  test("an unmatched rewording is complete without provenance and partial when it claims one", () => {
+    const path = "tui.mouse";
+    const editions = descriptionTemplates[path]!;
+    const reworded: HostUiMetadata = { tab: "appearance", label: "Mouse Click-to-Focus", description: "Mouse clicks are captured in the main session" };
+    const host = hostOf({ [path]: setting(reworded) });
+    const fields = { label: "Фокус по клику", description: "Клики мыши перехватываются в основной сессии" };
+
+    const honest = buildCoverageReport(host, pack({ [path]: entry(reworded, undefined, fields) }));
+    expect(honest.completeSettings).toBe(1);
+    expect(honest.partialPaths).toEqual([]);
+    expect(honest.sourceHashMismatches).toEqual([]);
+
+    const claimed = buildCoverageReport(host, pack({ [path]: entry(reworded, undefined, { ...fields, descriptionSource: editions[0]! }) }));
+    expect(claimed.completeSettings).toBe(0);
+    expect(claimed.partialPaths).toEqual([path]);
+  });
+
+  test("the newest accepted edition is complete with its own provenance", () => {
+    const path = "tui.mouse";
+    const editions = descriptionTemplates[path]!;
+    const newest = editions[editions.length - 1]!;
+    const ui: HostUiMetadata = { tab: "appearance", label: "Mouse Click-to-Focus", description: newest.replaceAll("{shift}", "Shift") };
+    const locale = pack({ [path]: entry(ui, newest, { label: "Фокус по клику", description: "Перехват кликов мыши", descriptionSource: newest }) });
+
+    const report = buildCoverageReport(hostOf({ [path]: setting(ui) }), locale);
+    expect(report.completeSettings).toBe(1);
+    expect(report.partialPaths).toEqual([]);
+    expect(report.sourceHashMismatches).toEqual([]);
   });
 
   test("a translation cannot claim a template the source does not have", () => {

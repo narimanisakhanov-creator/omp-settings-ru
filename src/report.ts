@@ -1,6 +1,6 @@
 // Builds source-aware reports for translation changes.
 import type { HostMetadata } from "./host-types";
-import { computeSourceHash, normalizeSource, type SourceMetadata } from "./source";
+import { computeSourceHash, matchingTemplate, normalizeSource, type SourceMetadata } from "./source";
 import { descriptionTemplates } from "./source-templates";
 import type { LocalePack, OptionTranslation } from "./translations/types";
 import { resolveVariant, type SourceHashCache } from "./translations/resolve";
@@ -114,6 +114,7 @@ export function buildCoverageReport(host: HostMetadata, locale: LocalePack): Cov
     translatedSettings += 1;
 
     const reviewedTemplate = descriptionTemplates[path];
+    const expected = matchingTemplate(ui.description, reviewedTemplate);
     const source = normalizeSource(ui, translation.descriptionSource);
     let complete = true;
 
@@ -122,12 +123,13 @@ export function buildCoverageReport(host: HostMetadata, locale: LocalePack): Cov
       complete = false;
     }
     // The warning translation is required exactly when the reviewed source carries a warning, and a
-    // catalog entry may claim a reviewed template only for a path that has one.
+    // catalog entry may claim a reviewed template only for the edition the live text actually matches.
+    // No edition matching the live text means no provenance is expected at all.
     if (
       !translation.label ||
       !translation.description ||
       (source.warning === null ? translation.warning !== undefined : !translation.warning) ||
-      translation.descriptionSource !== reviewedTemplate
+      translation.descriptionSource !== expected
     ) {
       complete = false;
     }

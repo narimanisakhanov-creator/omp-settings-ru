@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { BaselineSnapshot } from "../src/report";
 import type { LocalePack } from "../src/translations/types";
 import { computeSourceHash } from "../src/source";
+import { descriptionTemplates } from "../src/source-templates";
 import { translateCandidate } from "../scripts/maintenance/translate";
 import type { ModelJSONResponse, ModelMessage } from "../scripts/maintenance/model";
 
@@ -24,6 +25,25 @@ describe("candidate translation", () => {
     expect(calls).toHaveLength(1);
     const glossary = await Bun.file(new URL("../docs/glossary.md", import.meta.url)).text();
     expect(JSON.parse(calls[0]![1]!.content).glossary).toBe(glossary);
+  });
+
+  test("an unmatched rewording is translated without descriptionSource", async () => {
+    const reworded = { tab: "appearance", group: "Display", label: "Mouse Click-to-Focus", description: "Capture mouse clicks in the main session so cards focus on click", warning: null, options: null };
+    const rewordedHash = computeSourceHash(reworded);
+    const request = async (_messages: readonly ModelMessage[]) => response({ label: "Фокус по клику", description: "Перехватывать клики мыши в основной сессии, чтобы карточки получали фокус" });
+    const result = await translateCandidate({ candidateVersion: "18.14.0", snapshots: [{ version: "18.14.0", platform: "linux", settings: { "tui.mouse": { ...reworded, sourceHash: rewordedHash } } }], catalog: empty, request });
+    const variant = result.catalog.settings["tui.mouse"]!.variants[0]!;
+    expect(variant.sourceHash).toBe(rewordedHash);
+    expect(Object.hasOwn(variant, "descriptionSource")).toBe(false);
+  });
+
+  test("stamps the accepted edition that the live text matches", async () => {
+    const editions = descriptionTemplates["tui.mouse"]!;
+    const newest = editions[editions.length - 1]!;
+    const templated = { tab: "appearance", group: "Display", label: "Mouse Click-to-Focus", description: newest, warning: null, options: null };
+    const request = async (_messages: readonly ModelMessage[]) => response({ label: "Фокус по клику", description: "Перехватывать клики мыши в основной сессии, чтобы карточки субагентов и строки HUD получали фокус. Выделение текста становится {shift}+перетаскивание, а прокрутка колесом — {shift}+колесо, пока включено" });
+    const result = await translateCandidate({ candidateVersion: "18.14.0", snapshots: [{ version: "18.14.0", platform: "linux", settings: { "tui.mouse": { ...templated, sourceHash: computeSourceHash(templated) } } }], catalog: empty, request });
+    expect(result.catalog.settings["tui.mouse"]!.variants[0]!.descriptionSource).toBe(newest);
   });
 
   test("rejects missing markers and changed option values without a second request", async () => {

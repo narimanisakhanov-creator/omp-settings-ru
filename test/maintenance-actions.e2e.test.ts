@@ -468,6 +468,31 @@ for (const mode of ["merge-without-tag", "draft", "manual-draft", "manual-advanc
   } finally { mock.restore(); await fixture.cleanup(); }
 }, 30000);
 
+for (const drift of ["ahead", "diverged"] as const) test(`finalize ${drift === "ahead" ? "tags the verified merge commit when main advanced past it" : "refuses release-tag-not-ancestor and leaves no tag when main diverged"}`, async () => {
+  const fixture = await recoveryFixture("merge-without-tag", { main: drift });
+  const spawn = Bun.spawn; const spawnSync = Bun.spawnSync; const actualFetch = globalThis.fetch; const sleep = Bun.sleep;
+  spyOn(Bun, "spawn").mockImplementation(((command: string[], options: object) => command[0] === "gh" ? spawn([process.execPath, fixture.transport, ...command.slice(1)], options) : spawn(command, options)) as typeof Bun.spawn);
+  spyOn(Bun, "spawnSync").mockImplementation(((command: string[], options: object) => command[0] === "gh" ? spawnSync([process.execPath, fixture.transport, ...command.slice(1)], options) : spawnSync(command, options)) as typeof Bun.spawnSync);
+  spyOn(globalThis, "fetch").mockImplementation(((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.hostname !== "github.com") throw new Error("fixture-refuses-live-fetch");
+    return actualFetch(fixture.origin + url.pathname + url.search, init);
+  }) as typeof fetch);
+  spyOn(Bun, "sleep").mockImplementation((() => sleep(1)) as typeof Bun.sleep);
+  try {
+    if (drift === "ahead") {
+      expect(await finalizeCandidate(fixture.repo, "18.9.0", new HostedGitHub(fixture.policy, "fixture-token"))).toBe("released");
+      expect(fixture.main).not.toBe(fixture.merge);
+      expect(fixture.git("rev-parse", "refs/heads/main")).toBe(fixture.main);
+      expect(fixture.git("rev-parse", "refs/tags/v0.6.0")).toBe(fixture.merge);
+      expect(fixture.git("for-each-ref", "--format=%(refname)", "refs/heads/upgrade/")).toBe("");
+    } else {
+      await expect(finalizeCandidate(fixture.repo, "18.9.0", new HostedGitHub(fixture.policy, "fixture-token"))).rejects.toThrow("release-tag-not-ancestor");
+      expect(fixture.git("for-each-ref", "--format=%(refname)", "refs/tags/")).toBe("");
+    }
+  } finally { mock.restore(); await fixture.cleanup(); }
+}, 30000);
+
 function recoveryTestGithub(runs: readonly Record<string, unknown>[], options: { rerun?: (id: number) => void; attempts?: Record<number, Record<string, unknown>> } = {}): HostedGitHub {
   const policy = validatePolicy(rawPolicy);
   let runIndex = 0;

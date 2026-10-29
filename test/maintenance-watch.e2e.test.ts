@@ -67,6 +67,18 @@ if ($Arguments[0] -eq 'workflow') {
     if (-not [string]::IsNullOrEmpty([string]$message)) { Write-Output ([string]$message) }
     exit [int](Get-Prop $dispatch 'exit')
 }
+if ($Arguments[0] -eq 'run') {
+    $outcome = Get-Prop $scenario 'outcome'
+    if ((Get-Prop $outcome 'artifact') -ne $true) { Write-Output 'artifact not found'; exit 1 }
+    $target = $null
+    for ($index = 1; $index -lt $Arguments.Count; $index++) {
+        if ($Arguments[$index] -eq '--dir' -and ($index + 1) -lt $Arguments.Count) { $target = $Arguments[$index + 1]; break }
+    }
+    if ([string]::IsNullOrEmpty($target)) { Write-Output 'dir-missing'; exit 95 }
+    if (-not (Test-Path -LiteralPath $target -PathType Container)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }
+    [IO.File]::WriteAllText((Join-Path $target 'maintenance-outcome.json'), [string](Get-Prop $outcome 'content'))
+    exit 0
+}
 if ($Arguments[0] -ne 'api') { Write-Output 'unsupported-command'; exit 92 }
 $path = $null
 for ($index = 1; $index -lt $Arguments.Count; $index++) {
@@ -101,6 +113,7 @@ interface Scenario {
   auth?: number;
   api?: Record<string, ScenarioResponse>;
   dispatch?: { exit?: number; stdout?: string };
+  outcome?: { artifact?: boolean; content?: string };
 }
 
 interface WatcherWorkspace {
@@ -286,6 +299,21 @@ const mergedPull = (releaseVersion: string) => ({
 
 const publishedRelease = (releaseVersion: string) => ({ tag_name: `v${releaseVersion}`, draft: false, published_at: "2026-10-21T00:00:00Z" });
 
+/** A finished run that already recorded an outcome artifact for the current base. */
+const completedRunOnBase = (id: number, created: string) => ({
+  id,
+  run_attempt: 1,
+  status: "completed",
+  conclusion: "failure",
+  head_sha: BASE,
+  created_at: created,
+});
+
+const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+const blockedOutcome = (reason: string, retryable: boolean) =>
+  JSON.stringify({ schemaVersion: 1, baseSha: BASE, candidateVersion: "18.13.4", stage: "verify", outcome: "blocked", reason, retryable });
+
 describe("watcher domain decisions", () => {
   it("reports no-work when the published window already equals the registry window", async () => {
     const space = await workspace("no-work", false);
@@ -466,6 +494,60 @@ describe("watcher domain decisions", () => {
     expect(result.decision).toBe("cooldown");
     expect(result.payload.reason).toBe("recent-run");
     expect(await dispatches(space)).toEqual([]);
+  });
+
+  it("stops dispatching while the last run on this base reports a nonretryable block", async () => {
+    const space = await workspace("durable-block", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
+    await writeScenario(space, {
+      api: healthyApi({
+        [RUNS_PATH]: { body: { total_count: 1, workflow_runs: [completedRunOnBase(40935638542, hoursAgo(3))] } },
+      }),
+      outcome: { artifact: true, content: blockedOutcome("catalog-description-source-mismatch:tui.mouse", false) },
+    });
+    const result = await tick(space);
+    expect(result.decision).toBe("blocked");
+    expect(result.code).toBe(0);
+    expect(result.payload.reason).toBe("outcome-blocked:catalog-description-source-mismatch:tui.mouse");
+    expect(await dispatches(space)).toEqual([]);
+    const downloaded = (await calls(space)).filter(args => args[0] === "run" && args[1] === "download");
+    expect(downloaded).toHaveLength(1);
+    expect(downloaded[0]).toContain("maintenance-outcome-40935638542-1");
+    const directory = downloaded[0]![downloaded[0]!.indexOf("--dir") + 1]!;
+    expect(existsSync(directory)).toBe(false);
+    const log = JSON.parse((await readFile(join(space.watchRoot, "watch.log"), "utf8")).trim()) as Record<string, unknown>;
+    expect(log.decision).toBe("blocked");
+    expect(log.reason).toBe("outcome-blocked:catalog-description-source-mismatch:tui.mouse");
+  });
+
+  it("keeps dispatching when the outcome artifact cannot be read", async () => {
+    const space = await workspace("durable-fail-open", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
+    await writeScenario(space, {
+      api: healthyApi({
+        [RUNS_PATH]: { body: { total_count: 1, workflow_runs: [completedRunOnBase(40935638543, hoursAgo(3))] } },
+      }),
+      outcome: { artifact: false },
+    });
+    const result = await tick(space);
+    expect(result.decision).toBe("dispatched");
+    expect(result.payload.reason).toBe("support-window-mismatch");
+    expect(await dispatches(space)).toHaveLength(1);
+  });
+
+  it("dispatches again when the recorded block is retryable", async () => {
+    const space = await workspace("durable-retryable", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
+    await writeScenario(space, {
+      api: healthyApi({
+        [RUNS_PATH]: { body: { total_count: 1, workflow_runs: [completedRunOnBase(40935638544, hoursAgo(3))] } },
+      }),
+      outcome: { artifact: true, content: blockedOutcome("github-http-503", true) },
+    });
+    const result = await tick(space);
+    expect(result.decision).toBe("dispatched");
+    expect(result.payload.reason).toBe("support-window-mismatch");
+    expect(await dispatches(space)).toHaveLength(1);
   });
 
   it("refuses the hosted maintenance token", async () => {
@@ -654,6 +736,13 @@ describe("installer boundaries", () => {
 
   it("plans the hourly task from the accepted watcher without changing anything", async () => {
     const space = await workspace("plan", true);
+    // A machine that already runs the real watcher owns this task name, and the installer must
+    // refuse to plan over it; that refusal is covered by the ownership case, not here.
+    const probe = Bun.spawnSync(
+      [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", `if (Get-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue) { 'present' } else { 'absent' }`],
+      { stdout: "pipe", stderr: "pipe", timeout: 120_000 },
+    );
+    if (probe.stdout.toString().trim() === "present") return;
     const result = await runInstaller(space, ["-WhatIf", "-GhPath", space.gh], await acceptedMain());
     expect(result.payload.decision).toBe("install-plan");
     expect(result.code).toBe(0);

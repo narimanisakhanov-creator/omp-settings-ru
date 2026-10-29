@@ -118,6 +118,15 @@ export async function workflowRecovery(github: HostedGitHub, path: "release.yml"
   if (path === "marketplace-index.yml") throw new Error("publisher-success-without-published-proof");
   return true;
 }
+async function assertAncestor(github: HostedGitHub, sha: string, mainSha: string): Promise<void> {
+  let status: unknown;
+  try {
+    status = asRecord(await github.api(`repos/${github.policy.repository}/compare/${sha}...${mainSha}`))?.status;
+  } catch { throw new Error("release-tag-ancestry-unverifiable"); }
+  if (status === "ahead" || status === "identical") return;
+  if (status === "behind" || status === "diverged") throw new Error("release-tag-not-ancestor");
+  throw new Error("release-tag-ancestry-unverifiable");
+}
 export async function finalizeCandidate(checkout: string, version: string, github: HostedGitHub): Promise<"released" | "retired"> {
   if (!stableVersion.test(version)) throw new Error("finalize-version-invalid");
   const rows = await github.ownedPulls();
@@ -166,7 +175,10 @@ export async function finalizeCandidate(checkout: string, version: string, githu
   const currentTag = await github.checks.tagTarget(tag);
   if (currentTag && currentTag !== mergeSha) throw new Error("release-tag-conflict");
   if (!currentTag) {
-    if (await github.checks.mainSha() !== mergeSha) throw new Error("merge-main-drift");
+    // Тег ставится на проверенный merge-коммит, а не на верхушку main: main мог уйти вперёд
+    // между merge и тегом, и это не повод терять уже смерженный и проверенный кандидат.
+    const mainSha = await github.checks.mainSha();
+    if (mainSha !== mergeSha) await assertAncestor(github, mergeSha, mainSha);
     await github.checks.tag(tag, mergeSha);
   }
   const branch = `upgrade/omp-${version}`;
