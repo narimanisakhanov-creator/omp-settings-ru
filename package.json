@@ -55,7 +55,9 @@
     "maintenance": "bun scripts/maintenance.ts",
     "maintenance:actions": "bun scripts/maintenance-actions.ts",
     "release:check": "bun scripts/check-release.ts",
-    "check": "bun run typecheck && bun run test && bun run coverage:check && bun run drift:check && bun run smoke && bun run smoke:panel && bun run release:check"
+    "readme:check": "bun scripts/readme-coverage.ts --check",
+    "readme:write": "bun scripts/readme-coverage.ts --write",
+    "check": "bun run typecheck && bun run test && bun run coverage:check && bun run drift:check && bun run readme:check && bun run smoke && bun run smoke:panel && bun run release:check"
   },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": "18.13.1 || 18.13.2 || 18.13.3",

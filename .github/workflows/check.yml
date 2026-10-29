@@ -75,6 +75,8 @@ jobs:
           OMP_UPDATER_HOST_VERSION: ${{ steps.host-version.outputs.version }}
       - run: bun run smoke
       - run: bun run smoke:panel
+      # README badges and the compatibility table must equal the measured catalog coverage.
+      - run: bun run readme:check
       - run: bun run release:check
 
   check:

@@ -97,7 +97,10 @@ describe("release documents travel through the candidate commit", () => {
   const VERSIONS = [PREVIOUS, UPSTREAM] as const;
   const PLATFORMS = ["win32", "linux", "darwin"] as const;
   const README_BASE = [
-    "# omp-settings-ru", "", "## установка", "", "```text", "omp plugin install omp-settings-ru@omp-settings-ru", "```", "",
+    "# omp-settings-ru", "",
+    "<!-- omp-badges:start -->", "<img>", "<!-- omp-badges:end -->",
+    "<!-- omp-coverage:start -->", "<img>", "<!-- omp-coverage:end -->", "",
+    "## установка", "", "```text", "omp plugin install omp-settings-ru@omp-settings-ru", "```", "",
     "<!-- omp-supported:start -->", "## устаревшая таблица", "", "| OMP | настройки |", "| --- | ---: |", "| 18.8.4 | 404/404 |",
     "<!-- omp-supported:end -->", "", "## подробнее", "", "[FAQ](docs/faq.md).", "",
   ].join("\n");
@@ -293,7 +296,7 @@ test("candidate proof carries README, CHANGELOG and report as the exact commit d
   try {
   const root = await directory(); const repo = fixture.checkout; const artifact = join(root, "artifact"); await mkdir(artifact);
   const policy = validatePolicy(rawPolicy); const BASE = fixture.versions[0]!; const UPSTREAM = fixture.candidate; const VERSIONS = [BASE, UPSTREAM] as const;
-  const README = "# omp-settings-ru\n\n## установка\n\n```text\nomp plugin install omp-settings-ru@omp-settings-ru\n```\n\n<!-- omp-supported:start -->\n## старая таблица\n<!-- omp-supported:end -->\n\n## подробнее\n\n[FAQ](docs/faq.md).\n";
+  const README = "# omp-settings-ru\n\n<!-- omp-badges:start -->\n<img>\n<!-- omp-badges:end -->\n<!-- omp-coverage:start -->\n<img>\n<!-- omp-coverage:end -->\n\n## установка\n\n```text\nomp plugin install omp-settings-ru@omp-settings-ru\n```\n\n<!-- omp-supported:start -->\n## старая таблица\n<!-- omp-supported:end -->\n\n## подробнее\n\n[FAQ](docs/faq.md).\n";
   const CHANGELOG = "# изменения\n\n## [0.5.0](https://example.invalid/v0.5.0) — 2026-10-10\n\n- прошлый выпуск\n";
   const write = async (path: string, text: string) => { await mkdir(join(repo, path, ".."), { recursive: true }); await writeFile(join(repo, path), text); };
   await write("README.md", README); await write("CHANGELOG.md", CHANGELOG);

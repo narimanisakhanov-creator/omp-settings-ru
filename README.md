@@ -1,12 +1,43 @@
-# omp-settings-ru
+<div align="center">
 
-[![лицензия MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![последний выпуск](https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru)](https://github.com/narimanisakhanov-creator/omp-settings-ru/releases) [![проверка main](https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml?query=branch%3Amain)
+<img src="./banner.png" alt="omp-settings-ru — русская локализация /settings для Oh My Pi" width="100%">
 
-Русская панель `/settings` для [Oh My Pi](https://github.com/can1357/oh-my-pi): отдельное marketplace-расширение, не форк OMP и не патч `omp.exe`.
+<br>
 
-🧩 Переводит интерфейс; 🔒 не меняет значения и обработчики; 🌐 при работе не обращается к сети.
+<p>
+  <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest"><img src="https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru?label=release&color=ff2a85" alt="Release"></a>
+  <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml?query=branch%3Amain"><img src="https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml/badge.svg?branch=main" alt="проверка main"></a>
+  <!-- omp-badges:start -->
+<img src="https://img.shields.io/badge/OMP-18.13.1--18.13.3-8a2be2" alt="OMP 18.13.1, 18.13.2, 18.13.3">
+<!-- omp-badges:end -->
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff" alt="лицензия MIT"></a>
+</p>
 
-**Навигация:** [Установка](#установка) · [Совместимость](#поддерживаемые-версии-omp) · [Скриншоты](docs/screenshots.md) · [Изменения](CHANGELOG.md) · [Сообщить об ошибке](https://github.com/narimanisakhanov-creator/omp-settings-ru/issues)
+<p>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/runtime-Bun-f472b6?logo=bun&logoColor=white" alt="Bun">
+  <!-- omp-coverage:start -->
+<img src="https://img.shields.io/badge/перевод-426%2F426_(100%25)-brightgreen" alt="Покрытие каталога 426/426">
+<!-- omp-coverage:end -->
+  <img src="https://img.shields.io/badge/режим-offline-success" alt="Offline">
+</p>
+
+<p>
+  <b>Русская панель <code>/settings</code> для <a href="https://github.com/can1357/oh-my-pi">Oh My Pi</a>: отдельное marketplace-расширение, не форк OMP и не патч <code>omp.exe</code>.</b><br>
+  🧩 переводит UI · 🔒 не меняет значения и обработчики · 🌐 работает офлайн в runtime
+</p>
+
+<p>
+  <a href="#%D1%83%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%BA%D0%B0">Установка</a> ·
+  <a href="#%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B8%D0%B2%D0%B0%D0%B5%D0%BC%D1%8B%D0%B5-%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D0%B8-omp">Совместимость</a> ·
+  <a href="docs/screenshots.md">Скриншоты</a> ·
+  <a href="CHANGELOG.md">Изменения</a> ·
+  <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/issues">Сообщить об ошибке</a>
+</p>
+
+</div>
+
+---
 
 ![OMP 18.13.3 / Windows — русская панель Settings](docs/screenshots/settings-ru.png)
 
