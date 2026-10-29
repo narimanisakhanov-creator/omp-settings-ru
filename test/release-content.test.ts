@@ -108,11 +108,16 @@ describe("header badges", () => {
     expect(coverageBadge).toContain('alt="Покрытие каталога 419/419"');
   });
 
-  test("неполное покрытие показывается честной дробью, а не 100%", () => {
-    const badge = renderCoverageBadge(VERSIONS, coverage(VERSIONS, (version, platform) =>
+  test("неоднородное или неполное покрытие показывается как mixed, без выдуманного числа", () => {
+    const partial = renderCoverageBadge(VERSIONS, coverage(VERSIONS, (version, platform) =>
       version === NEXT && platform === "linux" ? { complete: 400, total: 419 } : { complete: 419, total: 419 }));
-    expect(badge).toContain("перевод-400%2F419-brightgreen");
-    expect(badge).not.toContain("100%25");
+    expect(partial).toContain("перевод-mixed-lightgrey");
+    expect(partial).not.toContain("100%25");
+    // Разные totals платформ: min/max дал бы 400/421 — число, которого не измерила ни одна платформа.
+    const differing = renderCoverageBadge(VERSIONS, coverage(VERSIONS, (version, platform) =>
+      version === NEXT && platform === "darwin" ? { complete: 421, total: 421 } : { complete: 419, total: 419 }));
+    expect(differing).toContain("перевод-mixed-lightgrey");
+    expect(differing).not.toMatch(/419|421/);
   });
 
   test("отсутствующее покрытие версии блокирует бейдж покрытия", () => {

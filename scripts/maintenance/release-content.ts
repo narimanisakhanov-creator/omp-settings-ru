@@ -174,8 +174,9 @@ export function renderVersionBadge(versions: readonly string[]): string {
 /**
  * Бейдж покрытия самой новой измеренной версии.
  *
- * Числа берутся из измерения, а не из текста README. Пока покрытие неполное, вместо «100%» печатается
- * честная дробь.
+ * Числа берутся из измерения, а не из текста README. Одно число печатается только тогда, когда все платформы
+ * покрыты полностью и одинаково — это ровно то значение, что стоит в таблице. Любая неоднородность (разные
+ * totals или неполное покрытие) даёт `mixed`: сводить платформы в min/max значило бы выдумать измерение.
  */
 export function renderCoverageBadge(versions: readonly string[], coverage: readonly CoveragePair[]): string {
   if (versions.length === 0) invalid("versions-empty");
@@ -183,11 +184,12 @@ export function renderCoverageBadge(versions: readonly string[], coverage: reado
   const newest = [...versions].sort(compareVersions).at(-1)!;
   const grid = coverageGrid([newest], coverage, false);
   const cells = DISPLAY_PLATFORMS.map(platform => grid.get(newest)!.get(platform)!);
-  const complete = Math.min(...cells.map(pair => pair.complete));
-  const total = Math.max(...cells.map(pair => pair.total));
-  const uniform = cells.every(pair => pair.complete === pair.total && pair.total === total);
-  const coverageText = uniform ? `${total}%2F${total}_(100%25)` : `${complete}%2F${total}`;
-  return `<img src="https://img.shields.io/badge/перевод-${coverageText}-brightgreen" alt="Покрытие каталога ${complete}/${total}">`;
+  const total = cells[0]!.total;
+  const uniform = cells.every(pair => pair.total === total && pair.complete === total);
+  if (!uniform) {
+    return `<img src="https://img.shields.io/badge/перевод-mixed-lightgrey" alt="Покрытие каталога ${newest}: платформы расходятся, точные числа в таблице">`;
+  }
+  return `<img src="https://img.shields.io/badge/перевод-${total}%2F${total}_(100%25)-brightgreen" alt="Покрытие каталога ${total}/${total}">`;
 }
 
 /** Замена бейджа версий: те же правила, что и для блока совместимости. */
