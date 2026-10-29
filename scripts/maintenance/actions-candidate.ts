@@ -21,8 +21,16 @@ export async function runTrusted(cwd: string, args: readonly string[], timeout: 
   const child = Bun.spawn([...args], { cwd, env: { ...secretFreeEnvironment(), ...environment }, stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill(), timeout);
   try {
-    const [stdout, , code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    if (code !== 0) throw new Error(`trusted-command-failed:${args.slice(0, 2).join(":")}`);
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (code !== 0) {
+      // A failure must be diagnosable. The raw tail goes to the job log, and a charset-safe form
+      // rides in the error so the bounded outcome artifact keeps a usable reason instead of a bare
+      // command name.
+      const tail = (stderr.trim() || stdout.trim()).split(/\r?\n/).filter(Boolean).slice(-12).join("\n");
+      if (tail) console.error(`trusted-command-failed:${args.slice(0, 2).join(":")}\n${tail}`);
+      const safe = tail.replace(/[^A-Za-z0-9:._/-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 200);
+      throw new Error(`trusted-command-failed:${args.slice(0, 2).join(":")}${safe ? `:${safe}` : ""}`);
+    }
     if (stdout.length > 32 * 1024 * 1024) throw new Error("trusted-output-too-large");
     return stdout;
   } finally { clearTimeout(timer); }
