@@ -27,6 +27,12 @@ const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export const COMPATIBILITY_START = "<!-- omp-supported:start -->";
 export const COMPATIBILITY_END = "<!-- omp-supported:end -->";
 
+/** Маркеры шапки: бейджи версий и покрытия тоже вычисляются, а не правятся руками. */
+export const BADGES_START = "<!-- omp-badges:start -->";
+export const BADGES_END = "<!-- omp-badges:end -->";
+export const COVERAGE_START = "<!-- omp-coverage:start -->";
+export const COVERAGE_END = "<!-- omp-coverage:end -->";
+
 /** Порядок строк по коду символа: лексикографический и независимый от локали. */
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -147,17 +153,67 @@ export function renderCompatibility(versions: readonly string[], coverage: reado
  * кандидата не должен превращаться в право переписать установку или ссылки.
  */
 export function replaceCompatibility(readme: string, section: string): string {
+  return replaceManaged(readme, COMPATIBILITY_START, COMPATIBILITY_END, section, "readme-support-markers-invalid");
+}
+
+/**
+ * Бейдж диапазона поддержанных версий.
+ *
+ * Диапазон берётся из того же манифеста, что и таблица совместимости, поэтому шапка не может разойтись с
+ * управляемым блоком. Бейдж покрытия живёт отдельно: в присланной шапке он стоит во втором ряду.
+ */
+export function renderVersionBadge(versions: readonly string[]): string {
+  if (versions.length === 0) invalid("versions-empty");
+  for (const version of versions) if (!STABLE_VERSION.test(version)) invalid(`version-invalid:${version}`);
+  const ordered = [...versions].sort(compareVersions);
+  const newest = ordered.at(-1)!;
+  const range = ordered.length === 1 ? ordered[0]! : `${ordered[0]!}--${newest}`;
+  return `<img src="https://img.shields.io/badge/OMP-${range}-8a2be2" alt="OMP ${ordered.join(", ")}">`;
+}
+
+/**
+ * Бейдж покрытия самой новой измеренной версии.
+ *
+ * Числа берутся из измерения, а не из текста README. Одно число печатается только тогда, когда все платформы
+ * покрыты полностью и одинаково — это ровно то значение, что стоит в таблице. Любая неоднородность (разные
+ * totals или неполное покрытие) даёт `mixed`: сводить платформы в min/max значило бы выдумать измерение.
+ */
+export function renderCoverageBadge(versions: readonly string[], coverage: readonly CoveragePair[]): string {
+  if (versions.length === 0) invalid("versions-empty");
+  for (const version of versions) if (!STABLE_VERSION.test(version)) invalid(`version-invalid:${version}`);
+  const newest = [...versions].sort(compareVersions).at(-1)!;
+  const grid = coverageGrid([newest], coverage, false);
+  const cells = DISPLAY_PLATFORMS.map(platform => grid.get(newest)!.get(platform)!);
+  const total = cells[0]!.total;
+  const uniform = cells.every(pair => pair.total === total && pair.complete === total);
+  if (!uniform) {
+    return `<img src="https://img.shields.io/badge/перевод-mixed-lightgrey" alt="Покрытие каталога ${newest}: платформы расходятся, точные числа в таблице">`;
+  }
+  return `<img src="https://img.shields.io/badge/перевод-${total}%2F${total}_(100%25)-brightgreen" alt="Покрытие каталога ${total}/${total}">`;
+}
+
+/** Замена бейджа версий: те же правила, что и для блока совместимости. */
+export function replaceVersionBadge(readme: string, block: string): string {
+  return replaceManaged(readme, BADGES_START, BADGES_END, block, "readme-badges-markers-invalid");
+}
+
+/** Замена бейджа покрытия. */
+export function replaceCoverageBadge(readme: string, block: string): string {
+  return replaceManaged(readme, COVERAGE_START, COVERAGE_END, block, "readme-coverage-markers-invalid");
+}
+
+function replaceManaged(readme: string, startMarker: string, endMarker: string, body: string, reason: string): string {
   const starts: number[] = [];
   const ends: number[] = [];
-  for (let index = readme.indexOf(COMPATIBILITY_START); index >= 0; index = readme.indexOf(COMPATIBILITY_START, index + 1)) starts.push(index);
-  for (let index = readme.indexOf(COMPATIBILITY_END); index >= 0; index = readme.indexOf(COMPATIBILITY_END, index + 1)) ends.push(index);
-  if (starts.length !== 1 || ends.length !== 1) throw new Error("readme-support-markers-invalid");
+  for (let index = readme.indexOf(startMarker); index >= 0; index = readme.indexOf(startMarker, index + 1)) starts.push(index);
+  for (let index = readme.indexOf(endMarker); index >= 0; index = readme.indexOf(endMarker, index + 1)) ends.push(index);
+  if (starts.length !== 1 || ends.length !== 1) throw new Error(reason);
   const start = starts[0]!;
   const end = ends[0]!;
-  if (start > end) throw new Error("readme-support-markers-invalid");
-  const head = readme.slice(0, start + COMPATIBILITY_START.length);
+  if (start > end) throw new Error(reason);
+  const head = readme.slice(0, start + startMarker.length);
   const tail = readme.slice(end);
-  return `${head}\n${section}\n${tail}`;
+  return `${head}\n${body}\n${tail}`;
 }
 
 export interface ReleaseContentInput {
@@ -215,7 +271,13 @@ export function hasReleaseHeading(changelog: string, releaseVersion: string): bo
  */
 export function buildReleaseDocuments(input: ReleaseContentInput, base: ReleaseBaseDocuments): ReleaseDocuments {
   if (hasReleaseHeading(base.changelog, input.releaseVersion)) throw new Error("release-changelog-version-conflict");
-  const readme = replaceCompatibility(base.readme, renderCompatibility(input.versions, input.coverage));
+  const readme = replaceCompatibility(
+    replaceCoverageBadge(
+      replaceVersionBadge(base.readme, renderVersionBadge(input.versions)),
+      renderCoverageBadge(input.versions, input.coverage),
+    ),
+    renderCompatibility(input.versions, input.coverage),
+  );
   const { changelogSection, report } = renderTranslationUpdate(input);
   return { readme, changelog: `${changelogSection}\n\n${base.changelog}`, report };
 }

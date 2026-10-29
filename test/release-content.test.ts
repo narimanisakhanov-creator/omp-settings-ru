@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildReleaseDocuments, COMPATIBILITY_END, COMPATIBILITY_START, hasReleaseHeading, renderCompatibility,
-  renderTranslationUpdate, replaceCompatibility,
+  buildReleaseDocuments, BADGES_END, BADGES_START, COVERAGE_END, COVERAGE_START, COMPATIBILITY_END, COMPATIBILITY_START, hasReleaseHeading, renderCompatibility,
+  renderCoverageBadge, replaceCoverageBadge, renderVersionBadge, replaceVersionBadge, renderTranslationUpdate, replaceCompatibility,
   type ReleaseContentInput,
 } from "../scripts/maintenance/release-content";
 import type { CatalogEntry, CoveragePair } from "../scripts/maintenance/semantic";
@@ -97,6 +97,44 @@ describe("renderCompatibility", () => {
   test("дубль версии и нестабильная версия блокируют таблицу", () => {
     expect(() => renderCompatibility([PREV, PREV], coverage([PREV]))).toThrow("release-content-invalid:versions-duplicate");
     expect(() => renderCompatibility(["18.8"], coverage(["18.8"]))).toThrow("release-content-invalid:version-invalid:18.8");
+  });
+});
+
+describe("header badges", () => {
+  test("печатает диапазон активного окна и полное покрытие самой новой версии", () => {
+    expect(renderVersionBadge(VERSIONS)).toContain("https://img.shields.io/badge/OMP-18.8.7--18.12.6-8a2be2");
+    const coverageBadge = renderCoverageBadge(VERSIONS, coverage(VERSIONS));
+    expect(coverageBadge).toContain("https://img.shields.io/badge/перевод-419%2F419_(100%25)-brightgreen");
+    expect(coverageBadge).toContain('alt="Покрытие каталога 419/419"');
+  });
+
+  test("неоднородное или неполное покрытие показывается как mixed, без выдуманного числа", () => {
+    const partial = renderCoverageBadge(VERSIONS, coverage(VERSIONS, (version, platform) =>
+      version === NEXT && platform === "linux" ? { complete: 400, total: 419 } : { complete: 419, total: 419 }));
+    expect(partial).toContain("перевод-mixed-lightgrey");
+    expect(partial).not.toContain("100%25");
+    // Разные totals платформ: min/max дал бы 400/421 — число, которого не измерила ни одна платформа.
+    const differing = renderCoverageBadge(VERSIONS, coverage(VERSIONS, (version, platform) =>
+      version === NEXT && platform === "darwin" ? { complete: 421, total: 421 } : { complete: 419, total: 419 }));
+    expect(differing).toContain("перевод-mixed-lightgrey");
+    expect(differing).not.toMatch(/419|421/);
+  });
+
+  test("отсутствующее покрытие версии блокирует бейдж покрытия", () => {
+    expect(() => renderCoverageBadge(VERSIONS, coverage([PREV]))).toThrow("release-content-invalid:coverage-missing:18.12.6");
+  });
+
+  test("каждая пара маркеров заменяется отдельно и не пересекается", () => {
+    const readme = `${BADGES_START}\n<img>\n${BADGES_END}\n${COVERAGE_START}\n<img>\n${COVERAGE_END}\n`;
+    expect(replaceVersionBadge(readme, "V")).toBe(`${BADGES_START}\nV\n${BADGES_END}\n${COVERAGE_START}\n<img>\n${COVERAGE_END}\n`);
+    expect(replaceCoverageBadge(readme, "C")).toBe(`${BADGES_START}\n<img>\n${BADGES_END}\n${COVERAGE_START}\nC\n${COVERAGE_END}\n`);
+  });
+
+  test("отсутствие или дубль маркеров — отказ", () => {
+    expect(() => replaceVersionBadge("no markers", "V")).toThrow("readme-badges-markers-invalid");
+    expect(() => replaceCoverageBadge("no markers", "C")).toThrow("readme-coverage-markers-invalid");
+    const doubled = `${BADGES_START}\n${BADGES_END}\n${BADGES_START}\n${BADGES_END}\n`;
+    expect(() => replaceVersionBadge(doubled, "V")).toThrow("readme-badges-markers-invalid");
   });
 });
 
