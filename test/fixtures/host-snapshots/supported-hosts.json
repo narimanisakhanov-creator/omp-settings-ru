@@ -3,20 +3,6 @@
   "structuralFallback": "Exact path/sourceHash/platform only; unreviewed versions are not an installed-panel support promise",
   "versions": [
     {
-      "version": "18.13.1",
-      "package": "omp-host-18131",
-      "platforms": [
-        "win32",
-        "darwin",
-        "linux"
-      ],
-      "baselines": {
-        "win32": "cfbf0e70c0c509484ae0b3d0d0456c7064f214440a910a82807c0d41ff5236cd",
-        "darwin": "4a48fce3f9986939d8d53c5d18fcfb80c198b1a40a3a3fa011cd8c359954a068",
-        "linux": "90572bc98146e060a1ca9e5757e75d1865722ba8e82fbe01e093448031c34006"
-      }
-    },
-    {
       "version": "18.13.2",
       "package": "omp-host-18132",
       "platforms": [
@@ -43,13 +29,31 @@
         "darwin": "aefb5931ced42e64f5d961c0ca8326be743b4d4d3c3f1b8cb7d4e02de28bc86c",
         "linux": "df2ca08e4cffc3c0d79a147ee63a6bbb9fb092fb642d847c3eac93efb1d3a69c"
       }
+    },
+    {
+      "version": "18.14.0",
+      "package": "omp-host-18140",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "246f27679fb77bb0f844f364dc8eceab8889ba250beaaddb13b53e3a48185252",
+        "darwin": "87814a0090d29d74682f8739dbc0c851eed7a82525e63eccee9b12e83c24596e",
+        "linux": "1c2731a22fb1c5bbaf6d7f95419c3bfcc12c00c2c57601c6ee573ea126955f9f"
+      }
     }
   ],
   "historical": [
     {
       "version": "18.6.1",
       "package": "omp-host-1861",
-      "platforms": ["win32", "darwin", "linux"],
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
       "baselines": {
         "win32": "3669fa3109d43a4ed9b27da3f82fd4538cd7b08df866736d895dff8d76b04d16",
         "darwin": "1ed1a01f21d8c8de87fd212fb7526d576c69f4781852d817ab94aa2591c34aa8",
@@ -59,7 +63,11 @@
     {
       "version": "18.8.0",
       "package": "omp-host-1880",
-      "platforms": ["win32", "darwin", "linux"],
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
       "baselines": {
         "win32": "1d602069d738330f8caa93a06b59e11abb5d1cd105311746baa9f92efe633862",
         "darwin": "f3d6f0b0580a5f2505de1e8d9462d14427bb197707c5a3139ed37f35b0cd626f",
@@ -69,7 +77,11 @@
     {
       "version": "18.8.4",
       "package": "omp-host-1884",
-      "platforms": ["win32", "darwin", "linux"],
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
       "baselines": {
         "win32": "2be085551750526ba0b497d796439675eafd07ed0d0464c9c7c6dc7f9a91a3dd",
         "darwin": "fc6a2fd6eb5f9f79296eda75f1c403a2e776d04ee761e2be811aec2f51c52b9e",
@@ -79,7 +91,11 @@
     {
       "version": "18.8.7",
       "package": "omp-host-1887",
-      "platforms": ["win32", "darwin", "linux"],
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
       "baselines": {
         "win32": "718ef648a35f6b676440185eb2d5eb900588296ffe9cc6c88a00351d0d1bde5c",
         "darwin": "e816e3bd859d20e9b1dc7aeb6fda36aa759320e3426231b0ff8045782f2184ab",
@@ -89,11 +105,29 @@
     {
       "version": "18.12.6",
       "package": "omp-host-18126",
-      "platforms": ["win32", "darwin", "linux"],
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
       "baselines": {
         "win32": "5fac9670a10e70a2c90e7dbb72b6373b2bd7b7815d330af11029013c11a75c73",
         "darwin": "6cbb3c7041d0e0cf878a0ffab52cb91ff731ff84caed9896692eb8ca4aaa130d",
         "linux": "c6c38f67bec8f0e3aeb51c2d5d39393efc89bb22cd8e8abd40ad8087179eccb3"
+      }
+    },
+    {
+      "version": "18.13.1",
+      "package": "omp-host-18131",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "cfbf0e70c0c509484ae0b3d0d0456c7064f214440a910a82807c0d41ff5236cd",
+        "darwin": "4a48fce3f9986939d8d53c5d18fcfb80c198b1a40a3a3fa011cd8c359954a068",
+        "linux": "90572bc98146e060a1ca9e5757e75d1865722ba8e82fbe01e093448031c34006"
       }
     }
   ],
