@@ -1,3 +1,10 @@
+## 0.12.0
+
+OMP 18.14.0 → 18.14.1.
+
+- Новые настройки на русском: 2 — Codex Daybreak Blue (`providers.openai-codex.daybreak`), Обновление заголовка после запросов (`title.refreshAfterPrompts`).
+- Покрытие: 18.13.3 426/426, 18.14.0 431/431, 18.14.1 433/433. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.12.0/upgrade-report.md).
+
 ## 0.11.0
 
 OMP 18.13.3 → 18.14.0.
