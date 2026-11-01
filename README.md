@@ -8,7 +8,7 @@
   <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest"><img src="https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru?label=release&color=ff2a85" alt="Release"></a>
   <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml?query=branch%3Amain"><img src="https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml/badge.svg?branch=main" alt="проверка main"></a>
   <!-- omp-badges:start -->
-<img src="https://img.shields.io/badge/OMP-18.14.0--18.14.2-8a2be2" alt="OMP 18.14.0, 18.14.1, 18.14.2">
+<img src="https://img.shields.io/badge/OMP-18.14.1--18.15.0-8a2be2" alt="OMP 18.14.1, 18.14.2, 18.15.0">
 <!-- omp-badges:end -->
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff" alt="лицензия MIT"></a>
 </p>
@@ -135,15 +135,15 @@ omp plugin upgrade omp-settings-ru@omp-settings-ru
 <!-- omp-supported:start -->
 ## Поддерживаемые версии OMP
 
-Поддержка в этой копии репозитория: OMP 18.14.0, 18.14.1, 18.14.2.
+Поддержка в этой копии репозитория: OMP 18.14.1, 18.14.2, 18.15.0.
 
 Целевое окно — три последние стабильные npm-версии OMP. Новые версии проходят проверки и добавляются последовательно; таблица показывает только уже измеренную поддержку, а не будущую очередь.
 
 | OMP | Windows | Linux | macOS |
 | --- | ---: | ---: | ---: |
-| 18.14.0 | 431/431 | 431/431 | 431/431 |
 | 18.14.1 | 433/433 | 433/433 | 433/433 |
 | 18.14.2 | 435/435 | 435/435 | 435/435 |
+| 18.15.0 | 435/435 | 435/435 | 435/435 |
 
 В ячейке — измеренное покрытие каталога для точной пары «версия × платформа» (`bun scripts/check-coverage.ts <версия> <платформа>`); другое число в ячейке означает другое измерение, а не округление.
 Список относится к текущей копии репозитория: совместимость опубликованного пакета определяется тегом его выпуска, а не этим файлом.
