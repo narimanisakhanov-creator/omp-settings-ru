@@ -45,9 +45,14 @@ function queueField(mutations: Mutation[], target: object, key: string, value: s
   let after: PropertyDescriptor;
   if (before && !("value" in before)) {
     // Setters can mutate untracked state; only reviewed live description getters are safe.
-    if (key !== "description" || !source || !before.get || before.set || !before.configurable || typeof value !== "string") {
+    if (key !== "description" || !before.get || before.set || !before.configurable || typeof value !== "string") {
       throw new Error("unsafe-property");
     }
+    // An upstream getter may carry no reviewed edition at all: it can bake an already rendered value instead
+    // of a host-owned {token}, and a new upstream cycle adds such a getter without warning. Freezing the
+    // translation would claim a keybinding the host no longer owns, and refusing the plan would drop every
+    // other translation in the pack, so this one description keeps its raw upstream text.
+    if (!source) return;
     const originalGetter = before.get;
     const localizedTemplate = value;
     const getter = function (this: object): string {

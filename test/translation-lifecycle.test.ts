@@ -126,8 +126,21 @@ describe("translation lifecycle", () => {
     result.restore();
     expect(Object.getOwnPropertyDescriptor(ui, "description")!.get).toBe(getter);
   });
+  test("unreviewed live getters keep their upstream text instead of refusing the pack", () => {
+    const { host, pack, ui } = fixture();
+    const getter = () => "Choose mode";
+    Object.defineProperty(ui, "description", { get: getter, configurable: true, enumerable: true });
+    const result = applyTranslations(host, pack);
+    expect(result.status).toBe("applied");
+    if (result.status !== "applied") return;
+    expect(ui.label).toBe("Режим");
+    expect(ui.description).toBe("Choose mode");
+    expect(Object.getOwnPropertyDescriptor(ui, "description")!.get).toBe(getter);
+    expect(result.restore()).toEqual([]);
+    expect(ui.label).toBe("Mode");
+  });
   test("unsafe setter and inherited fields refuse without invoking writes", () => {
-    for (const kind of ["setter", "inherited", "getter"]) {
+    for (const kind of ["setter", "inherited"]) {
       const { host, pack, ui } = fixture();
       let writes = 0;
       if (kind === "inherited") {
