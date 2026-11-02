@@ -1,3 +1,10 @@
+## 0.15.0
+
+OMP 18.15.0 → 18.16.0.
+
+- Новые настройки на русском: 3 — /btw Вставка управления (`btw.inject`), Альтернативы предсказания (`composer.predictionAlternatives`), Глобальная область Hindsight (`hindsight.globalScope`).
+- Покрытие: 18.14.2 435/435, 18.15.0 435/435, 18.16.0 438/438. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.15.0/upgrade-report.md).
+
 ## 0.14.0
 
 OMP 18.14.2 → 18.15.0.
