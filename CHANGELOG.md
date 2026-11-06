@@ -1,3 +1,11 @@
+## 0.16.0
+
+OMP 18.16.0 → 18.17.0.
+
+- Новые настройки на русском: 12 — Визуализация оболочки (`display.shellVisualization`), Представления транскрипта расширений (`extensionRenderers.transcriptPresenters`), Ключевое слово Chillax (`magicKeywords.chillax`), Двоичный файл ovnfs (`ovnfs.path`); ещё 8.
+- Обновлены переводы изменившихся настроек: 7 — Мерцание (`display.shimmer`), Плавный поток (`display.smoothStreaming`), Режим редактирования (`edit.mode`), Бэкенд изоляции (`isolation.backend`); ещё 3.
+- Покрытие: 18.15.0 435/435, 18.16.0 438/438, 18.17.0 450/450. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.16.0/upgrade-report.md).
+
 ## 0.15.0
 
 OMP 18.15.0 → 18.16.0.
