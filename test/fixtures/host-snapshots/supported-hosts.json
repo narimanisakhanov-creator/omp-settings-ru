@@ -3,20 +3,6 @@
   "structuralFallback": "Exact path/sourceHash/platform only; unreviewed versions are not an installed-panel support promise",
   "versions": [
     {
-      "version": "18.18.0",
-      "package": "omp-host-18180",
-      "platforms": [
-        "win32",
-        "darwin",
-        "linux"
-      ],
-      "baselines": {
-        "win32": "381f3b18a645d73cf49f30b08c2c88e60f4eedfedbe940cfe7657bd3a6738a4d",
-        "darwin": "d38b1ef90917476b76108175d4e15654d34080f02355eadc1f429214c7e21c13",
-        "linux": "d8a277ce3c1a6d87cda55397b4763b97d7f385f52d9b93d2f07a6d242eecf816"
-      }
-    },
-    {
       "version": "18.18.1",
       "package": "omp-host-18181",
       "platforms": [
@@ -42,6 +28,20 @@
         "win32": "418fcd8aa2bfd1c44be39ef26491dc989cdac06804e9be400af2fbe5085c2717",
         "darwin": "e0ddd2d23efcfee6c3fd9477aeeef95bd5878281f90bfc971ebce8ce47b0427c",
         "linux": "f2d3e6873128ec5f3d501f6082c9fcf782bb7ed3db9cd62938d0714982dbf792"
+      }
+    },
+    {
+      "version": "18.18.3",
+      "package": "omp-host-18183",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "111bcb6fa225dc33e34deca42ebd4dea4920b658bae21c3c65115f6f72c17b1e",
+        "darwin": "289b74cf759c471f68b041aeefbe0fc05757dce29ee4cfc6800e71934b576e30",
+        "linux": "f843199b1f3471ea53aef93e14a5c8c02c8b69464f4372e62da1250661a5adc9"
       }
     }
   ],
@@ -240,6 +240,20 @@
         "win32": "7cf5e0d547a32f6bc93ee991a6336b40d99d26210048228b1d7ce196552ba50b",
         "darwin": "fd02d0908bf4245e621df98a7607ec10a482f111160295df48c9647144ec1c78",
         "linux": "5742c02def46f75e5006f411f135857c9c72549a2d4a4b85400d77ddfe4e44cd"
+      }
+    },
+    {
+      "version": "18.18.0",
+      "package": "omp-host-18180",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "baselines": {
+        "win32": "381f3b18a645d73cf49f30b08c2c88e60f4eedfedbe940cfe7657bd3a6738a4d",
+        "darwin": "d38b1ef90917476b76108175d4e15654d34080f02355eadc1f429214c7e21c13",
+        "linux": "d8a277ce3c1a6d87cda55397b4763b97d7f385f52d9b93d2f07a6d242eecf816"
       }
     }
   ],
