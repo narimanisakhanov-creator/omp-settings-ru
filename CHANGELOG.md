@@ -1,3 +1,10 @@
+## 0.19.0
+
+OMP 18.18.1 → 18.18.2.
+
+- Обновлены переводы изменившихся настроек: 2 — Путь к БД Mnemopi (`mnemopi.dbPath`), Фокус по клику мыши (`tui.mouse`).
+- Покрытие: 18.18.0 450/450, 18.18.1 450/450, 18.18.2 450/450. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.19.0/upgrade-report.md).
+
 ## 0.18.0
 
 OMP 18.18.0 → 18.18.1.
