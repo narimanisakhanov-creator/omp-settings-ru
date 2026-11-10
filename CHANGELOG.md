@@ -1,3 +1,11 @@
+## 0.24.0
+
+OMP 18.18.6 → 18.18.7.
+
+- Новые настройки на русском: 5 — Автоматическое использование сохранённых сбросов Claude \(5h\) (`claudeResets.autoRedeem5h`), Автоматическое использование сбросов Fable в Claude (`claudeResets.autoRedeemFable`), Claude: автоматическое использование сохранённых сбросов \(еженедельные\) (`claudeResets.autoRedeemWeekly`), Автоматическое использование сохранённых сбросов Codex \(5h\) (`codexResets.autoRedeem5h`); ещё 1.
+- Больше не доступны в OMP 18.18.7: 2 настройки; исторические переводы сохранены.
+- Покрытие: 18.18.5 450/450, 18.18.6 450/450, 18.18.7 453/453. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.24.0/upgrade-report.md).
+
 ## 0.23.0
 
 OMP 18.18.5 → 18.18.6.
