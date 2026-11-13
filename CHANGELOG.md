@@ -1,3 +1,12 @@
+## 0.27.0
+
+OMP 18.18.9 → 18.19.0.
+
+- Новые настройки на русском: 4 — Браузер WebKit (`browser.webkit`), Путь WebKit браузера (`browser.webkitPath`), Автоматический параллелизм (`task.autoParallel`), Последовательные шаги задачи (`task.steps`).
+- Обновлены переводы изменившихся настроек: 6 — Тайм-аут ask (`ask.timeout`), URL CDP браузера (`browser.cdpUrl`), Браузер (`browser.enabled`), Замораживать вкладки браузера при завершении хода (`browser.freezeOnTurnEnd`); ещё 2.
+- Больше не доступны в OMP 18.19.0: 1 настройка; исторические переводы сохранены.
+- Покрытие: 18.18.8 453/453, 18.18.9 453/453, 18.19.0 456/456. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.27.0/upgrade-report.md).
+
 ## 0.26.0
 
 OMP 18.18.8 → 18.18.9.
