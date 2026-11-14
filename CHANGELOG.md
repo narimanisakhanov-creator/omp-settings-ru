@@ -1,3 +1,10 @@
+## 0.29.0
+
+OMP 18.20.0 → 18.20.1.
+
+- Новые настройки на русском: 4 — Провайдеры с возобновлённой работой (`auth.unpausedProviders`), Разрешённые переменные окружения Bash (`bash.allowedEnvVars`), Выборочный коммит (`commit.enabled`), Напоминания о списке задач во время выполнения (`todo.midRunNudges`).
+- Покрытие: 18.19.0 456/456, 18.20.0 458/458, 18.20.1 462/462. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.29.0/upgrade-report.md).
+
 ## 0.28.0
 
 OMP 18.19.0 → 18.20.0.
