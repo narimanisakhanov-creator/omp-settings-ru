@@ -53,9 +53,11 @@ class Session {
 }
 const session = new Session();
 try {
-  const startup=await session.wait(/change thinking effort/);
+  const hint=await session.wait(/change thinking effort/);
+  // The first painted frame can arrive before the session-bound status line, so the
+  // startup hint is not proof the neutral header exists yet; wait for the marker itself.
+  const startup=/no-model/.test(hint)?hint:await session.wait(/no-model/);
   if (/omp-settings-ru:/.test(startup)) throw new Error("compatibility-refusal-observed");
-  if (!/no-model/.test(startup)) throw new Error("neutral-offline-header-unobserved");
   observations.push({kind:"startup",output:startup.split("\n").filter(line=>/no-model|No default model/.test(line)).join("\n")});
   if (process.argv.includes("--startup-only")) {
     const panel=await session.send("/settings\r",/Dark Theme|Тёмная тема/);
