@@ -11,6 +11,7 @@ test("startup-only driver observes real settings without claiming translation ro
  const receipt=await runInstalledSmoke({executable,pluginPath:process.cwd(),ownedProfile:`omp-settings-ru-proof-startup-${hostVersion.replaceAll(".","")}`,mode:"pre-activation",startupOnly:true});
  expect(receipt.hostVersion).toBe(hostVersion);
  expect(receipt.observations.map(observation=>observation.kind)).toEqual(["startup","settings-panel"]);
+ expect(receipt.observations.find(observation=>observation.kind==="startup")?.output).toContain("no-model");
  expect(receipt.startupPassed).toBe(true);
  expect(receipt.installedPanel).toBe(false);
 },60000);

@@ -30,6 +30,7 @@ test("actual installed host exercises panel search edits recovery and clean fres
   expect(receipt.hostVersion).toBe(hostVersion);
   expect(receipt.installedPanel).toBe(true);
   expect(receipt.observations.map((entry: {kind: string}) => entry.kind)).toEqual(["startup", "ru-panel", "ru-search", "bool-change", "bool-restored", "enum-change", "enum-restored", "en-panel", "ru-reapplied", "explicit-en-reset", "fresh-english-no-extensions"]);
+  expect(receipt.observations.find((entry: {kind: string; output: string}) => entry.kind === "startup")?.output).toContain("no-model");
   expect(receipt.isolation.ambientCredentialInherited).toBe(false);
   expect(receipt.contentHash).toMatch(/^[a-f0-9]{64}$/);
 }, 180000);

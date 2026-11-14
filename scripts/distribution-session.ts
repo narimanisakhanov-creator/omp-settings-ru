@@ -1,5 +1,6 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
 import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, glyphKeyAway, glyphPreset, glyphTarget, searchToggle } from "./panel-search";
+import { cleanTerminalOutput as clean } from "./terminal-output";
 
 /**
  * Drive a real installed OMP through `/settings` in one profile and report what was observed.
@@ -15,7 +16,6 @@ import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, gly
 const [executable, profile, mode] = process.argv.slice(2) as [string, string, "ru" | "en" | "boot"];
 if (executable === undefined || profile === undefined || (mode !== "ru" && mode !== "en" && mode !== "boot")) throw new Error("distribution-session-usage");
 const observations: {kind: string; output: string}[] = [];
-const clean = (text: string) => text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b[=>]/g, "");
 
 class Session {
   readonly pty = new PtySession();

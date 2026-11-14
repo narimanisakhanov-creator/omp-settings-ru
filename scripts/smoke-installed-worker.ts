@@ -2,13 +2,13 @@ import { PtySession } from "@oh-my-pi/pi-natives";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, glyphKeyAway, glyphPreset, glyphTarget, searchToggle } from "./panel-search";
+import { cleanTerminalOutput as clean } from "./terminal-output";
 
 const [executable, profile, pluginPath, home] = process.argv.slice(2) as [string, string, string, string];
 const observations: {kind: string; output: string}[] = [];
 const agentDir = join(home, ".omp", "profiles", profile, "agent");
 await mkdir(agentDir, {recursive: true});
 await writeFile(join(agentDir, "config.yml"), "startup:\n  setupWizard: false\n");
-const clean = (text: string) => text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b[=>]/g, "");
 function native(args: string[]) {
   const result = Bun.spawnSync([executable, "--profile", profile, ...args], {env: process.env, stdout:"pipe",stderr:"pipe",timeout:30000});
   if (result.exitCode !== 0) {
@@ -54,8 +54,8 @@ class Session {
 const session = new Session();
 try {
   const hint=await session.wait(/change thinking effort/);
-  // The first painted frame can arrive before the session-bound status line, so the
-  // startup hint is not proof the neutral header exists yet; wait for the marker itself.
+  // The prompt hint alone is not the offline invariant: observe the literal
+  // status marker as well, preserving it across later differential redraws.
   const startup=/no-model/.test(hint)?hint:await session.wait(/no-model/);
   if (/omp-settings-ru:/.test(startup)) throw new Error("compatibility-refusal-observed");
   observations.push({kind:"startup",output:startup.split("\n").filter(line=>/no-model|No default model/.test(line)).join("\n")});
