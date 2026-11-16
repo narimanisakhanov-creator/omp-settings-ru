@@ -1,8 +1,8 @@
 import { PtySession } from "@oh-my-pi/pi-natives";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, glyphKeyAway, glyphPreset, glyphTarget, searchToggle } from "./panel-search";
-import { cleanTerminalOutput as clean } from "./terminal-output";
+import { cleanTerminalOutput as clean, terminalObservationFailure, type TerminalOffsetReset } from "./terminal-output";
 
 const [executable, profile, pluginPath, home] = process.argv.slice(2) as [string, string, string, string];
 const observations: {kind: string; output: string}[] = [];
@@ -33,6 +33,9 @@ class Session {
   readonly pty = new PtySession();
   text = "";
   offset = 0;
+  readonly started = Date.now();
+  readonly setupResets: TerminalOffsetReset[] = [];
+  setupResetCount = 0;
   run: Promise<unknown>;
   constructor(noExtensions = false) {
     this.run = this.pty.startArgv({application:executable,args:["--profile",profile,...(noExtensions?["--no-extensions"]:["--plugin-dir",pluginPath]),"--no-session","--no-skills","--no-rules","--no-tools","--no-lsp","--no-title"],cwd:home,cols:150,rows:44,timeoutMs:120000},(error,chunk)=>{if(error)throw error;this.text+=chunk;});
@@ -42,10 +45,15 @@ class Session {
     while (Date.now()<deadline) {
       const text = clean(this.text.slice(this.offset));
       if (pattern.test(text)) {await Bun.sleep(150);return clean(this.text.slice(this.offset));}
-      if (/Setup step/.test(text)) {this.offset=this.text.length;this.pty.write("\x1b");await Bun.sleep(400);continue;}
+      if (/Setup step/.test(text)) {
+        this.setupResetCount++;
+        this.setupResets.push({at:Date.now()-this.started,from:this.offset,to:this.text.length});
+        if(this.setupResets.length>8)this.setupResets.shift();
+        this.offset=this.text.length;this.pty.write("\x1b");await Bun.sleep(400);continue;
+      }
       await Bun.sleep(50);
     }
-    throw new Error("native-panel-observation-timeout:"+pattern.source+":"+clean(this.text.slice(this.offset)).slice(-1800));
+    throw new Error("native-panel-observation-timeout:"+pattern.source+":"+terminalObservationFailure(this.text,this.offset,this.setupResets,this.setupResetCount,[home,pluginPath,process.cwd(),resolve(import.meta.dir,"..")]));
   }
   async send(text: string, pattern: RegExp): Promise<string> {this.offset=this.text.length;this.pty.write(text);return this.wait(pattern);}
   async escape() {this.pty.write("\x1b");await Bun.sleep(300);}
