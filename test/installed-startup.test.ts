@@ -50,3 +50,44 @@ test("installed smoke keeps its env allowlist when cwd has a .env file",()=>{
   rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
  }
 },180000);
+
+// Removing the native-child IMDS guard must fail this real worker startup even
+// on non-EC2 hosts: the owned endpoint advertises ambient AWS availability.
+test("native worker ignores ambient EC2 metadata availability without contacting IMDS",async()=>{
+ const root=mkdtempSync(join(tmpdir(),"omp-smoke-aws-metadata-"));
+ const requests:string[]=[];
+ const server=Bun.serve({hostname:"127.0.0.1",port:0,fetch(request){
+  requests.push(`${request.method} ${new URL(request.url).pathname}`);
+  return new Response("No metadata in this owned fixture",{status:404});
+ }});
+ let child:Bun.Subprocess<"ignore","pipe","pipe">|undefined;
+ try {
+  const home=join(root,"home");
+  const profile=`omp-settings-ru-proof-imds-${hostVersion.replaceAll(".","")}-${process.pid}-${Date.now()}`;
+  mkdirSync(home,{recursive:true});
+  const environment:Record<string,string>={};
+  for(const key of ["PATH","PATHEXT","SYSTEMROOT","WINDIR","COMSPEC","TEMP","TMP","TMPDIR"]){const value=process.env[key];if(value)environment[key]=value;}
+  Object.assign(environment,{
+   HOME:home,USERPROFILE:home,TERM:"xterm-256color",COLORTERM:"truecolor",
+   AWS_EC2_METADATA_SERVICE_ENDPOINT:`http://127.0.0.1:${server.port}`,
+   AWS_EC2_METADATA_DISABLED:"false",
+  });
+  // Async spawn keeps the owned 404 metadata server responsive throughout the
+  // actual native CLI + PTY path; no provider or native runtime is substituted.
+  child=Bun.spawn([process.execPath,"--no-env-file",resolve(import.meta.dir,"../scripts/smoke-installed-worker.ts"),executable,profile,process.cwd(),home,"--startup-only"],{cwd:root,env:environment,stdout:"pipe",stderr:"pipe",timeout:150000});
+  const [exitCode,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
+  if(exitCode!==0)throw new Error("ambient-imds-smoke-failed:"+stderr.replaceAll(root,"[owned-root]").slice(-4000));
+  const receipt=JSON.parse(stdout);
+  expect(receipt.observations.map((observation:{kind:string})=>observation.kind)).toEqual(["startup","settings-panel"]);
+  expect(receipt.observations.find((observation:{kind:string;output:string})=>observation.kind==="startup")?.output).toContain("no-model");
+  expect(receipt.observations.find((observation:{kind:string;output:string})=>observation.kind==="settings-panel")?.output).toMatch(/Dark Theme|Тёмная тема/);
+  expect(receipt.startupPassed).toBe(true);
+  expect(receipt.installedPanel).toBe(false);
+  expect(receipt.isolation).toEqual({ambientCredentialInherited:false,homeIsolated:true,providerRoundTrip:false});
+  expect(requests).toEqual([]);
+ } finally {
+  if(child){child.kill();await child.exited;}
+  await server.stop(true);
+  rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+ }
+},180000);

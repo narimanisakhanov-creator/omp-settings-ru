@@ -5,12 +5,20 @@ import { RU_ENUM_QUERY, RU_ENUM_SETTLED, RU_SEARCH_QUERY, RU_SEARCH_SETTLED, gly
 import { cleanTerminalOutput as clean, terminalObservationFailure, type TerminalOffsetReset } from "./terminal-output";
 
 const [executable, profile, pluginPath, home] = process.argv.slice(2) as [string, string, string, string];
+// HOME isolation does not hide EC2 hardware from ambient AWS discovery. Keep
+// this override local to every native child, including the PTY, not the user.
+const nativeEnvironment: Record<string, string> = {};
+for (const key in process.env) {
+  const value = process.env[key];
+  if (value !== undefined) nativeEnvironment[key] = value;
+}
+nativeEnvironment.AWS_EC2_METADATA_DISABLED = "true";
 const observations: {kind: string; output: string}[] = [];
 const agentDir = join(home, ".omp", "profiles", profile, "agent");
 await mkdir(agentDir, {recursive: true});
 await writeFile(join(agentDir, "config.yml"), "startup:\n  setupWizard: false\n");
 function native(args: string[]) {
-  const result = Bun.spawnSync([executable, "--profile", profile, ...args], {env: process.env, stdout:"pipe",stderr:"pipe",timeout:30000});
+  const result = Bun.spawnSync([executable, "--profile", profile, ...args], {env: nativeEnvironment, stdout:"pipe",stderr:"pipe",timeout:30000});
   if (result.exitCode !== 0) {
     // Keep the child's own evidence: a bare code cannot distinguish a refused link, a crash
     // and a timeout, and the runner failure has to be diagnosable from the log alone.
@@ -38,7 +46,7 @@ class Session {
   setupResetCount = 0;
   run: Promise<unknown>;
   constructor(noExtensions = false) {
-    this.run = this.pty.startArgv({application:executable,args:["--profile",profile,...(noExtensions?["--no-extensions"]:["--plugin-dir",pluginPath]),"--no-session","--no-skills","--no-rules","--no-tools","--no-lsp","--no-title"],cwd:home,cols:150,rows:44,timeoutMs:120000},(error,chunk)=>{if(error)throw error;this.text+=chunk;});
+    this.run = this.pty.startArgv({application:executable,args:["--profile",profile,...(noExtensions?["--no-extensions"]:["--plugin-dir",pluginPath]),"--no-session","--no-skills","--no-rules","--no-tools","--no-lsp","--no-title"],cwd:home,env:nativeEnvironment,cols:150,rows:44,timeoutMs:120000},(error,chunk)=>{if(error)throw error;this.text+=chunk;});
   }
   async wait(pattern: RegExp, timeout = 15000): Promise<string> {
     const deadline = Date.now()+timeout;
