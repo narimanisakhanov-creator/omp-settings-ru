@@ -1,3 +1,10 @@
+## 0.31.0
+
+OMP 18.20.2 → 18.20.3.
+
+- Новые настройки на русском: 3 — Тип входных данных для эмбеддингов Mnemopi (`mnemopi.embeddingInputType`), Префикс запросов для эмбеддингов Mnemopi (`mnemopi.embeddingQueryPrefix`), Релевантность выборки Mnemopi (`mnemopi.recallRelevance`).
+- Покрытие: 18.20.1 462/462, 18.20.2 462/462, 18.20.3 465/465. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.31.0/upgrade-report.md).
+
 ## 0.30.0
 
 OMP 18.20.1 → 18.20.2.
