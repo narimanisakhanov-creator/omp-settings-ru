@@ -304,7 +304,7 @@ export async function runInstalledSmoke(options: InstalledSmokeOptions): Promise
   process.env.OMP_SMOKE_PRIVATE_SENTINEL="must-not-inherit";
   let result;
   try {
-    result=Bun.spawnSync([process.execPath,resolve("scripts/smoke-installed-worker.ts"),options.executable,options.ownedProfile,pluginPath,home,...(options.startupOnly?["--startup-only"]:[])],{env:environment,stdout:"pipe",stderr:"pipe",timeout:180000});
+    result=Bun.spawnSync([process.execPath,"--no-env-file",resolve(import.meta.dir,"smoke-installed-worker.ts"),options.executable,options.ownedProfile,pluginPath,home,...(options.startupOnly?["--startup-only"]:[])],{env:environment,stdout:"pipe",stderr:"pipe",timeout:180000});
   } finally {
     if(prior===undefined)delete process.env.OMP_SMOKE_PRIVATE_SENTINEL;else process.env.OMP_SMOKE_PRIVATE_SENTINEL=prior;
   }
