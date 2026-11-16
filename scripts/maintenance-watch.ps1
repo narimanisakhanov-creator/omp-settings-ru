@@ -63,6 +63,8 @@ $script:LogLimitBytes = 1048576
 $script:CooldownMinutes = 60
 $script:RegistryLimitBytes = 33554432
 $script:RegistryTimeoutMs = 30000
+$script:GhTimeoutMs = 30000
+$script:GhDrainTimeoutMs = 5000
 $script:StablePattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$'
 $script:GhPath = $null
 $script:StateInvalid = $false
@@ -207,24 +209,148 @@ function Add-WatchLog {
     [IO.File]::AppendAllText($path, $line + [Environment]::NewLine, $encoding)
 }
 
+# ProcessStartInfo takes one command line string on Windows PowerShell 5.1, so every argument is
+# quoted by the CommandLineToArgvW rules: backslashes double only before a quote or at the end of a
+# quoted value, which keeps paths with spaces, Unicode and trailing separators intact.
+function ConvertTo-ProcessArgument {
+    param([string]$Argument)
+    if ([string]::IsNullOrEmpty($Argument)) { return '""' }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append([char]'"')
+    $slashes = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq [char]'\') { $slashes++; continue }
+        if ($character -eq [char]'"') {
+            [void]$builder.Append([char]'\', ($slashes * 2) + 1)
+            [void]$builder.Append([char]'"')
+            $slashes = 0
+            continue
+        }
+        if ($slashes -gt 0) { [void]$builder.Append([char]'\', $slashes); $slashes = 0 }
+        [void]$builder.Append($character)
+    }
+    if ($slashes -gt 0) { [void]$builder.Append([char]'\', $slashes * 2) }
+    [void]$builder.Append([char]'"')
+    return $builder.ToString()
+}
+
+# taskkill /T walks the owned tree only while the root still exists; once the root exits, Windows
+# no longer knows the ancestry and only the direct Kill fallback remains. Bound taskkill's own
+# execution and both redirected pipes so cleanup cannot outlive the tick. It addresses one captured
+# PID only: no process-name matching and no broad kill.
+function Stop-OwnedProcessTree {
+    param([int]$ProcessId)
+    if ($ProcessId -le 0) { return }
+    $process = $null
+    try {
+        $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
+        if ([string]::IsNullOrWhiteSpace($systemRoot)) { return }
+        $taskkill = [IO.Path]::Combine($systemRoot, 'System32', 'taskkill.exe')
+        if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { return }
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = $taskkill
+        $start.Arguments = (@('/PID', [string]$ProcessId, '/T', '/F') | ForEach-Object { ConvertTo-ProcessArgument ([string]$_) }) -join ' '
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $start
+        if (-not $process.Start()) { return }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($script:GhDrainTimeoutMs)) {
+            try { $process.Kill() } catch { }
+            [void]$process.WaitForExit($script:GhDrainTimeoutMs)
+        }
+        try { [void]$stdout.Wait($script:GhDrainTimeoutMs) } catch { }
+        try { [void]$stderr.Wait($script:GhDrainTimeoutMs) } catch { }
+    }
+    catch { }
+    finally {
+        if ($null -ne $process) { $process.Dispose() }
+    }
+}
+
 function Invoke-GhRaw {
     param([Parameter(Mandatory = $true)][string[]]$GhArguments)
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    $process = $null
     try {
-        # Merging the streams in memory keeps stderr available without a redirect cmdlet, which a
-        # -WhatIf caller would suppress; error records stay distinguishable from real output.
-        $merged = @(& $script:GhPath @GhArguments 2>&1)
-        $code = $LASTEXITCODE
-        $out = New-Object System.Collections.ArrayList
-        $err = New-Object System.Collections.ArrayList
-        foreach ($item in $merged) {
-            if ($item -is [System.Management.Automation.ErrorRecord]) { [void]$err.Add([string]$item.Exception.Message) }
-            else { [void]$out.Add([string]$item) }
+        $fileName = $script:GhPath
+        $arguments = New-Object System.Collections.ArrayList
+        # CreateProcess cannot start a .ps1 directly; a script tool runs on this Windows PowerShell
+        # host. The installed gh is a native executable and takes the direct path.
+        if ([IO.Path]::GetExtension($script:GhPath) -ieq '.ps1') {
+            $fileName = [IO.Path]::Combine($PSHOME, 'powershell.exe')
+            [void]$arguments.Add('-NoProfile')
+            [void]$arguments.Add('-NonInteractive')
+            [void]$arguments.Add('-File')
+            [void]$arguments.Add($script:GhPath)
         }
-        return [pscustomobject]@{ Code = $code; Stdout = ($out -join [Environment]::NewLine); Stderr = ($err -join [Environment]::NewLine) }
+        foreach ($ghArgument in $GhArguments) { [void]$arguments.Add([string]$ghArgument) }
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = $fileName
+        $start.Arguments = (@($arguments | ForEach-Object { ConvertTo-ProcessArgument ([string]$_) }) -join ' ')
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $encoding = New-Object System.Text.UTF8Encoding($false)
+        $start.StandardOutputEncoding = $encoding
+        $start.StandardErrorEncoding = $encoding
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $start
+        if (-not $process.Start()) { throw 'github-command-failed' }
+        $ownedId = 0
+        try { $ownedId = [int]$process.Id } catch { }
+
+        # Both pipes drain on the thread pool while the tick waits, so a chatty command cannot fill
+        # the buffer and deadlock against its own reader.
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $timedOut = -not $process.WaitForExit($script:GhTimeoutMs)
+        if ($timedOut) {
+            # Windows PowerShell 5.1 has no Kill(tree) overload. While the owned root is alive,
+            # taskkill walks its descendants; the direct Kill remains the bounded fallback.
+            $rootAlive = $false
+            try { $rootAlive = -not $process.HasExited } catch { }
+            if ($rootAlive) { Stop-OwnedProcessTree -ProcessId $ownedId }
+            try { $process.Kill() } catch { }
+            [void]$process.WaitForExit($script:GhDrainTimeoutMs)
+        }
+        $out = ''
+        $err = ''
+        $drained = $true
+        try {
+            if ($stdout.Wait($script:GhDrainTimeoutMs)) { $out = [string]$stdout.Result }
+            else { $drained = $false }
+        }
+        catch { $drained = $false; $out = '' }
+        try {
+            if ($stderr.Wait($script:GhDrainTimeoutMs)) { $err = [string]$stderr.Result }
+            else { $drained = $false }
+        }
+        catch { $drained = $false; $err = '' }
+        # A command whose pipes were not drained is not a success, even when the process exited 0
+        # and its partial output is empty.
+        if (-not $drained) { $timedOut = $true }
+        $code = -1
+        if (-not $timedOut) { $code = [int]$process.ExitCode }
+        $trim = [char[]]@("`r", "`n")
+        return [pscustomobject]@{
+            Code = $code
+            Stdout = $out.TrimEnd($trim)
+            Stderr = $err.TrimEnd($trim)
+            TimedOut = [bool]$timedOut
+        }
     }
-    finally { $ErrorActionPreference = $previousPreference }
+    finally {
+        if ($null -ne $process) { $process.Dispose() }
+        $ErrorActionPreference = $previousPreference
+    }
 }
 
 function Invoke-GhApi {
@@ -233,6 +359,7 @@ function Invoke-GhApi {
     if ($Raw) { $ghArguments += @('-H', 'Accept:application/vnd.github.raw') }
     $ghArguments += $Path
     $result = Invoke-GhRaw -GhArguments $ghArguments
+    if ($result.TimedOut) { throw 'github-command-timeout' }
     if ($result.Code -eq 0) { return $result.Stdout }
     $status = Get-HttpStatus ([string]$result.Stderr + ' ' + [string]$result.Stdout)
     if ($AllowNotFound -and $status -eq '404') { return $null }
@@ -462,12 +589,14 @@ function Get-DurableBlock {
     if ([string]::IsNullOrEmpty($attempt)) { $attempt = '1' }
     if ($attempt -notmatch '^[1-9][0-9]{0,5}$') { return }
 
-    # Reading the outcome is best effort: any failure keeps the previous dispatch behaviour.
+    # An unavailable artifact keeps the previous dispatch behaviour, but a hung download is not
+    # evidence that no block exists: it fails the tick before any new POST.
     $name = 'maintenance-outcome-' + $runId + '-' + $attempt
     $temp = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'omp-maintenance-outcome-' + [Guid]::NewGuid().ToString('N'))
     try {
         New-Item -ItemType Directory -Path $temp -Force | Out-Null
         $download = Invoke-GhRaw -GhArguments @('run', 'download', $runId, '--repo', $Config.Repository, '--name', $name, '--dir', $temp)
+        if ($download.TimedOut) { throw 'github-command-timeout' }
         if ($download.Code -ne 0) { return }
         $path = [IO.Path]::Combine($temp, 'maintenance-outcome.json')
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
@@ -510,6 +639,7 @@ function Invoke-WatchTick {
         $state.latest = Get-PropertyValue $previous 'latest'
 
         $auth = Invoke-GhRaw -GhArguments @('auth', 'status')
+        if ($auth.TimedOut) { throw 'github-command-timeout' }
         if ($auth.Code -ne 0) { throw 'gh-auth-failed' }
 
         $workflowText = Invoke-GhApi -Path ('repos/{0}/actions/workflows/{1}' -f $Config.Repository, $Config.Workflow)
@@ -524,7 +654,10 @@ function Invoke-WatchTick {
 
         $variables = $null
         try { $variables = Get-GhList -Path ('repos/{0}/actions/variables' -f $Config.Repository) -Key 'variables' }
-        catch { throw 'maintenance-pause-unreadable' }
+        catch {
+            if ((Get-WatchCode $_) -eq 'github-command-timeout') { throw 'github-command-timeout' }
+            throw 'maintenance-pause-unreadable'
+        }
         $pauseFound = $false
         $pauseValue = $null
         foreach ($variable in @($variables)) {
@@ -557,18 +690,30 @@ function Invoke-WatchTick {
         $details.baseSha = $baseSha
 
         $package = $null
-        try { $package = ConvertFrom-Json -InputObject (Read-RemoteFile -Repository $Config.Repository -Path 'package.json' -Ref $Config.Branch) } catch { throw 'accepted-package-invalid' }
+        try { $package = ConvertFrom-Json -InputObject (Read-RemoteFile -Repository $Config.Repository -Path 'package.json' -Ref $Config.Branch) }
+        catch {
+            if ((Get-WatchCode $_) -eq 'github-command-timeout') { throw 'github-command-timeout' }
+            throw 'accepted-package-invalid'
+        }
         $pin = Get-PropertyValue (Get-PropertyValue $package 'devDependencies') '@oh-my-pi/pi-coding-agent'
         if (-not ($pin -is [string]) -or $pin -notmatch $script:StablePattern) { throw 'accepted-pin-invalid' }
         $details.pin = $pin
 
         $policy = $null
-        try { $policy = ConvertFrom-Json -InputObject (Read-RemoteFile -Repository $Config.Repository -Path 'maintenance.config.json' -Ref $Config.Branch) } catch { throw 'controller-policy-invalid' }
+        try { $policy = ConvertFrom-Json -InputObject (Read-RemoteFile -Repository $Config.Repository -Path 'maintenance.config.json' -Ref $Config.Branch) }
+        catch {
+            if ((Get-WatchCode $_) -eq 'github-command-timeout') { throw 'github-command-timeout' }
+            throw 'controller-policy-invalid'
+        }
         $controllerLogin = Get-PropertyValue (Get-PropertyValue $policy 'controller') 'controllerLogin'
         if (-not ($controllerLogin -is [string]) -or [string]::IsNullOrWhiteSpace($controllerLogin)) { throw 'controller-policy-invalid' }
 
         $support = $null
-        try { $support = ConvertFrom-Json -InputObject (Read-RemoteFile -Repository $Config.Repository -Path 'test/fixtures/host-snapshots/supported-hosts.json' -Ref $Config.Branch) } catch { throw 'supported-hosts-invalid' }
+        try { $support = ConvertFrom-Json -InputObject (Read-RemoteFile -Repository $Config.Repository -Path 'test/fixtures/host-snapshots/supported-hosts.json' -Ref $Config.Branch) }
+        catch {
+            if ((Get-WatchCode $_) -eq 'github-command-timeout') { throw 'github-command-timeout' }
+            throw 'supported-hosts-invalid'
+        }
         $rows = Get-PropertyValue $support 'versions'
         if ($null -eq $rows -or $rows -is [string] -or $rows -is [ValueType]) { throw 'supported-hosts-invalid' }
         $active = New-Object System.Collections.ArrayList
@@ -648,6 +793,7 @@ function Invoke-WatchTick {
         Save-WatchState -Root $Root -State $state
 
         $dispatch = Invoke-GhRaw -GhArguments @('workflow', 'run', $Config.Workflow, '--repo', $Config.Repository, '--ref', $Config.Branch)
+        if ($dispatch.TimedOut) { throw 'dispatch-uncertain' }
         if ($dispatch.Code -eq 0) {
             $state.lastDispatchAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
             $state.decision = 'dispatched'

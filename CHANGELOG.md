@@ -1,3 +1,7 @@
+## Unreleased
+
+- Локальный watcher: каждый вызов `gh` ограничен 30 секундами; таймаут чтения (включая неудачный drain) и outcome download — `github-command-timeout` с exit 1 и без dispatch, таймаут dispatch остаётся `dispatch-uncertain` без второго POST. По таймауту owned дерево завершается bounded `taskkill /PID … /T /F` до direct `Kill()` fallback; гарантия ограничена живым корнем native `gh`/Scoop shim, который ждёт child.
+
 ## 0.31.0
 
 OMP 18.20.2 → 18.20.3.

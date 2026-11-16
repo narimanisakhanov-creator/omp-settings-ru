@@ -17,8 +17,9 @@ import type { Server } from "bun";
 const windows = process.platform === "win32";
 const it = windows ? test : test.skip;
 
-// Every case starts a real Windows PowerShell 5.1 process (and some start two), which is far
-// slower than in-process work; the default five-second budget would time out healthy cases.
+// Every case starts a real Windows PowerShell 5.1 process for the watcher and one more for each
+// fixture `gh` command, which is far slower than in-process work; the default five-second budget
+// would time out healthy cases.
 setDefaultTimeout(120_000);
 
 const SYSTEM_ROOT = process.env.SystemRoot ?? "C:\\Windows";
@@ -47,6 +48,8 @@ const releasePath = (version: string) => `repos/${REPOSITORY}/releases/tags/v${v
 const FAKE_GH = String.raw`param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Like the native gh, the fixture writes UTF-8; the watcher decodes redirected output as UTF-8.
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
 function Get-Prop {
     param($Value, [string]$Name)
     if ($null -eq $Value) { return }
@@ -60,6 +63,43 @@ $scenario = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText((Join-Path $di
 $entry = [ordered]@{ args = @($Arguments) }
 [IO.File]::AppendAllText((Join-Path $dir 'calls.jsonl'), ((ConvertTo-Json -InputObject $entry -Compress) + [Environment]::NewLine))
 if ($Arguments.Count -eq 0) { Write-Output 'no-arguments'; exit 91 }
+$path = $null
+for ($index = 1; $index -lt $Arguments.Count; $index++) {
+    $current = $Arguments[$index]
+    if ($current -eq '-H') { $index++; continue }
+    if ($current.StartsWith('-')) { continue }
+    $path = $current
+}
+$hang = Get-Prop $scenario 'hang'
+if ($null -ne $hang) {
+    $hangCommand = [string](Get-Prop $hang 'command')
+    $hangPath = [string](Get-Prop $hang 'path')
+    if ([string]$Arguments[0] -eq $hangCommand -and ([string]::IsNullOrEmpty($hangPath) -or $hangPath -eq $path)) {
+        $pidFile = [string](Get-Prop $hang 'pidFile')
+        if (-not [string]::IsNullOrEmpty($pidFile)) { [IO.File]::WriteAllText($pidFile, [string]$PID) }
+        $seconds = 0
+        $declaredSeconds = Get-Prop $hang 'seconds'
+        if ($null -ne $declaredSeconds) { $seconds = [int]$declaredSeconds }
+        if ((Get-Prop $hang 'tree') -eq $true -and -not [string]::IsNullOrEmpty($pidFile)) {
+            $env:OMP_TREE_CHILD_PID = $pidFile + '.child'
+            $env:OMP_TREE_GRANDCHILD_PID = $pidFile + '.grandchild'
+            $env:OMP_TREE_SECONDS = [string]$seconds
+            $treeStart = New-Object System.Diagnostics.ProcessStartInfo
+            $treeStart.FileName = [IO.Path]::Combine($PSHOME, 'powershell.exe')
+            $treeStart.Arguments = '-NoProfile -NonInteractive -File "' + [IO.Path]::Combine($dir, 'tree-child.ps1') + '"'
+            $treeStart.UseShellExecute = $false
+            $treeStart.CreateNoWindow = $true
+            # No redirection: the child inherits the root's stdout/stderr pipes.
+            $tree = New-Object System.Diagnostics.Process
+            $tree.StartInfo = $treeStart
+            [void]$tree.Start()
+            [void]$tree.WaitForExit()
+            exit 0
+        }
+        if ($seconds -gt 0) { Start-Sleep -Seconds $seconds }
+        exit 0
+    }
+}
 if ($Arguments[0] -eq 'auth') { exit [int](Get-Prop $scenario 'auth') }
 if ($Arguments[0] -eq 'workflow') {
     $dispatch = Get-Prop $scenario 'dispatch'
@@ -80,13 +120,6 @@ if ($Arguments[0] -eq 'run') {
     exit 0
 }
 if ($Arguments[0] -ne 'api') { Write-Output 'unsupported-command'; exit 92 }
-$path = $null
-for ($index = 1; $index -lt $Arguments.Count; $index++) {
-    $current = $Arguments[$index]
-    if ($current -eq '-H') { $index++; continue }
-    if ($current.StartsWith('-')) { continue }
-    $path = $current
-}
 if ([string]::IsNullOrEmpty($path)) { Write-Output 'path-missing'; exit 93 }
 $table = Get-Prop $scenario 'api'
 $match = $null
@@ -108,12 +141,36 @@ Write-Output $body
 exit 0
 `;
 
+/** Intermediate fixture process: records itself, starts the grandchild, and waits for it. */
+const TREE_CHILD = String.raw`Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+[IO.File]::WriteAllText($env:OMP_TREE_CHILD_PID, [string]$PID)
+$start = New-Object System.Diagnostics.ProcessStartInfo
+$start.FileName = [IO.Path]::Combine($PSHOME, 'powershell.exe')
+$start.Arguments = '-NoProfile -NonInteractive -File "' + [IO.Path]::Combine($env:OMP_WATCH_FIXTURE, 'tree-grandchild.ps1') + '"'
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+# No redirection: the grandchild inherits this process's stdout/stderr handles.
+$grandchild = New-Object System.Diagnostics.Process
+$grandchild.StartInfo = $start
+[void]$grandchild.Start()
+[void]$grandchild.WaitForExit()
+`;
+
+/** Leaf fixture process: records itself and blocks while holding inherited stdout/stderr. */
+const TREE_GRANDCHILD = String.raw`Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+[IO.File]::WriteAllText($env:OMP_TREE_GRANDCHILD_PID, [string]$PID)
+Start-Sleep -Seconds ([int]$env:OMP_TREE_SECONDS)
+`;
+
 interface ScenarioResponse { status?: number; body?: unknown }
 interface Scenario {
   auth?: number;
   api?: Record<string, ScenarioResponse>;
   dispatch?: { exit?: number; stdout?: string };
   outcome?: { artifact?: boolean; content?: string };
+  hang?: { command?: string; path?: string; seconds?: number; pidFile?: string; tree?: boolean };
 }
 
 interface WatcherWorkspace {
@@ -239,6 +296,51 @@ async function calls(space: WatcherWorkspace): Promise<readonly (readonly string
 
 async function dispatches(space: WatcherWorkspace) {
   return (await calls(space)).filter(args => args[0] === "workflow" && args[1] === "run");
+}
+
+/** PID the fixture wrote immediately before it blocked, so cleanup is checked without guessing. */
+async function fixturePid(pidFile: string): Promise<number> {
+  const pid = Number((await readFile(pidFile, "utf8")).trim());
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("fixture-pid-invalid");
+  return pid;
+}
+
+/** The watcher must leave no owned gh process behind after its deadline. */
+function processAlive(pid: number): boolean {
+  const probe = Bun.spawnSync(
+    [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", `if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { 'running' } else { 'gone' }`],
+    { stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+  );
+  if (probe.exitCode !== 0) throw new Error("process-probe-failed");
+  return probe.stdout.toString().trim() === "running";
+}
+
+/** Bounded wait for a killed PID: taskkill can return before a child leaves the process table. */
+function processGone(pid: number): boolean {
+  const script = [
+    `$process = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
+    "if ($null -ne $process) { [void]$process.WaitForExit(5000); $process.Dispose() }",
+    `if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { 'running' } else { 'gone' }`,
+  ].join("; ");
+  const probe = Bun.spawnSync(
+    [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", script],
+    { stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+  );
+  if (probe.exitCode !== 0) throw new Error("process-probe-failed");
+  const state = probe.stdout.toString().trim();
+  if (state !== "running" && state !== "gone") throw new Error("process-probe-invalid");
+  return state === "gone";
+}
+
+/** Stops only the PIDs this case recorded, so a failed assertion cannot leak its fixture tree. */
+function stopOwnedPids(pids: readonly number[]): void {
+  for (const pid of pids) {
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    Bun.spawnSync(
+      [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", `Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`],
+      { stdout: "pipe", stderr: "pipe", timeout: 10_000 },
+    );
+  }
 }
 
 function lastJsonLine(stdout: string): Record<string, unknown> {
@@ -519,6 +621,91 @@ describe("watcher domain decisions", () => {
     expect(pullsResult.decision).toBe("read-failed:403");
     expect(pullsResult.code).toBe(1);
     expect(await dispatches(pulls)).toEqual([]);
+  });
+
+  it("reports a hung GitHub read as github-command-timeout instead of a missing release", async () => {
+    const space = await workspace("command-timeout-read", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    const pidFile = join(space.root, "hung-read.pid");
+    await writeScenario(space, {
+      api: healthyApi({ [PULLS_PATH]: { body: [mergedPull("0.6.0")] } }),
+      hang: { command: "api", path: releasePath("0.6.0"), seconds: 75, pidFile },
+    });
+    const started = Date.now();
+    const result = await tick(space);
+    const elapsed = Date.now() - started;
+    expect(result.decision).toBe("github-command-timeout");
+    expect(result.code).toBe(1);
+    expect(elapsed).toBeGreaterThanOrEqual(29_000);
+    expect(elapsed).toBeLessThan(65_000);
+    expect(await dispatches(space)).toEqual([]);
+    expect(processAlive(await fixturePid(pidFile))).toBe(false);
+  });
+
+  it("treats a hung dispatch as uncertain and never sends a second request", async () => {
+    const space = await workspace("command-timeout-dispatch", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
+    const pidFile = join(space.root, "hung-dispatch.pid");
+    await writeScenario(space, { api: healthyApi(), hang: { command: "workflow", seconds: 75, pidFile } });
+    const started = Date.now();
+    const first = await tick(space);
+    const elapsed = Date.now() - started;
+    expect(first.decision).toBe("dispatch-uncertain");
+    expect(first.code).toBe(1);
+    expect(elapsed).toBeGreaterThanOrEqual(29_000);
+    expect(elapsed).toBeLessThan(65_000);
+    expect(await dispatches(space)).toHaveLength(1);
+    const state = JSON.parse(await readFile(join(space.watchRoot, "state.json"), "utf8")) as Record<string, unknown>;
+    expect(typeof state.lastIntentAt).toBe("string");
+    expect(state.lastDispatchAt).toBeNull();
+    expect(processAlive(await fixturePid(pidFile))).toBe(false);
+
+    const second = await tick(space);
+    expect(second.decision).toBe("cooldown");
+    expect(second.payload.reason).toBe("recent-intent");
+    expect(await dispatches(space)).toHaveLength(1);
+  });
+
+  it("fails closed when the hung outcome download times out instead of dispatching", async () => {
+    const space = await workspace("command-timeout-outcome", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.2", "18.13.3", "18.13.4"], "18.13.4") };
+    const pidFile = join(space.root, "hung-outcome.pid");
+    const childPidFile = `${pidFile}.child`;
+    const grandchildPidFile = `${pidFile}.grandchild`;
+    const ownedPids = new Set<number>();
+    let passed = false;
+    try {
+      await writeFile(join(space.fixture, "tree-child.ps1"), TREE_CHILD);
+      await writeFile(join(space.fixture, "tree-grandchild.ps1"), TREE_GRANDCHILD);
+      await writeScenario(space, {
+        api: healthyApi({
+          [RUNS_PATH]: { body: { total_count: 1, workflow_runs: [completedRunOnBase(40935638545, hoursAgo(3))] } },
+        }),
+        hang: { command: "run", seconds: 75, pidFile, tree: true },
+      });
+      const started = Date.now();
+      const result = await tick(space);
+      const elapsed = Date.now() - started;
+      for (const file of [pidFile, childPidFile, grandchildPidFile]) ownedPids.add(await fixturePid(file));
+      expect(result.decision).toBe("github-command-timeout");
+      expect(result.code).toBe(1);
+      expect(elapsed).toBeGreaterThanOrEqual(29_000);
+      expect(elapsed).toBeLessThan(65_000);
+      expect(await dispatches(space)).toEqual([]);
+      const state = JSON.parse(await readFile(join(space.watchRoot, "state.json"), "utf8")) as Record<string, unknown>;
+      expect(state.decision).toBe("github-command-timeout");
+      expect(state.lastError).toBe("github-command-timeout");
+      for (const pid of ownedPids) expect(processGone(pid)).toBe(true);
+      passed = true;
+    }
+    finally {
+      if (!passed) {
+        for (const file of [pidFile, childPidFile, grandchildPidFile]) {
+          try { ownedPids.add(await fixturePid(file)); } catch { }
+        }
+        stopOwnedPids([...ownedPids]);
+      }
+    }
   });
 
   it("never sends a second dispatch after an uncertain first attempt", async () => {
