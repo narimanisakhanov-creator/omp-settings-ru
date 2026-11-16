@@ -83,3 +83,13 @@ test("timeout excerpts omit incomplete OSC and application-control payloads", ()
   expect(evidence.head).toContain("no-model");
   expect(JSON.stringify(evidence)).not.toContain("private");
 });
+
+test("timeout excerpt captures the footer before the prompt instead of a long startup logo", () => {
+  const raw = "logo\n".repeat(600) + "actual-model-footer\nchange thinking effort\n" + "redraw\n".repeat(600);
+  const evidence = JSON.parse(terminalObservationFailure(raw,0));
+  expect(evidence.excerptKind).toBe("prompt-context");
+  expect(evidence.excerptStart).toBeGreaterThan(0);
+  expect(evidence.head).toContain("actual-model-footer");
+  expect(evidence.head).toContain("change thinking effort");
+  expect(evidence.tail).toContain("redraw");
+});

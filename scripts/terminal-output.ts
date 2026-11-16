@@ -54,16 +54,23 @@ export function terminalObservationFailure(raw: string, offset: number, setupRes
     rawControls.push({offset:match.index,end,kind:match[1]===undefined?"CSI":"OSC",type:match[1]?.slice(0,8)??"",terminator:match[1]===undefined?"":match[0].endsWith("\x07")?"BEL":match[0].endsWith("\x1b\\")?"ST":"incomplete"});
     if(rawControls.length===8)break;
   }
+  const hintIndex = display.indexOf("change thinking effort");
+  const excerptStart = hintIndex<0 ? 0 : Math.max(0,hintIndex-1000);
   const evidence = {
     units:summary.units,rawLength:summary.rawLength,offset,windowLength:summary.windowLength,
     setupResetCount,setupResets:summary.setupResets,markerColumns:"count,first,last",markers,
-    head:display.slice(0,1200),tail:display.slice(-400),rawControls,
+    excerptKind:hintIndex<0?"startup-head":"prompt-context",excerptStart,
+    head:display.slice(excerptStart,hintIndex<0?1200:hintIndex+100),tail:display.slice(-400),rawControls,
   };
   let json = JSON.stringify(evidence);
   while(json.length>2600) {
     const field = evidence.head.length>0 ? "head" : "tail";
     if(evidence[field].length===0)break;
-    evidence[field]=evidence[field].slice(0,Math.max(0,evidence[field].length-(json.length-2600)));
+    const remove = Math.min(evidence[field].length,json.length-2600);
+    if(field==="head" && hintIndex>=0) {
+      evidence.head=evidence.head.slice(remove);
+      evidence.excerptStart+=remove;
+    } else evidence[field]=evidence[field].slice(0,evidence[field].length-remove);
     json=JSON.stringify(evidence);
   }
   return json;
