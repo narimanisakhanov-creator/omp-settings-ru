@@ -52,6 +52,16 @@ describe("candidate translation", () => {
     await expect(translateCandidate({ candidateVersion: "18.9.0", snapshots: [snapshot], catalog: empty, request })).rejects.toThrow();
     expect(calls).toBe(1);
   });
+  test("translates slash-separated prose regardless of case while preserving explicit paths", async () => {
+    const slashSource = { tab: "providers", group: null, label: "Voice", description: "American/British, female/male; HTTP/HTTPS, /tmp/Cache, ./Cache/Store, ../Cache/Store, Cache/file.json, `Cache/Store`", warning: null, options: null };
+    const slashSnapshot: BaselineSnapshot = { version: "18.21.0", platform: "linux", settings: { voice: { ...slashSource, sourceHash: computeSourceHash(slashSource) } } };
+    const translated = "Американский/британский английский, женский/мужской; HTTP/HTTPS, /tmp/Cache, ./Cache/Store, ../Cache/Store, Cache/file.json, `Cache/Store`";
+    const translate = (description: string) => translateCandidate({ candidateVersion: "18.21.0", snapshots: [slashSnapshot], catalog: empty, request: async () => response({ label: "Голос", description }) });
+    expect((await translate(translated)).catalog.settings.voice!.variants[0]!.description).toBe(translated);
+    for (const path of ["HTTP/HTTPS", "/tmp/Cache", "./Cache/Store", "../Cache/Store", "Cache/file.json", "`Cache/Store`"]) {
+      await expect(translate(translated.replace(path, "удалено"))).rejects.toThrow("translation-technical-literal-mismatch:voice:description");
+    }
+  });
   test("reuses existing translation and extends platforms without any model calls", async () => {
     const existing: LocalePack = { locale: "ru", settings: { "test.mode": { variants: [{ sourceHash: hash, label: "Режим", description: "Выберите {value}", warning: "Используйте {value} осторожно", options: { on: { label: "Вкл", description: "Включить {value}" }, off: { label: "Выкл" } }, platforms: ["win32"], observedIn: ["18.8.7"] }] } } };
     const calls: ModelMessage[][] = [];

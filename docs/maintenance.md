@@ -80,6 +80,8 @@ Nonretryable failure блокирует новую подготовку сраз
 
 Ошибки translate сохраняют только фиксированный allowlist-код собственного валидатора (`translation-response-fields`, `translation-marker-mismatch`, `translation-technical-literal-mismatch` и другие), без пути настройки, option keys и текста ответа. Остальные `Error` остаются обезличенными; это диагностическая различимость, не ослабление валидации и не разрешение повторять заблокированный перевод. При failed translate `requests.json` остаётся только на runner и не загружается: публичные prepared/outcome artifacts не содержат отвергнутого ответа.
 
+Slash-пары обычных слов допускают перевод и в lowercase, и в Titlecase; ALLCAPS-сокращения, пути с `/`, `./`, `../`, расширением файла и backtick-литералы по-прежнему требуют точного сохранения.
+
 `scripts/maintenance.ts` — ручной pinned updater, не orchestration path.
 
 `.github/dependabot.yml` держит `open-pull-requests-limit: 0`, поэтому обновления запиненных actions вносятся руками и `dependabot/*` ветки не появляются.
