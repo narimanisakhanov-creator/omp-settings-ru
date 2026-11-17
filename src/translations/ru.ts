@@ -1,5 +1,5 @@
 import catalog from "./ru-catalog.json";
 import type { LocalePack } from "./types";
 
-/** Effective reviewed variants are data, not version-specific assembly. */
-export const ru: LocalePack = catalog as LocalePack;
+/** Catalog/schema gates validate this JSON; heterogeneous option maps infer absent keys as undefined. */
+export const ru: LocalePack = catalog as unknown as LocalePack;
