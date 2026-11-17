@@ -82,6 +82,8 @@ Nonretryable failure блокирует новую подготовку сраз
 
 Slash-пары обычных слов допускают перевод и в lowercase, и в Titlecase; ALLCAPS-сокращения, пути с `/`, `./`, `../`, расширением файла и backtick-литералы по-прежнему требуют точного сохранения.
 
+Prepare, включая preflight до создания worktree, сообщает только фиксированные `prepare-failed:<stage>:<class-or-system-code>` (либо allowlist-код собственной preflight-проверки), без путей и сырых stdout/stderr дочерних команд; ошибка очистки записывается отдельно и не заменяет первичную ошибку. Диагностика остальных потребителей `runTrusted` не меняется.
+
 `scripts/maintenance.ts` — ручной pinned updater, не orchestration path.
 
 `.github/dependabot.yml` держит `open-pull-requests-limit: 0`, поэтому обновления запиненных actions вносятся руками и `dependabot/*` ветки не появляются.

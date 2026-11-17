@@ -28,6 +28,51 @@ function git(cwd: string, ...args: string[]) { const p = Bun.spawnSync(["git", .
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 function manifest(baseSha = "a".repeat(40), headSha?: string) { return { schemaVersion: 1 as const, repository: "narimanisakhanov-creator/omp-settings-ru", runId: "123", runAttempt: "2", baseSha, upstreamVersion: "18.9.0", releaseVersion: "0.6.0", semanticReview: "disabled" as const, ...(headSha ? { headSha } : {}), files: [] }; }
 
+test("prepare CLI keeps failures private and preserves primary failure when cleanup fails", async () => {
+  const root = await directory();
+  const sentinel = "private-prepare-output-and-lock-reason";
+  await mkdir(join(root, "scripts"));
+  await writeFile(join(root, "maintenance.config.json"), JSON.stringify(rawPolicy));
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "prepare-fixture", version: "0.5.0", private: true }));
+  await writeFile(join(root, "scripts/upgrade-host.ts"), `console.log(${JSON.stringify(sentinel)}); console.error(${JSON.stringify(sentinel)}); const locked = Bun.spawnSync(["git", "worktree", "lock", "--reason", ${JSON.stringify(sentinel)}, process.cwd()], { stdout: "pipe", stderr: "pipe" }); if (locked.exitCode !== 0) throw new Error("fixture-lock-failed"); process.exit(1);`);
+  fixtureGit(root, ["init", "-q", "-b", "main"]);
+  fixtureGit(root, ["add", "."]); fixtureGit(root, ["commit", "-qm", "prepare fixture"]);
+  const base = fixtureGit(root, ["rev-parse", "HEAD"]);
+  fixtureGit(root, ["update-ref", "refs/remotes/origin/main", base]);
+  const cli = join(import.meta.dir, "../scripts/maintenance-actions.ts");
+  const output = join(root, "github-output"); const summary = join(root, "github-summary");
+  const environment = { ...process.env, GITHUB_ACTIONS: "false", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, MAINTENANCE_GH_TOKEN: undefined, MAINTENANCE_API_KEY: undefined };
+  try {
+    const child = Bun.spawn([process.execPath, cli, "prepare", "--version", "18.9.0", "--base", base, "--output", join(root, "artifact")], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    expect(code).not.toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("prepare-failed:cleanup:Error\nprepare-failed:upgrade:Error\n");
+    const githubOutput = await Bun.file(output).text(); const githubSummary = await Bun.file(summary).text();
+    const outputFields = Object.fromEntries(githubOutput.trim().split("\n").map(line => line.split("=")));
+    expect(githubOutput).toBe("reason=prepare-failed:upgrade:Error\nretryable=false\n");
+    expect(githubSummary).toBe("\nBlocked: prepare-failed:upgrade:Error\n");
+    const collector = Bun.spawn([process.execPath, join(import.meta.dir, "../scripts/maintenance/outcome.ts")], { cwd: root, env: { ...environment, GITHUB_OUTPUT: undefined, GITHUB_STEP_SUMMARY: undefined, OUTCOME_NEEDS: JSON.stringify({ discover: { result: "success", outputs: { base, version: "18.9.0", mode: "prepare" } }, prepare: { result: "failure", outputs: outputFields } }) }, stdout: "pipe", stderr: "pipe" });
+    const collectorStderr = await new Response(collector.stderr).text();
+    expect(await collector.exited, collectorStderr).toBe(0);
+    const outcome = await Bun.file(join(root, "maintenance-outcome.json")).text();
+    expect(JSON.parse(outcome)).toMatchObject({ stage: "prepare", outcome: "blocked", reason: "prepare-failed:upgrade:Error", retryable: false });
+    for (const text of [stdout, stderr, githubOutput, githubSummary, outcome]) {
+      expect(text).not.toContain(sentinel);
+      expect(text).not.toContain(root);
+    }
+    const preflight = Bun.spawn([process.execPath, cli, "prepare", "--version", "18.9.0", "--base", "invalid", "--output", join(root, "unused")], { cwd: root, env: { ...environment, GITHUB_OUTPUT: undefined, GITHUB_STEP_SUMMARY: undefined }, stdout: "pipe", stderr: "pipe" });
+    expect(await new Response(preflight.stderr).text()).toBe("prepare-failed:preflight:prepare-version-or-base-invalid\n");
+    expect(await preflight.exited).not.toBe(0);
+  } finally {
+    for (const line of fixtureGit(root, ["worktree", "list", "--porcelain"]).split("\n").filter(line => line.startsWith("worktree ")).slice(1)) {
+      const worktree = line.slice("worktree ".length);
+      fixtureGit(root, ["worktree", "unlock", worktree]);
+      fixtureGit(root, ["worktree", "remove", "--force", worktree]);
+    }
+  }
+}, 30000);
+
 describe("hosted artifact boundary", () => {
   test("rejects duplicate keys, traversal, unexpected fields and prereleases", () => {
     expect(() => parseStrictJSON('{"a":1,"a":2}')).toThrow();

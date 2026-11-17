@@ -18,11 +18,15 @@ import type { ControllerPolicy } from "./contracts";
 const platforms = SNAPSHOT_PLATFORMS;
 export interface SupportedHosts { schemaVersion: number; versions: { version: string; package: string; platforms: string[]; baselines: Record<string, string> }[]; historical?: { version: string; package: string; platforms: string[]; baselines: Record<string, string> }[]; [key: string]: unknown }
 export async function runTrusted(cwd: string, args: readonly string[], timeout: number, environment: Record<string, string | undefined> = {}): Promise<string> {
+  return runTrustedCommand(cwd, args, timeout, environment, true);
+}
+async function runTrustedCommand(cwd: string, args: readonly string[], timeout: number, environment: Record<string, string | undefined> | undefined, reportTail: boolean): Promise<string> {
   const child = Bun.spawn([...args], { cwd, env: { ...secretFreeEnvironment(), ...environment }, stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill(), timeout);
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     if (code !== 0) {
+      if (!reportTail) throw new Error("trusted-command-failed");
       // A failure must be diagnosable. The raw tail goes to the job log, and a charset-safe form
       // rides in the error so the bounded outcome artifact keeps a usable reason instead of a bare
       // command name.
@@ -62,13 +66,31 @@ export async function applyCandidateData(root: string, worktree: string, candida
     await Bun.write(join(worktree, path), await Bun.file(join(root, file.path)).arrayBuffer());
   }
 }
+type PreparationStage = "preflight" | "output" | "worktree" | "install" | "upgrade" | "manifest" | "export" | "snapshot" | "input" | "save" | "cleanup";
+const PREPARATION_SYSTEM_CODES: Readonly<Record<string, true>> = { ENOENT: true, EACCES: true, EPERM: true, EISDIR: true, ENOTDIR: true, EEXIST: true, ENOSPC: true, EMFILE: true, ENAMETOOLONG: true, EIO: true, ERR_INVALID_ARG_TYPE: true, ERR_OUT_OF_RANGE: true };
+const PREPARATION_PREFLIGHT_CODES: Readonly<Record<string, true>> = { "prepare-write-secret-forbidden": true, "prepare-version-or-base-invalid": true, "trusted-main-workflow-required": true, "trusted-code-not-accepted-main": true, "accepted-base-unavailable": true, "policy-unavailable": true, "model-secret-forbidden-in-nontranslation-command": true };
+export class PreparationError extends Error {
+  constructor(stage: PreparationStage, error: unknown) {
+    const detail = stage === "preflight" && error instanceof Error && Object.hasOwn(PREPARATION_PREFLIGHT_CODES, error.message) ? error.message
+      : error instanceof Error && "code" in error && typeof error.code === "string" && Object.hasOwn(PREPARATION_SYSTEM_CODES, error.code)
+        ? error.code : error instanceof SyntaxError ? "SyntaxError" : error instanceof TypeError ? "TypeError" : error instanceof RangeError ? "RangeError" : error instanceof Error ? "Error" : "unclassified";
+    super(`prepare-failed:${stage}:${detail}`, { cause: error });
+  }
+}
 export async function prepareCandidate(checkout: string, output: string, candidate: Candidate, policy: ControllerPolicy): Promise<void> {
   if (!isAbsolute(output)) throw new Error("output-must-be-absolute");
-  await mkdir(output, { recursive: false });
-  const worktree = await createCandidateWorktree(checkout, candidate.baseSha);
+  let stage: PreparationStage = "output";
+  let worktree: string | undefined;
+  let failed = false;
   try {
-    await runTrusted(worktree, ["bun", "install", "--frozen-lockfile", "--ignore-scripts"], policy.deadlinesMs.verification);
-    await runTrusted(worktree, ["bun", "scripts/upgrade-host.ts", candidate.upstreamVersion], policy.deadlinesMs.verification);
+    await mkdir(output, { recursive: false });
+    stage = "worktree";
+    worktree = await createCandidateWorktree(checkout, candidate.baseSha);
+    stage = "install";
+    await runTrustedCommand(worktree, ["bun", "install", "--frozen-lockfile", "--ignore-scripts"], policy.deadlinesMs.verification, undefined, false);
+    stage = "upgrade";
+    await runTrustedCommand(worktree, ["bun", "scripts/upgrade-host.ts", candidate.upstreamVersion], policy.deadlinesMs.verification, undefined, false);
+    stage = "manifest";
     const manifest = JSON.parse(await Bun.file(join(worktree, "package.json")).text()) as { version: string };
     manifest.version = candidate.releaseVersion;
     await Bun.write(join(worktree, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -78,15 +100,32 @@ export async function prepareCandidate(checkout: string, output: string, candida
     const target = supportWindow([...supported.versions.map(row => row.version), candidate.upstreamVersion]);
     if (!target.includes(candidate.upstreamVersion)) throw new Error("candidate-support-window-invalid");
     for (const platform of platforms) {
-      const text = await runTrusted(worktree, ["bun", "scripts/matrix-registry-worker.ts", hostAliasOf(candidate.upstreamVersion), candidate.upstreamVersion, platform], policy.deadlinesMs.verification);
+      stage = "export";
+      const text = await runTrustedCommand(worktree, ["bun", "scripts/matrix-registry-worker.ts", hostAliasOf(candidate.upstreamVersion), candidate.upstreamVersion, platform], policy.deadlinesMs.verification, undefined, false);
+      stage = "snapshot";
       const snapshot = snapshotValue(parseStrictJSON(text), candidate.upstreamVersion, platform);
       const bytes = JSON.stringify(snapshot, null, 2) + "\n";
       await Bun.write(join(worktree, snapshotPath(candidate.upstreamVersion, platform)), bytes);
     }
+    stage = "input";
     for (const version of target) for (const platform of platforms) snapshots.push(snapshotValue(parseStrictJSON(await Bun.file(join(worktree, snapshotPath(version, platform))).text()), version, platform));
     await Bun.write(join(output, "input.json"), JSON.stringify({ snapshots }) + "\n");
+    stage = "save";
     await saveCandidateData(worktree, output, candidate);
-  } finally { await removeCandidateWorktree(checkout, worktree); }
+  } catch (error) {
+    failed = true;
+    throw new PreparationError(stage, error);
+  } finally {
+    if (worktree) {
+      try { await removeCandidateWorktree(checkout, worktree); }
+      catch (error) {
+        const cleanup = new PreparationError("cleanup", error);
+        if (!failed) throw cleanup;
+        // Report cleanup too, without replacing the primary stage failure.
+        console.error(cleanup.message);
+      }
+    }
+  }
 }
 export async function completeSupport(worktree: string, candidate: Candidate): Promise<readonly string[]> {
   const supported = validateSupportedHostsManifest(parseStrictJSON(await Bun.file(join(worktree, SUPPORTED_HOSTS)).text())) as SupportedHosts;

@@ -4,7 +4,7 @@ import { asRecord, parseStrictJSON } from "./maintenance/json";
 import { loadAcceptedPolicy, validatePolicy, compareVersions } from "./maintenance/policy";
 import { git, stableVersion, validateBundle, writeBundleManifest, type Candidate } from "./maintenance/actions-bundle";
 import { HostedGitHub } from "./maintenance/actions-github";
-import { prepareCandidate } from "./maintenance/actions-candidate";
+import { prepareCandidate, PreparationError } from "./maintenance/actions-candidate";
 import { snapshotValue } from "./maintenance/snapshots";
 import { verifyCandidate } from "./maintenance/actions-verify";
 import { publishCandidate, finalizeCandidate } from "./maintenance/actions-publish";
@@ -297,6 +297,7 @@ if (import.meta.main) await main().catch(async error => {
   const stage: OutcomeStage = command === "discover" || command === "prepare" || command === "translate" || command === "verify" ? command : "publish";
   const reason = process.argv[2] === "translate"
     ? translationFailure(error)
+    : command === "prepare" ? (error instanceof PreparationError ? error : new PreparationError("preflight", error)).message
     : sanitizeOutcomeReason(error instanceof Error ? error.message : "maintenance-action-blocked");
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `reason=${reason}\nretryable=${classifyOutcomeReason(reason, stage)}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `\nBlocked: ${reason}\n`);
