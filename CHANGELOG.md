@@ -1,3 +1,11 @@
+## 0.32.0
+
+OMP 18.20.3 → 18.21.0.
+
+- Новые настройки на русском: 1 — Показывать встроенные изображения и страницы (`tui.renderEmbeds`).
+- Обновлены переводы изменившихся настроек: 5 — Скорость озвучивания ответов (`speech.speed`), Голос озвучивания ответов (`speech.voice`), Генерация речи (`speechgen.enabled`), Скорость локального TTS (`tts.localSpeed`); ещё 1.
+- Покрытие: 18.20.2 462/462, 18.20.3 465/465, 18.21.0 466/466. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.32.0/upgrade-report.md).
+
 ## Unreleased
 
 - Локальный watcher: каждый вызов `gh` ограничен 30 секундами; таймаут чтения (включая неудачный drain) и outcome download — `github-command-timeout` с exit 1 и без dispatch, таймаут dispatch остаётся `dispatch-uncertain` без второго POST. По таймауту owned дерево завершается bounded `taskkill /PID … /T /F` до direct `Kill()` fallback; гарантия ограничена живым корнем native `gh`/Scoop shim, который ждёт child.
