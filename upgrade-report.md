@@ -1,33 +1,41 @@
-# OMP 18.20.3 → 18.21.0
+# OMP 18.21.0 → 18.22.0
 
-Релиз 0.32.0. Сводка собрана из принятого каталога базы, каталога кандидата и снимков трёх платформ новой версии; исторические переводы сохранены и не перечисляются.
+Релиз 0.33.0. Сводка собрана из принятого каталога базы, каталога кандидата и снимков трёх платформ новой версии; исторические переводы сохранены и не перечисляются.
 
-## Новые настройки на русском (1)
+## Новые настройки на русском (5)
 
 | настройка | путь | sourceHash | платформы |
 | --- | --- | --- | --- |
-| Показывать встроенные изображения и страницы | `tui.renderEmbeds` | `de7b34145200b34750ee90ac1ea747d0e629d8ec1c909358b921c65aa8cd078e` | win32, linux, darwin |
+| Дизассемблер | `disassembler.backend` | `0ec47bf44d307a1c73fd46fc472f291ee99d110ceb03b5b376f0dd4c0548eaa0` | win32, linux, darwin |
+| Тайм-аут закрытия при простое | `disassembler.idleCloseSec` | `75a40e3f44ed2f16e7b77da9802d62a416635ecd8702d6d6561f7520ff604e85` | win32, linux, darwin |
+| Максимум открытых баз данных | `disassembler.maxOpen` | `982d01717f01430af285dd2e8f1e6fe3061e4ed1de58363a315dbf6fd0b04326` | win32, linux, darwin |
+| Каталог установки Ghidra | `ghidra.installDir` | `e24292cd4139da1dd384047b3c4439e4a307b2c6331bcfd1698e19912fc55160` | win32, linux, darwin |
+| Ghidra Python | `ghidra.python` | `4d64b0f7a742459b7a9205594dffe21da49416041880ed34bd462234ee281652` | win32, linux, darwin |
 
-## Обновлены переводы изменившихся настроек (5)
+## Обновлены переводы изменившихся настроек (1)
 
 | настройка | путь | новый sourceHash | платформы |
 | --- | --- | --- | --- |
-| Скорость озвучивания ответов | `speech.speed` | `62f359ba95a81052ea8b24ba36b2bb4e1ff7d9458418f475a0ebe1347305ae9b` | win32, linux, darwin |
-| Голос озвучивания ответов | `speech.voice` | `56288a41b526aa7e729c790d59a6969f310c9021b62a321788b723474e47d398` | win32, linux, darwin |
-| Генерация речи | `speechgen.enabled` | `8aa156fc433ab04e5fac49696adf1119752b47bc030bc590b5279c2c93d6971f` | win32, linux, darwin |
-| Скорость локального TTS | `tts.localSpeed` | `8360d7b556a97a1a224417f1be47320ebb05bac8bf0a07dd0a81ebc9411944a1` | win32, linux, darwin |
-| Голос локального TTS | `tts.localVoice` | `f19701971e4bbd97865eacb626b7f26139505e557dc4b5a143e827afd674f670` | win32, linux, darwin |
+| Worktree при выходе | `worktree.onExit` | `3480f2a332a7e09525d809a96e9fbdc2bc09de89fecbe9df0bccd68579a3c718` | win32, linux, darwin |
+
+## Больше не доступны в OMP 18.22.0 (3)
+
+| настройка в OMP | путь | платформы старого хоста |
+| --- | --- | --- |
+| IDA Pro | `ida.enabled` | win32, linux, darwin |
+| IDA Idle Close Timeout | `ida.idleCloseSec` | win32, linux, darwin |
+| IDA Max Open Databases | `ida.maxOpen` | win32, linux, darwin |
 
 ## Покрытие каталога
 
 | OMP | платформа | настройки |
 | --- | --- | --- |
-| 18.20.2 | win32 | 462/462 |
-| 18.20.2 | linux | 462/462 |
-| 18.20.2 | darwin | 462/462 |
 | 18.20.3 | win32 | 465/465 |
 | 18.20.3 | linux | 465/465 |
 | 18.20.3 | darwin | 465/465 |
 | 18.21.0 | win32 | 466/466 |
 | 18.21.0 | linux | 466/466 |
 | 18.21.0 | darwin | 466/466 |
+| 18.22.0 | win32 | 468/468 |
+| 18.22.0 | linux | 468/468 |
+| 18.22.0 | darwin | 468/468 |

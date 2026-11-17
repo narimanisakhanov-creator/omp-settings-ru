@@ -1,3 +1,12 @@
+## 0.33.0
+
+OMP 18.21.0 → 18.22.0.
+
+- Новые настройки на русском: 5 — Дизассемблер (`disassembler.backend`), Тайм-аут закрытия при простое (`disassembler.idleCloseSec`), Максимум открытых баз данных (`disassembler.maxOpen`), Каталог установки Ghidra (`ghidra.installDir`); ещё 1.
+- Обновлены переводы изменившихся настроек: 1 — Worktree при выходе (`worktree.onExit`).
+- Больше не доступны в OMP 18.22.0: 3 настройки; исторические переводы сохранены.
+- Покрытие: 18.20.3 465/465, 18.21.0 466/466, 18.22.0 468/468. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.33.0/upgrade-report.md).
+
 ## 0.32.0
 
 OMP 18.20.3 → 18.21.0.
