@@ -1,41 +1,35 @@
-# OMP 18.21.0 → 18.22.0
+# OMP 18.22.0 → 18.22.1
 
-Релиз 0.33.0. Сводка собрана из принятого каталога базы, каталога кандидата и снимков трёх платформ новой версии; исторические переводы сохранены и не перечисляются.
+Релиз 0.34.0. Сводка собрана из принятого каталога базы, каталога кандидата и снимков трёх платформ новой версии; исторические переводы сохранены и не перечисляются.
 
-## Новые настройки на русском (5)
+## Новые настройки на русском (3)
 
 | настройка | путь | sourceHash | платформы |
 | --- | --- | --- | --- |
-| Дизассемблер | `disassembler.backend` | `0ec47bf44d307a1c73fd46fc472f291ee99d110ceb03b5b376f0dd4c0548eaa0` | win32, linux, darwin |
-| Тайм-аут закрытия при простое | `disassembler.idleCloseSec` | `75a40e3f44ed2f16e7b77da9802d62a416635ecd8702d6d6561f7520ff604e85` | win32, linux, darwin |
-| Максимум открытых баз данных | `disassembler.maxOpen` | `982d01717f01430af285dd2e8f1e6fe3061e4ed1de58363a315dbf6fd0b04326` | win32, linux, darwin |
-| Каталог установки Ghidra | `ghidra.installDir` | `e24292cd4139da1dd384047b3c4439e4a307b2c6331bcfd1698e19912fc55160` | win32, linux, darwin |
-| Ghidra Python | `ghidra.python` | `4d64b0f7a742459b7a9205594dffe21da49416041880ed34bd462234ee281652` | win32, linux, darwin |
+| Ключ API конечной точки live | `live.apiKey` | `59cb416c3ea2f45f03e6ef12c629abe35a28d07e53d15a8e0fff4b3374ce6cc5` | win32, linux, darwin |
+| Конечная точка для голосового общения в реальном времени | `live.endpoint` | `254eaf0faae1dfc4333f642886292686062ed3b826016fff248e338cc6d483b9` | win32, linux, darwin |
+| Веб-сервисы без ключей | `providers.webKeyless` | `286dfef2dc79e53f47803b3fb124e2f4054e4e2d8a7453abaf882431a2fbd304` | win32, linux, darwin |
 
-## Обновлены переводы изменившихся настроек (1)
+## Обновлены переводы изменившихся настроек (5)
 
 | настройка | путь | новый sourceHash | платформы |
 | --- | --- | --- | --- |
-| Worktree при выходе | `worktree.onExit` | `3480f2a332a7e09525d809a96e9fbdc2bc09de89fecbe9df0bccd68579a3c718` | win32, linux, darwin |
-
-## Больше не доступны в OMP 18.22.0 (3)
-
-| настройка в OMP | путь | платформы старого хоста |
-| --- | --- | --- |
-| IDA Pro | `ida.enabled` | win32, linux, darwin |
-| IDA Idle Close Timeout | `ida.idleCloseSec` | win32, linux, darwin |
-| IDA Max Open Databases | `ida.maxOpen` | win32, linux, darwin |
+| Браузер cmux | `browser.cmux` | `e7834022d4725754d69b372b908e8d6537ae7d39cd512cbd45b3f2a90c5c73dd` | win32, linux, darwin |
+| Ретранслятор браузера | `browser.relay` | `3cbfd3e0fb93b274a3d2b0f8d17c20ab36f14a15891c7ee25e649b62eb057e11` | win32, linux, darwin |
+| Браузер Tern | `browser.tern` | `a3530a3b174b56497a54f9f602228a9aee8ae0149ad0647c8f26caa5f84abcc7` | win32, linux, darwin |
+| Голос в реальном времени | `live.voice` | `acc5780d172ab8e9a2c79e0021a5c17970d6f85b4b318dc6ac316ac286262f8e` | win32, linux, darwin |
+| Структурированные результаты задачи | `task.structured` | `e2bb404a21215434b65ef7728976964ef84826ef71cb26271be41d694fdcb5d9` | win32, linux, darwin |
 
 ## Покрытие каталога
 
 | OMP | платформа | настройки |
 | --- | --- | --- |
-| 18.20.3 | win32 | 465/465 |
-| 18.20.3 | linux | 465/465 |
-| 18.20.3 | darwin | 465/465 |
 | 18.21.0 | win32 | 466/466 |
 | 18.21.0 | linux | 466/466 |
 | 18.21.0 | darwin | 466/466 |
 | 18.22.0 | win32 | 468/468 |
 | 18.22.0 | linux | 468/468 |
 | 18.22.0 | darwin | 468/468 |
+| 18.22.1 | win32 | 471/471 |
+| 18.22.1 | linux | 471/471 |
+| 18.22.1 | darwin | 471/471 |
