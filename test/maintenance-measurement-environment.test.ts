@@ -210,17 +210,18 @@ const HOST_MARKER = `fixture-host-${HOST_VERSION}`;
 /**
  * Рабочий модуль выгрузки в принятом коммите фикстуры.
  *
- * Повторяет контракт настоящего `scripts/matrix-registry-worker.ts`: аргументы «алиас, версия, платформа»,
- * импорт `config/all-settings` **из установленного пакета**, снимок в stdout. Метка берётся из содержимого
+ * Повторяет контракт настоящего `scripts/matrix-registry-worker.ts`: аргументы «алиас, версия, платформа, output»,
+ * импорт `config/all-settings` **из установленного пакета**, снимок в эксклюзивном файле. Метка берётся из содержимого
  * импортированного модуля, поэтому выгруженный снимок привязан именно к установленным байтам.
  */
 const FIXTURE_WORKER = `
-const [alias, version, platform] = process.argv.slice(2);
+import { writeFile } from "node:fs/promises";
+const [alias, version, platform, output] = process.argv.slice(2);
 const settings = await import(\`\${alias}/config/all-settings\`);
 const ordered = settings.orderedSettings();
 const snapshot = { version, platform, marker: settings.marker, settings: {} };
 for (const setting of ordered) snapshot.settings[setting.id] = setting.definition;
-console.log(JSON.stringify(snapshot));
+await writeFile(output, JSON.stringify(snapshot), { encoding: "utf8", flag: "wx" });
 `;
 
 /** `config/all-settings` пакета-фикстуры: именно это импортирует измерение. */

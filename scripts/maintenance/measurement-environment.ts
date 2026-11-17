@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { SNAPSHOT_DIR, supportWindow } from "./paths";
+import { parseStrictJSON } from "./json";
 
 /**
  * Доверенная среда измерения.
@@ -563,22 +564,34 @@ export async function exportHostSnapshot(input: {
   const before = await hostIdentity(input.root, input.alias, input.lock.lock);
   if ("failure" in before) return before;
   if (before.version !== input.version) return { failure: `host-identity-mismatch:${input.alias}` };
-  const child = spawnBun(
-    input.root,
-    ["scripts/matrix-registry-worker.ts", input.alias, input.version, input.platform],
-    Date.now() + input.deadlineMs,
-  );
-  if (child.code !== 0) return { failure: `host-export-failed:${input.alias}` };
-  let snapshot: unknown;
+  const outputRoot = await mkdtemp(join(tmpdir(), "omp-host-export-"));
+  let failed = true;
   try {
-    snapshot = JSON.parse(child.stdout) as unknown;
-  } catch {
-    return { failure: `host-export-failed:${input.alias}` };
+    const output = join(outputRoot, "snapshot.json");
+    const child = spawnBun(
+      input.root,
+      ["scripts/matrix-registry-worker.ts", input.alias, input.version, input.platform, output],
+      Date.now() + input.deadlineMs,
+    );
+    if (child.code !== 0) return { failure: `host-export-failed:${input.alias}` };
+    let snapshot: unknown;
+    try {
+      snapshot = parseStrictJSON(await readFile(output, "utf8"));
+    } catch {
+      return { failure: `host-export-failed:${input.alias}` };
+    }
+    const after = await hostIdentity(input.root, input.alias, input.lock.lock);
+    if ("failure" in after) return after;
+    if (after.closureDigest !== before.closureDigest) return { failure: `host-integrity-mismatch:${input.alias}` };
+    failed = false;
+    return { ok: true, snapshot, identity: after };
+  } finally {
+    try { await rm(outputRoot, { recursive: true, force: true }); }
+    catch {
+      if (!failed) throw new Error("host-export-cleanup-failed");
+      console.error("host-export-cleanup-failed");
+    }
   }
-  const after = await hostIdentity(input.root, input.alias, input.lock.lock);
-  if ("failure" in after) return after;
-  if (after.closureDigest !== before.closureDigest) return { failure: `host-integrity-mismatch:${input.alias}` };
-  return { ok: true, snapshot, identity: after };
 }
 
 /** Уборка корня измерения: окружение живёт ровно один прогон. */

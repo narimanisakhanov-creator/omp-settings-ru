@@ -100,10 +100,12 @@ export async function prepareCandidate(checkout: string, output: string, candida
     const target = supportWindow([...supported.versions.map(row => row.version), candidate.upstreamVersion]);
     if (!target.includes(candidate.upstreamVersion)) throw new Error("candidate-support-window-invalid");
     for (const platform of platforms) {
+      const snapshotOutput = join(worktree, ".registry-snapshot.json");
       stage = "export";
-      const text = await runTrustedCommand(worktree, ["bun", "scripts/matrix-registry-worker.ts", hostAliasOf(candidate.upstreamVersion), candidate.upstreamVersion, platform], policy.deadlinesMs.verification, undefined, false);
+      await runTrustedCommand(worktree, ["bun", "scripts/matrix-registry-worker.ts", hostAliasOf(candidate.upstreamVersion), candidate.upstreamVersion, platform, snapshotOutput], policy.deadlinesMs.verification, undefined, false);
       stage = "snapshot";
-      const snapshot = snapshotValue(parseStrictJSON(text), candidate.upstreamVersion, platform);
+      const snapshot = snapshotValue(parseStrictJSON(await Bun.file(snapshotOutput).text()), candidate.upstreamVersion, platform);
+      await rm(snapshotOutput);
       const bytes = JSON.stringify(snapshot, null, 2) + "\n";
       await Bun.write(join(worktree, snapshotPath(candidate.upstreamVersion, platform)), bytes);
     }

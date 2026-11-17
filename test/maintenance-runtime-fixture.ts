@@ -81,7 +81,7 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
     await publish("@oh-my-pi/pi-coding-agent",version,{"config/all-settings.js":`const schemas = ${JSON.stringify(schemas)}; export function orderedSettings() { return Object.entries(schemas[process.platform]).map(([id,definition]) => ({id,definition})); }`});
     for (const name of ["utils","natives","tui"]) await publish(`@oh-my-pi/pi-${name}`,version,{"index.js":"export const fixturePackage = true;"});
   }
-  for (const file of ["scripts/check-coverage.ts","scripts/diff-upstream.ts","scripts/matrix-host.ts","scripts/matrix-registry-worker.ts","scripts/maintenance/paths.ts","scripts/maintenance/policy.ts","src/report.ts","src/source.ts","src/source-templates.ts","src/host-types.ts","src/translations/types.ts","src/translations/resolve.ts"]) {
+  for (const file of ["scripts/check-coverage.ts","scripts/diff-upstream.ts","scripts/matrix-host.ts","scripts/matrix-registry-worker.ts","scripts/maintenance/json.ts","scripts/maintenance/paths.ts","scripts/maintenance/policy.ts","src/report.ts","src/source.ts","src/source-templates.ts","src/host-types.ts","src/translations/types.ts","src/translations/resolve.ts"]) {
     mkdirSync(join(checkout,file,".."),{recursive:true}); copyFileSync(join(repository,file),join(checkout,file));
   }
   writeFileSync(join(checkout,"src/translations/ru.ts"),`import catalog from "./ru-catalog.json"; export const ru = catalog;`);
