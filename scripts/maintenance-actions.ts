@@ -253,6 +253,19 @@ async function writeArtifact(path: string, value: unknown): Promise<void> {
   await translationStage("output", () => Bun.write(path, JSON.stringify(value, null, 2) + "\n"));
 }
 const TRANSLATION_SYSTEM_CODES: Readonly<Record<string, true>> = { ENOENT: true, EACCES: true, EPERM: true, EISDIR: true, ENOTDIR: true, EEXIST: true, ENOSPC: true, EMFILE: true, ENAMETOOLONG: true, EIO: true, ERR_INVALID_ARG_TYPE: true, ERR_OUT_OF_RANGE: true };
+const TRANSLATION_VALIDATION_CODES: Readonly<Record<string, true>> = {
+  "translation-marker-mismatch": true,
+  "translation-technical-literal-mismatch": true,
+  "translation-response-invalid": true,
+  "translation-response-fields": true,
+  "translation-response-warning": true,
+  "translation-response-options": true,
+  "translation-response-option-keys": true,
+  "translation-response-option": true,
+  "translation-conflicting-source": true,
+  "translation-input-invalid": true,
+  "translation-missing": true,
+};
 function modelFailure(error: ModelRequestError): string {
   if (error.config !== undefined) return `${error.code}:${error.config}`;
   if (error.status !== undefined) return `${error.code}-${error.status}`;
@@ -260,6 +273,11 @@ function modelFailure(error: ModelRequestError): string {
 }
 function translationDetail(error: unknown): string {
   if (error instanceof Error) {
+    // Only our fixed validation code may cross the boundary; paths, option keys
+    // and provider-controlled fields in the rest of the message stay private.
+    const separator = error.message.indexOf(":");
+    const code = separator < 0 ? error.message : error.message.slice(0, separator);
+    if (Object.hasOwn(TRANSLATION_VALIDATION_CODES, code)) return code;
     if ("code" in error && typeof error.code === "string" && Object.hasOwn(TRANSLATION_SYSTEM_CODES, error.code)) return error.code;
     const name = error.constructor.name;
     if (name === "SyntaxError") return "SyntaxError";

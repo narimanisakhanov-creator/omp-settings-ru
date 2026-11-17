@@ -399,12 +399,13 @@ test("fresh translation CLI writes strict catalog without invoking a semantic re
   await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots }));
   await writeBundleManifest(bundle, manifest(base));
   let count = 0;
+  let invalidTranslation = false;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname !== "/v1/chat/completions" || request.headers.get("authorization") !== "Bearer model-fixture") return new Response("refused", { status: 403 });
     const body = await request.json() as { messages: { role: string; content: string }[] };
     if (body.messages.length !== 2) return new Response("history", { status: 400 });
     count++;
-    return Response.json({ choices: [{ message: { content: '{"label":"Режим","description":"Выберите режим"}' } }] });
+    return Response.json({ choices: [{ message: { content: invalidTranslation ? '{"label":"Режим","description":"Выберите режим","model-fixture":"private-response"}' : '{"label":"Режим","description":"Выберите режим"}' } }] });
   } });
   const cli = join(import.meta.dir, "../scripts/maintenance-actions.ts");
   const environment = { ...process.env, GITHUB_ACTIONS: "false", GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", MAINTENANCE_BASE_SHA: base, MAINTENANCE_API_KEY: "model-fixture", MAINTENANCE_BASE_URL: server.url.href + "v1", MAINTENANCE_MODEL: "fixture", GH_TOKEN: undefined, GITHUB_TOKEN: undefined, MAINTENANCE_GH_TOKEN: undefined };
@@ -430,6 +431,14 @@ test("fresh translation CLI writes strict catalog without invoking a semantic re
     const missing = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
     expect(await new Response(missing.stderr).text()).toBe("translate-failed:input:ENOENT\n"); expect(await missing.exited).not.toBe(0);
     expect(count).toBe(1);
+    invalidTranslation = true;
+    await writeFile(join(bundle, "data/src/translations/ru-catalog.json"), original);
+    await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots })); await writeBundleManifest(bundle, manifest(base));
+    const invalid = Bun.spawn([process.execPath, cli, "translate", "--bundle", bundle], { cwd: root, env: environment, stdout: "pipe", stderr: "pipe" });
+    const invalidStderr = await new Response(invalid.stderr).text();
+    expect(await invalid.exited).not.toBe(0);
+    expect(invalidStderr).toBe("translate-failed:translate:translation-response-fields\n");
+    expect(invalidStderr).not.toContain("fixture"); expect(invalidStderr).not.toContain("private-response");
     let httpFailure = false;
     await writeFile(join(bundle, "data/src/translations/ru-catalog.json"), original);
     await writeFile(join(bundle, "input.json"), JSON.stringify({ snapshots })); await writeBundleManifest(bundle, manifest(base));

@@ -78,6 +78,8 @@ Recovery publisher-run принимает `workflow_run` и manual dispatch на
 
 Nonretryable failure блокирует новую подготовку сразу; два подтверждённых retryable failed cycles — тоже блокировка. Retryable — только typed timeout/HTTP 429/5xx либо доказанное отсутствие companion/native asset, не произвольный `trusted-command-failed`. Ручной `workflow_dispatch` с `retry_blocked=true` явно начинает новый durable preparation budget (`retryBlocked:true` в outcome); schedule его не задаёт, CI `run_attempt` budget не сбрасывается. Новый accepted base начинает отдельную историю. Сборщик outcome работает `always()` на trusted main без model/write secrets, получает только sanitized CLI reason/retryable и job results: cancellation/timeouts — blocked, retirement не выдаётся за release. Raw stderr translate не копируется в artifacts.
 
+Ошибки translate сохраняют только фиксированный allowlist-код собственного валидатора (`translation-response-fields`, `translation-marker-mismatch`, `translation-technical-literal-mismatch` и другие), без пути настройки, option keys и текста ответа. Остальные `Error` остаются обезличенными; это диагностическая различимость, не ослабление валидации и не разрешение повторять заблокированный перевод. При failed translate `requests.json` остаётся только на runner и не загружается: публичные prepared/outcome artifacts не содержат отвергнутого ответа.
+
 `scripts/maintenance.ts` — ручной pinned updater, не orchestration path.
 
 `.github/dependabot.yml` держит `open-pull-requests-limit: 0`, поэтому обновления запиненных actions вносятся руками и `dependabot/*` ветки не появляются.
