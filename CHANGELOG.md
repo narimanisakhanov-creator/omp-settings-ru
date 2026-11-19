@@ -1,3 +1,11 @@
+## 0.36.0
+
+OMP 18.22.2 → 19.0.0.
+
+- Новые настройки на русском: 6 — Встроенные преобразования MCP (`mcp.builtinTransforms`), Пространства имён MCP в eval (`mcp.evalNamespaces`), Процент сжатия для моста кэша (`providers.cacheWarmingCompactPercent`), Токены сжатия для моста кэша (`providers.cacheWarmingCompactTokens`); ещё 2.
+- Обновлены переводы изменившихся настроек: 5 — Бэкенд изоляции (`isolation.backend`), Двоичный файл ovnfs (`ovnfs.path`), Прогрев кэша (`providers.cacheWarming`), Проверка правок субагентов с помощью LSP (`task.enableLsp`); ещё 1.
+- Покрытие: 18.22.1 471/471, 18.22.2 471/471, 19.0.0 477/477. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.36.0/upgrade-report.md).
+
 ## 0.35.0
 
 OMP 18.22.1 → 18.22.2.
