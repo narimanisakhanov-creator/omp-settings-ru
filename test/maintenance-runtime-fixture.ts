@@ -101,7 +101,7 @@ export async function semanticRuntimeFixture(versions: readonly string[] = ["18.
   const manifest = (candidateIncluded: boolean) => {
     const activeVersions = candidateIncluded ? supportWindow([...versions, candidate]) : supportWindow(versions);
     const pin = candidateIncluded ? candidate : versions[versions.length-1]!;
-    return { name:"omp-settings-ru", version:candidateIncluded?"0.6.0":"0.5.0", type:"module", packageManager:"bun@1.4.2", peerDependencies:{"@oh-my-pi/pi-coding-agent":activeVersions.join(" || "),"@oh-my-pi/pi-utils":activeVersions.join(" || ")}, devDependencies:{...Object.fromEntries(["coding-agent","utils","natives","tui"].map(name=>[`@oh-my-pi/pi-${name}`,pin])),...Object.fromEntries(activeVersions.map(version => [hostAliasOf(version),`npm:@oh-my-pi/pi-coding-agent@${version}`]))}};
+    return { name:"omp-settings-ru", version:candidateIncluded?"0.6.0":"0.5.0", type:"module", packageManager:`bun@${Bun.version}`, peerDependencies:{"@oh-my-pi/pi-coding-agent":activeVersions.join(" || "),"@oh-my-pi/pi-utils":activeVersions.join(" || ")}, devDependencies:{...Object.fromEntries(["coding-agent","utils","natives","tui"].map(name=>[`@oh-my-pi/pi-${name}`,pin])),...Object.fromEntries(activeVersions.map(version => [hostAliasOf(version),`npm:@oh-my-pi/pi-coding-agent@${version}`]))}};
   };
   const supported = (target: string, included: boolean) => {
     const active = included ? supportWindow([...versions,candidate]) : supportWindow(versions);

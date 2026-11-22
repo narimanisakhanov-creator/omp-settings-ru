@@ -73,7 +73,7 @@ jobs:
           fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Validate tag version against this commit's package.json
         shell: bash
         run: |
@@ -148,7 +148,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Require trusted main before reading any tag object
         shell: bash
         run: |

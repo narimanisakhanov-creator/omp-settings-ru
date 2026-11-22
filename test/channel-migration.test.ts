@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeOwnedTemp } from "./owned-temp";
 
 const script = join(import.meta.dir, "..", "scripts", "switch-channel.ts");
 
@@ -20,7 +21,7 @@ function refused(args: readonly string[], parent: string): { exitCode: number | 
   return { exitCode: result.exitCode, output: result.stdout.toString() + result.stderr.toString() };
 }
 
-test("reverse npm target is refused before any option, home or backup exists", () => {
+test("reverse npm target is refused before any option, home or backup exists", async () => {
   const parent = mkdtempSync(join(tmpdir(), "omp-channel-target-"));
   const home = join(parent, "home");
   const backup = join(parent, "backup.json");
@@ -33,11 +34,11 @@ test("reverse npm target is refused before any option, home or backup exists", (
     expect(existsSync(backup)).toBe(false);
     expect(run.output).not.toMatch(/uv_spawn|ENOENT|native-executable-required|required:--home/);
   } finally {
-    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeOwnedTemp(parent);
   }
 });
 
-test("reverse npm target is refused before required options are parsed", () => {
+test("reverse npm target is refused before required options are parsed", async () => {
   const parent = mkdtempSync(join(tmpdir(), "omp-channel-target-"));
   try {
     const run = refused(["--to", "npm"], parent);
@@ -45,22 +46,22 @@ test("reverse npm target is refused before required options are parsed", () => {
     expect(run.output).toContain("channel-target-unsupported");
     expect(run.output).not.toMatch(/required:--home|required:--profile|required:--spec/);
   } finally {
-    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeOwnedTemp(parent);
   }
 });
 
-test("unknown target is not mistaken for the reverse migration", () => {
+test("unknown target is not mistaken for the reverse migration", async () => {
   const parent = mkdtempSync(join(tmpdir(), "omp-channel-target-"));
   try {
     const run = refused(["--to", "github"], parent);
     expect(run.exitCode).not.toBe(0);
     expect(run.output).toMatch(/^error: channel-invalid\s*$/m);
   } finally {
-    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeOwnedTemp(parent);
   }
 });
 
-test("configured extension roots are refused before migration", () => {
+test("configured extension roots are refused before migration", async () => {
   const parent = mkdtempSync(join(tmpdir(), "omp-channel-target-"));
   const home = join(parent, "home");
   const profile = "proof";
@@ -84,6 +85,6 @@ test("configured extension roots are refused before migration", () => {
     expect(output, output).toContain("extension-roots-present");
     expect(existsSync(join(parent, "backup.json"))).toBe(false);
   } finally {
-    rmSync(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeOwnedTemp(parent);
   }
 }, 30_000);
