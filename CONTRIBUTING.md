@@ -67,6 +67,7 @@ bun run release:check
 ```
 
 `check` запускает TypeScript, доменные тесты, покрытие, drift, smoke расширения, smoke компонента панели и release hygiene.
+локально тот же suite — `bun run check:local`: берёт пин из `packageManager`, подставляет абсолютный `OMP_UPDATER_EXECUTABLE` из PATH и снимает `CI`/`GITHUB_ACTIONS`, иначе тесты требуют job-owned хост.
 `matrix:check` проверяет покрытие и drift по выбранной матрице; не подменяет installed smoke.
 `release:check` проверяет pack allowlist, поиск паттернов секретов и схему записей `variant-review.json`, включая сохранность исторических identity.
 сохраняй версии, платформу, SHA, вывод и код возврата; конфигурация CI не равна завершённому run.

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { removeOwnedTemp } from "./owned-temp";
 import { runInstalledSmoke } from "../scripts/installed-smoke";
 import { updaterTestExecutable } from "../scripts/ci/prepare-host";
 const executable=updaterTestExecutable(process.env,()=>process.platform==="win32"?join(process.env.LOCALAPPDATA??"","omp","omp.exe"):Bun.which("omp"));
@@ -24,7 +25,7 @@ test("startup-only driver observes real settings without claiming translation ro
  * start with --no-env-file, otherwise the startup/panel smoke sees the sentinel
  * and the outer isolation check rejects it.
  */
-test("installed smoke keeps its env allowlist when cwd has a .env file",()=>{
+test("installed smoke keeps its env allowlist when cwd has a .env file",async()=>{
  const root=mkdtempSync(join(tmpdir(),"omp-smoke-env-file-"));
  try {
   const home=join(root,"home");
@@ -47,7 +48,7 @@ test("installed smoke keeps its env allowlist when cwd has a .env file",()=>{
   expect(receipt.installedPanel).toBe(false);
   expect(receipt.isolation.ambientCredentialInherited).toBe(false);
  } finally {
-  rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+  await removeOwnedTemp(root);
  }
 },180000);
 
@@ -88,6 +89,6 @@ test("native worker ignores ambient EC2 metadata availability without contacting
  } finally {
   if(child){child.kill();await child.exited;}
   await server.stop(true);
-  rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+  await removeOwnedTemp(root);
  }
 },180000);

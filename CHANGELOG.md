@@ -1,3 +1,12 @@
+## 0.38.0
+
+OMP 19.0.1 → 19.1.0.
+
+- Новые настройки на русском: 10 — Каталог установки Binary Ninja (`binja.installDir`), Python для Binary Ninja (`binja.python`), Модель магического редактирования (`edit.magic.model`), Остановка MCP при простое (`mcp.idleStopMinutes`); ещё 6.
+- Обновлены переводы изменившихся настроек: 12 — Ретранслятор браузера (`browser.relay`), URL ретранслятора браузера (`browser.relayUrl`), Авто QA (`dev.autoqa`), Дизассемблер (`disassembler.backend`); ещё 8.
+- Больше не доступны в OMP 19.1.0: 5 настроек; исторические переводы сохранены.
+- Покрытие: 19.0.0 477/477, 19.0.1 477/477, 19.1.0 482/482. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.38.0/upgrade-report.md).
+
 ## 0.37.0
 
 OMP 19.0.0 → 19.0.1.

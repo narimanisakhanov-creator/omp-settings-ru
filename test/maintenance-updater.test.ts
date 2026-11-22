@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { resolveLiveness, selectLiveOmpRows, type UpdateOptions } from "../scripts/maintenance/updater.ts";
 import type { ReleasePin, UpdateReceipt } from "../scripts/maintenance/contracts.ts";
 import { updaterTestExecutable } from "../scripts/ci/prepare-host.ts";
+import { withWindowsRelease } from "./owned-temp.ts";
 
 const executable = updaterTestExecutable(process.env, () => Bun.which("omp"));
 const versionProbe = Bun.spawnSync([executable, "--version"], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
@@ -44,9 +45,9 @@ async function removeOwnedFixture(root: string): Promise<void> {
   // Every owned link is gone before changing any owned regular file's mode.
   for (const file of files) {
     if (process.platform === "win32" && !(file.mode & 0o200)) await chmod(file.path, file.mode | 0o200);
-    await unlink(file.path);
+    await withWindowsRelease(() => unlink(file.path));
   }
-  for (const directory of directories) await rmdir(directory);
+  for (const directory of directories) await withWindowsRelease(() => rmdir(directory));
 }
 async function fixture(run: (root: string) => Promise<void>) {
   // The owned root is deliberately short: a real native panel session writes deep
