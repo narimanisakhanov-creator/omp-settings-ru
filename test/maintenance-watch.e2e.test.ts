@@ -582,13 +582,23 @@ describe("watcher domain decisions", () => {
     expect(result.code).toBe(1);
     expect(await dispatches(space)).toEqual([]);
   });
-  it("does not treat case-altered markers as a machine candidate", async () => {
+  it("rejects a merged candidate with both markers case-altered", async () => {
     const space = await workspace("case-altered-marker", false);
     registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
-    const legacy = { ...mergedPull("0.6.0"), body: maintenanceBody("0.6.0").replace("<!-- omp-maintenance:v1 -->", "<!-- OMP-MAINTENANCE:V1 -->") };
+    const legacy = { ...mergedPull("0.6.0"), body: maintenanceBody("0.6.0").replaceAll("omp-maintenance", "OMP-MAINTENANCE") };
     await writeScenario(space, { api: healthyApi({ [PULLS_PATH]: { body: [legacy] } }) });
     const result = await tick(space);
     expect(result.decision).toBe("maintenance-pr-marker-ambiguous");
+    expect(result.code).toBe(1);
+    expect(await dispatches(space)).toEqual([]);
+  });
+  it("rejects a merged candidate with an invalid maintenance payload", async () => {
+    const space = await workspace("invalid-maintenance-payload", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    const candidate = { ...mergedPull("0.6.0"), body: "<!-- omp-maintenance:v1 -->\n{broken\n<!-- /omp-maintenance -->" };
+    await writeScenario(space, { api: healthyApi({ [PULLS_PATH]: { body: [candidate] } }) });
+    const result = await tick(space);
+    expect(result.decision).toBe("maintenance-pr-payload-invalid");
     expect(result.code).toBe(1);
     expect(await dispatches(space)).toEqual([]);
   });

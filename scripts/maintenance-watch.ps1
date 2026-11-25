@@ -504,17 +504,16 @@ function Get-ReleaseVersionFromBody {
     if ([string]::IsNullOrEmpty($Body)) { return $null }
     $begin = '<!-- omp-maintenance:v1 -->'
     $end = '<!-- /omp-maintenance -->'
-    $start = $Body.IndexOf($begin, [StringComparison]::Ordinal)
-    $finish = $Body.IndexOf($end, [StringComparison]::Ordinal)
-    if (($start -lt 0) -ne ($finish -lt 0)) { throw 'maintenance-pr-marker-ambiguous' }
-    if ($start -lt 0) { return $null }
-    if ($Body.IndexOf($begin, $start + $begin.Length, [StringComparison]::Ordinal) -ge 0 -or $Body.IndexOf($end, $finish + $end.Length, [StringComparison]::Ordinal) -ge 0 -or $finish -lt $start + $begin.Length) { throw 'maintenance-pr-marker-ambiguous' }
+    $start = $Body.IndexOf($begin, [StringComparison]::OrdinalIgnoreCase)
+    $finish = $Body.IndexOf($end, [StringComparison]::OrdinalIgnoreCase)
+    if ($start -lt 0 -and $finish -lt 0) { return $null }
+    if ($start -lt 0 -or $finish -lt $start + $begin.Length) { throw 'maintenance-pr-marker-ambiguous' }
+    if ($Body.IndexOf($begin, [StringComparison]::Ordinal) -ne $start -or $Body.IndexOf($end, [StringComparison]::Ordinal) -ne $finish -or $Body.IndexOf($begin, $start + $begin.Length, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $Body.IndexOf($end, $finish + $end.Length, [StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'maintenance-pr-marker-ambiguous' }
     $payloadStart = $start + $begin.Length
     $identity = $null
-    try { $identity = ConvertFrom-Json -InputObject ($Body.Substring($payloadStart, $finish - $payloadStart).Trim()) } catch { return $null }
+    try { $identity = ConvertFrom-Json -InputObject ($Body.Substring($payloadStart, $finish - $payloadStart).Trim()) } catch { throw 'maintenance-pr-payload-invalid' }
     $releaseVersion = Get-PropertyValue $identity 'releaseVersion'
-    if (-not ($releaseVersion -is [string])) { return $null }
-    if ($releaseVersion -notmatch $script:StablePattern) { return $null }
+    if ($releaseVersion -isnot [string] -or $releaseVersion -notmatch $script:StablePattern) { throw 'maintenance-pr-payload-invalid' }
     return $releaseVersion
 }
 
@@ -552,10 +551,8 @@ function Get-OwnedCandidateState {
         $headRepository = Get-PropertyValue (Get-PropertyValue $pull 'head') 'repo'
         if ([string](Get-PropertyValue $baseRepository 'full_name') -ne $Config.Repository -or [string](Get-PropertyValue $headRepository 'full_name') -ne $Config.Repository -or [string]$author -ne $ControllerLogin -or [string]$authorType -ne 'User' -or $baseReference -ne 'main') { throw 'maintenance-pr-ownership-conflict' }
         if ($null -eq $mergedAt) { [void]$pending.Add('open'); continue }
-        $body = [string](Get-PropertyValue $pull 'body')
-        if ($body.IndexOf('<!-- omp-maintenance:v1 -->', [StringComparison]::Ordinal) -lt 0 -and $body.IndexOf('<!-- /omp-maintenance -->', [StringComparison]::Ordinal) -lt 0) { continue }
-        $releaseVersion = Get-ReleaseVersionFromBody -Body $body
-        if ($null -eq $releaseVersion) { [void]$pending.Add('unknown'); continue }
+        $releaseVersion = Get-ReleaseVersionFromBody -Body ([string](Get-PropertyValue $pull 'body'))
+        if ($null -eq $releaseVersion) { continue }
         $releaseText = Invoke-GhApi -Path ('repos/{0}/releases/tags/v{1}' -f $Config.Repository, $releaseVersion) -AllowNotFound
         if ($null -eq $releaseText) { [void]$pending.Add('unreleased'); continue }
         $release = ConvertFrom-Json -InputObject $releaseText
