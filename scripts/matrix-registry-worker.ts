@@ -18,16 +18,19 @@ if (!alias || !/^omp-host-[0-9]+$/.test(alias) || !version || !platform || !["wi
 const nativePlatform = process.platform;
 const registryPath = import.meta.resolve(`${alias}/config/all-settings`);
 const registryDir = dirname(registryPath.startsWith("file:") ? fileURLToPath(registryPath) : registryPath);
-// The registry graph imports @oh-my-pi/pi-utils, whose env module resolves the project directory at
-// module scope; on Windows that path reaches the native 8.3 helper and loads the addon. Warm the
-// exact instance the graph imports while the real OS identity still applies, so the derived-platform
-// import reuses the cached project directory instead of loading an addon for a platform this runner
-// cannot host. Warming pi-utils also loads the addon for the real platform, which is what the Windows
-// path helper needs.
 const warmedUtils = new Set([
   Bun.resolveSync("@oh-my-pi/pi-utils", registryDir),
   Bun.resolveSync("@oh-my-pi/pi-utils", import.meta.dirname),
 ]);
+// Bun can materialize separate pi-utils copies below several transitive packages. Initialize
+// their project directories under the real OS before the derived Windows import can invoke
+// the Windows native path helper. Only the worker's own dependency tree is in scope.
+if (platform === "win32" && nativePlatform !== "win32") {
+  const copies = new Bun.Glob("**/node_modules/@oh-my-pi/pi-utils/package.json");
+  for (const manifest of copies.scanSync({ cwd: `${import.meta.dirname}/../node_modules`, absolute: true, dot: true })) {
+    warmedUtils.add(Bun.resolveSync("@oh-my-pi/pi-utils", dirname(manifest)));
+  }
+}
 await Promise.all([...warmedUtils].map(path => import(path)));
 // Source-derived export deliberately evaluates the package's platform source branch; never native-panel evidence.
 // Registry resolution selects a version at runtime; its module graph must initialize under the requested source platform.
