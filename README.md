@@ -8,7 +8,7 @@
   <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/releases/latest"><img src="https://img.shields.io/github/v/release/narimanisakhanov-creator/omp-settings-ru?label=release&color=ff2a85" alt="Release"></a>
   <a href="https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml?query=branch%3Amain"><img src="https://github.com/narimanisakhanov-creator/omp-settings-ru/actions/workflows/check.yml/badge.svg?branch=main" alt="проверка main"></a>
   <!-- omp-badges:start -->
-<img src="https://img.shields.io/badge/OMP-19.0.0--19.1.0-8a2be2" alt="OMP 19.0.0, 19.0.1, 19.1.0">
+<img src="https://img.shields.io/badge/OMP-19.0.1--19.1.1-8a2be2" alt="OMP 19.0.1, 19.1.0, 19.1.1">
 <!-- omp-badges:end -->
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00bfff" alt="лицензия MIT"></a>
 </p>
@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/runtime-Bun-f472b6?logo=bun&logoColor=white" alt="Bun">
   <!-- omp-coverage:start -->
-<img src="https://img.shields.io/badge/перевод-482%2F482_(100%25)-brightgreen" alt="Покрытие каталога 482/482">
+<img src="https://img.shields.io/badge/перевод-483%2F483_(100%25)-brightgreen" alt="Покрытие каталога 483/483">
 <!-- omp-coverage:end -->
   <img src="https://img.shields.io/badge/режим-offline-success" alt="Offline">
 </p>
@@ -135,15 +135,15 @@ omp plugin upgrade omp-settings-ru@omp-settings-ru
 <!-- omp-supported:start -->
 ## Поддерживаемые версии OMP
 
-Поддержка в этой копии репозитория: OMP 19.0.0, 19.0.1, 19.1.0.
+Поддержка в этой копии репозитория: OMP 19.0.1, 19.1.0, 19.1.1.
 
 Целевое окно — три последние стабильные npm-версии OMP. Новые версии проходят проверки и добавляются последовательно; таблица показывает только уже измеренную поддержку, а не будущую очередь.
 
 | OMP | Windows | Linux | macOS |
 | --- | ---: | ---: | ---: |
-| 19.0.0 | 477/477 | 477/477 | 477/477 |
 | 19.0.1 | 477/477 | 477/477 | 477/477 |
 | 19.1.0 | 482/482 | 482/482 | 482/482 |
+| 19.1.1 | 483/483 | 483/483 | 483/483 |
 
 В ячейке — измеренное покрытие каталога для точной пары «версия × платформа» (`bun scripts/check-coverage.ts <версия> <платформа>`); другое число в ячейке означает другое измерение, а не округление.
 Список относится к текущей копии репозитория: совместимость опубликованного пакета определяется тегом его выпуска, а не этим файлом.
