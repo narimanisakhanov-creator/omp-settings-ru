@@ -563,6 +563,60 @@ describe("watcher domain decisions", () => {
     expect(await dispatches(disabled)).toEqual([]);
   });
 
+  it("ignores a merged legacy upgrade PR without a maintenance block", async () => {
+    const space = await workspace("legacy-merged", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    const legacy = { ...mergedPull("0.6.0"), body: "legacy manual upgrade" };
+    await writeScenario(space, { api: healthyApi({ [PULLS_PATH]: { body: [legacy] } }) });
+    const result = await tick(space);
+    expect(result.decision).toBe("no-work");
+    expect(await dispatches(space)).toEqual([]);
+  });
+  it("fails closed on malformed maintenance marker ordering", async () => {
+    const space = await workspace("malformed-marker", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    const legacy = { ...mergedPull("0.6.0"), body: `<!-- /omp-maintenance -->\n${maintenanceBody("0.6.0")}` };
+    await writeScenario(space, { api: healthyApi({ [PULLS_PATH]: { body: [legacy] } }) });
+    const result = await tick(space);
+    expect(result.decision).toBe("maintenance-pr-marker-ambiguous");
+    expect(result.code).toBe(1);
+    expect(await dispatches(space)).toEqual([]);
+  });
+  it("does not treat case-altered markers as a machine candidate", async () => {
+    const space = await workspace("case-altered-marker", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    const legacy = { ...mergedPull("0.6.0"), body: maintenanceBody("0.6.0").replace("<!-- omp-maintenance:v1 -->", "<!-- OMP-MAINTENANCE:V1 -->") };
+    await writeScenario(space, { api: healthyApi({ [PULLS_PATH]: { body: [legacy] } }) });
+    const result = await tick(space);
+    expect(result.decision).toBe("maintenance-pr-marker-ambiguous");
+    expect(result.code).toBe(1);
+    expect(await dispatches(space)).toEqual([]);
+  });
+  it("rejects a marker-free merged upgrade PR from a foreign fork", async () => {
+    const space = await workspace("foreign-legacy-fork", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    const legacy = { ...mergedPull("0.6.0"), body: "legacy manual upgrade", head: { ...mergedPull("0.6.0").head, repo: { full_name: "foreign/repository" } } };
+    await writeScenario(space, { api: healthyApi({ [PULLS_PATH]: { body: [legacy] } }) });
+    const result = await tick(space);
+    expect(result.decision).toBe("maintenance-pr-ownership-conflict");
+    expect(result.code).toBe(1);
+    expect(await dispatches(space)).toEqual([]);
+  });
+  it("dispatches for an open candidate before checking its release tag", async () => {
+    const space = await workspace("open-candidate", false);
+    registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
+    await writeScenario(space, {
+      api: healthyApi({
+        [PULLS_PATH]: { body: [{ ...mergedPull("0.6.0"), state: "open", merged_at: null }] },
+        [releasePath("0.6.0")]: { body: publishedRelease("0.6.0") },
+      }),
+    });
+    const result = await tick(space);
+    expect(result.decision).toBe("dispatched");
+    expect(result.payload.reason).toBe("owned-candidate-pending");
+    expect(await dispatches(space)).toHaveLength(1);
+  });
+
   it("resumes a merged but unpublished candidate even when the pin already equals latest", async () => {
     const space = await workspace("merged-unreleased", false);
     registryMode = { status: 200, packument: stablePackument(["18.13.1", "18.13.2", "18.13.3"], "18.13.3") };
