@@ -119,6 +119,16 @@ describe("origin and durable PR identity", () => {
     expect(() => parseMaintenanceBlock(body + body)).toThrow();
     expect(() => parseMaintenanceBlock("human text")).toThrow();
   });
+  test("rejects ambiguous marker ordering and extra delimiters", () => {
+    const identity = { ...manifest("a".repeat(40), "b".repeat(40)), headSha: "b".repeat(40), artifactId: "42", manifestSha256: "c".repeat(64) };
+    const body = maintenanceBody(identity);
+    const begin = "<!-- omp-maintenance:v1 -->";
+    const end = "<!-- /omp-maintenance -->";
+    expect(() => parseMaintenanceBlock(`${end}\n${begin}${JSON.stringify(identity)}`)).toThrow("maintenance-block-ambiguous");
+    expect(() => parseMaintenanceBlock(`${body}\n${end}`)).toThrow("maintenance-block-ambiguous");
+    expect(() => parseMaintenanceBlock(`${body}\n${begin}`)).toThrow("maintenance-block-ambiguous");
+    expect(() => parseMaintenanceBlock(body.replace(begin, begin.toUpperCase()))).toThrow("maintenance-block-ambiguous");
+  });
   test("hashes alone cannot authorize a foreign workflow, ref, run attempt or expired artifact", () => {
     const candidate = manifest();
     const run = { id: 123, run_attempt: 2, event: "workflow_dispatch", path: ".github/workflows/upstream-watch.yml", head_branch: "main", head_sha: candidate.baseSha, repository: { full_name: candidate.repository } };

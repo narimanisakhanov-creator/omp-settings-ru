@@ -14,13 +14,17 @@ export interface MaintenanceIdentity {
 }
 const begin = "<!-- omp-maintenance:v1 -->";
 const end = "<!-- /omp-maintenance -->";
+const markers = /<!-- (?:omp-maintenance:v1|\/omp-maintenance) -->/gi;
 export function maintenanceBody(identity: MaintenanceIdentity): string {
   const { schemaVersion, repository, upstreamVersion, releaseVersion, baseSha, headSha, runId, runAttempt, artifactId, manifestSha256 } = identity;
   return `Автоматически проверенная поддержка OMP ${upstreamVersion}.\n\n${begin}\n${JSON.stringify({ schemaVersion, repository, upstreamVersion, releaseVersion, baseSha, headSha, runId, runAttempt, artifactId, manifestSha256 })}\n${end}`;
 }
 export function parseMaintenanceBlock(body: string): MaintenanceIdentity {
-  if (body.split(begin).length !== 2 || body.split(end).length !== 2) throw new Error("maintenance-block-ambiguous");
-  const raw = asRecord(parseStrictJSON(body.split(begin)[1]!.split(end)[0]!.trim()));
+  const matches = body.matchAll(markers);
+  const first = matches.next().value;
+  const second = matches.next().value;
+  if (first?.[0] !== begin || second?.[0] !== end || !matches.next().done) throw new Error("maintenance-block-ambiguous");
+  const raw = asRecord(parseStrictJSON(body.slice(first.index + begin.length, second.index).trim()));
   if (!raw || Object.keys(raw).sort().join(",") !== "artifactId,baseSha,headSha,manifestSha256,releaseVersion,repository,runAttempt,runId,schemaVersion,upstreamVersion") throw new Error("maintenance-block-invalid");
   const { artifactId, manifestSha256, ...candidate } = raw;
   parseCandidate({ ...candidate, semanticReview: "disabled", files: [] });
@@ -80,7 +84,9 @@ export class HostedGitHub {
       if (!String(head?.ref).startsWith("upgrade/omp-")) continue;
       if (pr.state === "closed" && !pr.merged_at) continue;
       if (user?.login !== this.policy.controllerLogin || user.type !== this.policy.controllerType || base?.ref !== "main" || asRecord(base.repo)?.full_name !== this.policy.repository || asRecord(head?.repo)?.full_name !== this.policy.repository) throw new Error("maintenance-pr-ownership-conflict");
-      const identity = parseMaintenanceBlock(String(pr.body ?? ""));
+      const body = String(pr.body ?? "");
+      if (pr.merged_at && body.search(markers) < 0) continue;
+      const identity = parseMaintenanceBlock(body);
       if (identity.repository !== this.policy.repository || head?.ref !== `upgrade/omp-${identity.upstreamVersion}` || head?.sha !== identity.headSha) throw new Error("maintenance-pr-identity-conflict");
       result.push({ pr, identity });
     }

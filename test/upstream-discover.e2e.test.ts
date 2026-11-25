@@ -92,12 +92,17 @@ async function fixture() {
     missingNative() { nativeMissing = true; },
     oversize() { oversized = true; }, redirect() { redirected = true; }, cancelled: () => cancelled, cancellation,
     originInvalid() { originInvalid = true; }, clearPulls() { pulls = []; runs = []; },
-    pending(options: { merged?: boolean; attempt?: number; conclusion?: string; duplicate?: boolean; foreign?: boolean; active?: boolean } = {}) {
+    legacyMerged(body = "legacy manual upgrade", headRepository = policy.repository) {
+      const head = git(repo, "commit-tree", git(repo, "rev-parse", "HEAD^{tree}"), "-p", base, "-m", "legacy candidate");
+      const merge = git(repo, "commit-tree", git(repo, "rev-parse", "HEAD^{tree}"), "-p", base, "-p", head, "-m", "legacy merge");
+      pulls = [{ number: 2, state: "closed", merged_at: "2026-10-28T00:00:00Z", merge_commit_sha: merge, draft: false, body, user: { login: policy.controllerLogin, type: policy.controllerType }, base: { ref: "main", repo: { full_name: policy.repository } }, head: { ref: "upgrade/omp-19.1.0", sha: head, repo: { full_name: headRepository } } }];
+    },
+    pending(options: { merged?: boolean; attempt?: number; conclusion?: string; duplicate?: boolean; foreign?: boolean; active?: boolean; bodySuffix?: string } = {}) {
       const head = git(repo, "commit-tree", git(repo, "rev-parse", "HEAD^{tree}"), "-p", base, "-m", "candidate");
       git(repo, "push", "origin", `${head}:refs/heads/upgrade/omp-18.13.4`);
       identity = { schemaVersion: 1, repository: policy.repository, upstreamVersion: "18.13.4", releaseVersion: "0.11.0", baseSha: base, headSha: head, runId: "123", runAttempt: "1", artifactId: "42", manifestSha256: "c".repeat(64) };
       const merge = options.merged ? git(repo, "commit-tree", git(repo, "rev-parse", "HEAD^{tree}"), "-p", base, "-p", head, "-m", "merge") : undefined;
-      pulls = [{ number: 1, state: merge ? "closed" : "open", merged_at: merge ? "2026-10-28T00:00:00Z" : null, merge_commit_sha: merge, draft: false, body: maintenanceBody(identity), user: { login: policy.controllerLogin, type: policy.controllerType }, base: { ref: "main", repo: { full_name: policy.repository } }, head: { ref: "upgrade/omp-18.13.4", sha: head, repo: { full_name: policy.repository } } }];
+      pulls = [{ number: 1, state: merge ? "closed" : "open", merged_at: merge ? "2026-10-28T00:00:00Z" : null, merge_commit_sha: merge, draft: false, body: maintenanceBody(identity) + (options.bodySuffix ?? ""), user: { login: policy.controllerLogin, type: policy.controllerType }, base: { ref: "main", repo: { full_name: policy.repository } }, head: { ref: "upgrade/omp-18.13.4", sha: head, repo: { full_name: policy.repository } } }];
       runs = [{ id: 501, run_attempt: options.attempt ?? 1, path: ".github/workflows/check.yml", event: "push", head_sha: merge ?? head, head_branch: merge ? "main" : "upgrade/omp-18.13.4", status: options.active ? "in_progress" : "completed", conclusion: options.active ? null : options.conclusion ?? "failure", repository: { full_name: options.foreign ? "foreign/repository" : policy.repository }, head_repository: { full_name: policy.repository } }];
       if (options.duplicate) runs.push({ ...runs[0] });
     },
@@ -153,6 +158,31 @@ test("explicit serviced active/history versions are no-work, but unknown old inp
   expect(await f.discover("18.12.0")).toMatchObject({ mode: "no-work", candidateVersion: "18.12.0" });
   f.registry(initial);
   await expect(f.discover("18.12.99")).rejects.toThrow("requested-version-not-next");
+});
+test("merged legacy upgrade PR without a maintenance block is ignored", async () => {
+  const f = await fixture();
+  f.legacyMerged();
+  expect(await f.discover()).toMatchObject({ mode: "prepare", candidateVersion: "18.13.4" });
+});
+test("merged legacy PR with malformed delimiters is rejected", async () => {
+  const malformed = await fixture();
+  malformed.legacyMerged("<!-- /omp-maintenance -->\n<!-- omp-maintenance:v1 -->{}");
+  await expect(malformed.discover()).rejects.toThrow("maintenance-block-ambiguous");
+});
+test("merged candidate with both markers case-altered is rejected", async () => {
+  const f = await fixture();
+  f.legacyMerged("<!-- OMP-MAINTENANCE:V1 -->\n{}\n<!-- /OMP-MAINTENANCE -->");
+  await expect(f.discover()).rejects.toThrow("maintenance-block-ambiguous");
+});
+test("merged candidate with an extra case-altered delimiter is rejected", async () => {
+  const f = await fixture();
+  f.pending({ merged: true, bodySuffix: "\n<!-- /OMP-MAINTENANCE -->" });
+  await expect(f.discover()).rejects.toThrow("maintenance-block-ambiguous");
+});
+test("merged legacy PR from a foreign fork is rejected", async () => {
+  const foreign = await fixture();
+  foreign.legacyMerged("legacy manual upgrade", "foreign/repository");
+  await expect(foreign.discover()).rejects.toThrow("maintenance-pr-ownership-conflict");
 });
 
 test("historical evidence cannot hide an inactive target member at or below the pin", async () => {
