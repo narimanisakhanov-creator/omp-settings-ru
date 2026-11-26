@@ -32,6 +32,8 @@ async function removeOwnedFixture(root: string): Promise<void> {
     }
     if (link) {
       await unlink(path);
+    } else if (stat.isSocket()) {
+      await rm(path, { force: true });
     } else if (stat.isDirectory()) {
       for (const name of await readdir(path)) await visit(join(path, name));
       directories.push(path);
