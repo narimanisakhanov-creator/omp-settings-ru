@@ -68,7 +68,11 @@ Prepare создаёт disposable worktree от точного accepted base, з
 
 Finalize ждёт exact-head checks полной active-матрицы, `shared` и `hygiene`, блокирует base drift, выполняет merge с match-head и создаёт `v<releaseVersion>` на проверенном merge SHA, который обязан быть предком текущего `main` (сдвиг `main` после merge не блокирует выпуск, расхождение — `release-tag-not-ancestor`). После merge требуется новый успешный push `check.yml` на exact merge SHA; check кандидата не заменяет merge proof. `check.yml` не имеет tag trigger, поэтому release/catalog не требуют отдельного tag check.
 
+Компонентный `smoke:panel` запускает старую панель OMP 19.0.1 и 19.1.x (19.1.0, 19.1.1) либо новую панель OMP 19.2.x. E2E проверяет корневой dev-пин и отдельно закреплённые версии обеих панелей. Алиасы `omp-api-*` и `omp-tui-*` предназначены для smoke и не входят в ротацию `omp-host-*`; их наличие не расширяет окно поддержки плагина.
+
 Installed smoke отдельно ждёт стартовую подсказку и обязательный маркер `no-model`, не заменяя offline-инвариант готовностью composer. Оба PTY-драйвера очищают накопленный вывод общим helper: OSC заканчивается на первом BEL или ST (`ESC \`), иначе жадное удаление до последнего ST стирает уже выведенный status line между гиперссылками последующих перерисовок welcome banner. Это потеря наблюдения при очистке, а не доказанная задержка готовности status line; анимации и проверка UI остаются включены. Если маркер не появился за 15 секунд, installed smoke завершается timeout с очищенным хвостом вывода.
+
+Нативные PTY smoke запускают OMP без `--no-tools`: в OMP 19.2.1 этот флаг отключает не только инструменты, но и обнаружение extensions, включая установленный перевод. Проверки используют отдельный HOME и не отправляют запросы модели.
 
 Recovery publisher-run принимает `workflow_run` и manual dispatch на `main` только по prepublish artifact: неизменяемое имя задаёт производящий attempt, успешный `prepublish` job этого attempt и sealed receipt связывают репозиторий, tag и SHA с успешным release run. Promote-only rerun использует прежний artifact, но лимит повторов остаётся на текущем `run_attempt` того же run id. REST inputs не требуются; exact display title — лишь запрет дублирующего dispatch (включая pending/requested), не publication proof. Неизвестная привязка ожидается до deadline, а не заменяется новым run.
 

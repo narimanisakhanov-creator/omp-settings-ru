@@ -64,6 +64,8 @@ const profile = "omp-settings-ru-proof-" + randomUUID().slice(0, 8);
 const environment: Record<string, string> = {};
 for (const key of ["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP"]) if (process.env[key]) environment[key] = process.env[key]!;
 Object.assign(environment, {HOME: home, USERPROFILE: home, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata")});
+// Match the installed smoke: an isolated HOME alone does not disable ambient EC2 credentials.
+environment.AWS_EC2_METADATA_DISABLED = "true";
 const root = join(home, ".omp", "profiles", profile);
 await mkdir(join(root, "agent"), {recursive: true});
 await writeFile(join(root, "agent", "config.yml"), "startup:\n  setupWizard: false\nmarketplace:\n  autoUpdate: off\n");

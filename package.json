@@ -73,7 +73,11 @@
     "typescript": "5.9.2",
     "omp-host-1901": "npm:@oh-my-pi/pi-coding-agent@19.0.1",
     "omp-host-1910": "npm:@oh-my-pi/pi-coding-agent@19.1.0",
-    "omp-host-1911": "npm:@oh-my-pi/pi-coding-agent@19.1.1"
+    "omp-host-1911": "npm:@oh-my-pi/pi-coding-agent@19.1.1",
+    "omp-api-1911": "npm:@oh-my-pi/pi-coding-agent@19.1.1",
+    "omp-tui-1911": "npm:@oh-my-pi/pi-tui@19.1.1",
+    "omp-api-1920": "npm:@oh-my-pi/pi-coding-agent@19.2.0",
+    "omp-tui-1920": "npm:@oh-my-pi/pi-tui@19.2.0"
   },
   "packageManager": "bun@1.4.4",
   "engines": {

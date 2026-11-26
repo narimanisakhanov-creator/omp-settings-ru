@@ -23,7 +23,8 @@ class Session {
   offset = 0;
   run: Promise<unknown>;
   constructor() {
-    this.run = this.pty.startArgv({application: executable, args: ["--profile", profile, "--no-session", "--no-skills", "--no-rules", "--no-tools", "--no-lsp", "--no-title"], cwd: process.cwd(), cols: 150, rows: 44, timeoutMs: 180000}, (error, chunk) => {if (error) throw error;this.text += chunk;});
+    // --no-tools also disables extension discovery in OMP 19.2.1.
+    this.run = this.pty.startArgv({application: executable, args: ["--profile", profile, "--no-session", "--no-skills", "--no-rules", "--no-lsp", "--no-title"], cwd: process.cwd(), cols: 150, rows: 44, timeoutMs: 180000}, (error, chunk) => {if (error) throw error;this.text += chunk;});
   }
   async wait(pattern: RegExp, timeout = 45000): Promise<string> {
     const deadline = Date.now() + timeout;

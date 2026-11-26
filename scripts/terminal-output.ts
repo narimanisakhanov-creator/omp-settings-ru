@@ -40,12 +40,29 @@ export function terminalObservationFailure(raw: string, offset: number, setupRes
   const markers = Object.fromEntries(Object.entries(summary.markers).map(([name, marker]) => [name, {
     raw:tuple(marker.raw),clean:tuple(marker.clean),windowRaw:tuple(marker.windowRaw),windowClean:tuple(marker.window),
   }]));
-  // Drop complete and incomplete string-control payloads before publishing text.
-  let display = cleanTerminalOutput(raw.replace(/\x1b(?:\][\s\S]*?(?:\x07|\x1b\\|$)|[_P^X][\s\S]*?(?:\x1b\\|$))/g,""));
-  for(const path of ownedPaths) {
-    if(!path)continue;
-    for(const variant of new Set([path,path.replaceAll("\\","/"),path.replaceAll("/","\\")]))display=display.replaceAll(variant,"[owned-path]");
+  // Track the raw window boundary through full-stream cleanup. A replacement
+  // crossing it belongs before the window; never publish a partial match.
+  let display = raw;
+  let windowStart = offset;
+  function replace(pattern: RegExp | string, replacement: string) {
+    const boundary = windowStart;
+    display = display.replaceAll(pattern, (match: string, index: number) => {
+      if (index < boundary) windowStart += replacement.length - Math.min(match.length, boundary - index);
+      return replacement;
+    });
   }
+  // Drop string-control payloads, including incomplete ones, before publishing text.
+  replace(/(?:\x1b\]|\x9d)[\s\S]*?(?:\x07|\x1b\\|\x9c|$)|(?:\x1b[_P^X]|[\x90\x98\x9e\x9f])[\s\S]*?(?:\x1b\\|\x9c|$)/g, "");
+  replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b[=>]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+  for (const path of ownedPaths) {
+    if (!path) continue;
+    for (const variant of new Set([path, path.replaceAll("\\", "/"), path.replaceAll("/", "\\")])) replace(variant, "[owned-path]");
+  }
+  // Redact through the end of the line: paths and URLs can contain spaces.
+  replace(/\[owned-path\][\\/][^\r\n]*|(?:[a-zA-Z]:[\\/]|\\\\|(?:https?|file):\/\/|(?:^|(?<=\s))\/(?=\S))[^\r\n]*/gm, "[path-redacted]");
+  const window = offset > 0 ? display.slice(windowStart)
+    .replace(/[\u2500-\u259f]/g, " ").replace(/[\t ]+/g, " ")
+    .split(/\r?\n|\r/).map(line => line.trim()).filter(Boolean).join("\n") : "";
   const markerIndex = [summary.markers.noModel.raw.first,summary.markers.hint.raw.first,summary.markers.setup.raw.first].find(index=>index>=0) ?? 0;
   const rawControls: {offset:number;end:number;kind:string;type:string;terminator:string}[] = [];
   for(const match of raw.matchAll(/\x1b\](\d*)[\s\S]*?(?:\x07|\x1b\\|$)|\x1b\[[0-?]*[ -/]*[@-~]/g)) {
@@ -60,11 +77,11 @@ export function terminalObservationFailure(raw: string, offset: number, setupRes
     units:summary.units,rawLength:summary.rawLength,offset,windowLength:summary.windowLength,
     setupResetCount,setupResets:summary.setupResets,markerColumns:"count,first,last",markers,
     excerptKind:hintIndex<0?"startup-head":"prompt-context",excerptStart,
-    head:display.slice(excerptStart,hintIndex<0?1200:hintIndex+100),tail:display.slice(-400),rawControls,
+    head:display.slice(excerptStart,hintIndex<0?1200:hintIndex+100),tail:display.slice(-400),window:window.slice(0,1600),rawControls,
   };
   let json = JSON.stringify(evidence);
   while(json.length>2600) {
-    const field = evidence.head.length>0 ? "head" : "tail";
+    const field = evidence.head.length>0 ? "head" : evidence.tail.length>0 ? "tail" : "window";
     if(evidence[field].length===0)break;
     const remove = Math.min(evidence[field].length,json.length-2600);
     if(field==="head" && hintIndex>=0) {
