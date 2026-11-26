@@ -1,3 +1,11 @@
+## 0.40.0
+
+OMP 19.1.1 → 19.2.0.
+
+- Новые настройки на русском: 3 — Показ команды Vim (`tui.vimShowCommand`), Начальный режим Vim (`tui.vimStartMode`), Копирование в буфер обмена при копировании в Vim (`tui.vimYankToClipboard`).
+- Обновлены переводы изменившихся настроек: 10 — Альтернативные предсказания (`composer.predictionAlternatives`), Предсказания в поле ввода (`composer.predictions`), Меню для больших вставок (`paste.largeMenuThreshold`), Автоматический prewalk (`prewalk.auto`); ещё 6.
+- Покрытие: 19.1.0 482/482, 19.1.1 483/483, 19.2.0 486/486. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.40.0/upgrade-report.md).
+
 ## 0.39.0
 
 OMP 19.1.0 → 19.1.1.
