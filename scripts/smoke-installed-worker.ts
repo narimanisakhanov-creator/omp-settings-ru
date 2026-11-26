@@ -46,7 +46,8 @@ class Session {
   setupResetCount = 0;
   run: Promise<unknown>;
   constructor(noExtensions = false) {
-    this.run = this.pty.startArgv({application:executable,args:["--profile",profile,...(noExtensions?["--no-extensions"]:["--plugin-dir",pluginPath]),"--no-session","--no-skills","--no-rules","--no-tools","--no-lsp","--no-title"],cwd:home,env:nativeEnvironment,cols:150,rows:44,timeoutMs:120000},(error,chunk)=>{if(error)throw error;this.text+=chunk;});
+    // --no-tools also disables extension discovery in OMP 19.2.1.
+    this.run = this.pty.startArgv({application:executable,args:["--profile",profile,...(noExtensions?["--no-extensions"]:["--plugin-dir",pluginPath]),"--no-session","--no-skills","--no-rules","--no-lsp","--no-title"],cwd:home,env:nativeEnvironment,cols:150,rows:44,timeoutMs:120000},(error,chunk)=>{if(error)throw error;this.text+=chunk;});
   }
   async wait(pattern: RegExp, timeout = 15000): Promise<string> {
     const deadline = Date.now()+timeout;

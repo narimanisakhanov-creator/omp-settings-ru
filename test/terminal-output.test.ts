@@ -93,3 +93,39 @@ test("timeout excerpt captures the footer before the prompt instead of a long st
   expect(evidence.head).toContain("change thinking effort");
   expect(evidence.tail).toContain("redraw");
 });
+
+test("timeout evidence includes the cleaned current command window without paths or terminal payloads", () => {
+  const startup = "startup no-model\nchange thinking effort\n";
+  const panel = "\x1b[32mDark Theme\x1b[0m    System\n"
+    + "Светлая тема    default\n"
+    + "warning: C:\\Users\\Private Person\\settings.yml\n"
+    + "warning: /home/private person/settings.yml\n"
+    + "\x1b]0;private-osc-payload\x07"
+    + "footer\n";
+  const raw = startup + panel + "redraw ".repeat(2000);
+  const payload = terminalObservationFailure(raw, startup.length);
+  const evidence = JSON.parse(payload);
+  expect(payload.length).toBeLessThanOrEqual(2600);
+  expect(evidence.window).toContain("Dark Theme System");
+  expect(evidence.window).toContain("Светлая тема default");
+  expect(evidence.window).not.toContain("startup no-model");
+  expect(payload).not.toContain("Private Person");
+  expect(payload).not.toContain("private person");
+  expect(payload).not.toContain("private-osc-payload");
+  expect(payload).not.toContain("\\u001b");
+});
+
+test("command window excludes a control payload that started before its offset", () => {
+  const raw = "startup\x1b]0;private-split-payload\x07\x1b[32mDark Theme\x1b[0m";
+  const evidence = JSON.parse(terminalObservationFailure(raw, raw.indexOf("split")));
+  expect(evidence.window).toBe("Dark Theme");
+  expect(JSON.stringify(evidence)).not.toContain("private-split-payload");
+});
+
+test("command window never exposes a path or URL split at the observation boundary", () => {
+  for (const privateValue of ["/home/Private Person/settings.yml", "https://private.example/internal/path", "C:\\Users\\Private Person\\settings.yml"]) {
+    const raw = `warning: ${privateValue}\nDark Theme`;
+    const evidence = JSON.parse(terminalObservationFailure(raw, raw.indexOf(privateValue) + privateValue.lastIndexOf("e")));
+    expect(evidence.window).toBe("Dark Theme");
+  }
+});

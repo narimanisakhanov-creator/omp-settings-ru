@@ -43,7 +43,7 @@ if (args.includes("--exercise") || args.includes("--startup-only")) Object.assig
 if (args.includes("--launch")) {
   // CLI requires a shell command, values quoted literally; no PR text participates.
   const quote = (value: string) => process.platform === "win32" ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
-  const command = `${process.platform === "win32" ? "& " : ""}${quote(executable)} --profile ${quote(profile)} --no-session --no-skills --no-rules --no-tools --no-lsp --no-title`;
+  const command = `${process.platform === "win32" ? "& " : ""}${quote(executable)} --profile ${quote(profile)} --no-session --no-skills --no-rules --no-lsp --no-title`;
   const launched = Bun.spawnSync(["orca", "terminal", "create", "--worktree", "current", "--title", "owned installed OMP maintenance smoke", "--command", command, "--json"], {stdout: "pipe", stderr: "pipe", timeout: 30000});
   if (launched.exitCode !== 0) throw new Error("owned-pty-launch-failed");
   const terminal = JSON.parse(launched.stdout.toString()).result?.terminal;
