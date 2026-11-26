@@ -5,23 +5,23 @@
     "": {
       "name": "omp-settings-ru",
       "devDependencies": {
-        "@oh-my-pi/pi-coding-agent": "19.1.1",
-        "@oh-my-pi/pi-natives": "19.1.1",
-        "@oh-my-pi/pi-tui": "19.1.1",
-        "@oh-my-pi/pi-utils": "19.1.1",
+        "@oh-my-pi/pi-coding-agent": "19.2.0",
+        "@oh-my-pi/pi-natives": "19.2.0",
+        "@oh-my-pi/pi-tui": "19.2.0",
+        "@oh-my-pi/pi-utils": "19.2.0",
         "@types/bun": "1.3.14",
         "omp-api-1911": "npm:@oh-my-pi/pi-coding-agent@19.1.1",
         "omp-api-1920": "npm:@oh-my-pi/pi-coding-agent@19.2.0",
-        "omp-host-1901": "npm:@oh-my-pi/pi-coding-agent@19.0.1",
         "omp-host-1910": "npm:@oh-my-pi/pi-coding-agent@19.1.0",
         "omp-host-1911": "npm:@oh-my-pi/pi-coding-agent@19.1.1",
+        "omp-host-1920": "npm:@oh-my-pi/pi-coding-agent@19.2.0",
         "omp-tui-1911": "npm:@oh-my-pi/pi-tui@19.1.1",
         "omp-tui-1920": "npm:@oh-my-pi/pi-tui@19.2.0",
         "typescript": "5.9.2",
       },
       "peerDependencies": {
-        "@oh-my-pi/pi-coding-agent": "19.0.1 || 19.1.0 || 19.1.1",
-        "@oh-my-pi/pi-utils": "19.0.1 || 19.1.0 || 19.1.1",
+        "@oh-my-pi/pi-coding-agent": "19.1.0 || 19.1.1 || 19.2.0",
+        "@oh-my-pi/pi-utils": "19.1.0 || 19.1.1 || 19.2.0",
       },
       "optionalPeers": [
         "@oh-my-pi/pi-coding-agent",
@@ -38,41 +38,41 @@
 
     "@babel/types": ["@babel/types@7.29.8", "", { "dependencies": { "@babel/helper-string-parser": "^7.29.7", "@babel/helper-validator-identifier": "^7.29.7" } }, "sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg=="],
 
-    "@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-GuxFNClnYNRyuPFIqPD5L1K6X4wlIBWf5JsEqDPYfc2Jf6eQgmUgk+VXfltZDKUNd6KWmx4SwaVgP9Cp3HILjA=="],
+    "@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-Dpk4pC9wCC/3v4gduX82g3sJJ8uNC/LSlFp00vb/CRsePHXn3vsECV/1WEn0z2E6dHcht3izrmmXZ5VbK7v7rg=="],
 
-    "@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.1.1", "", {}, "sha512-sTMAQQX0bvUn2FYFdTlWbmzF2Z+wnjtbrFZBZfixWji3pNGGSFzbf3b4wYeGpD3UOvblx3Opjk2+LUVVrkM4zA=="],
+    "@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.2.0", "", {}, "sha512-gaeJpLjfMU9fOzi9qMaKP71qPy69uyhfUiEGb8fCpCZuxT5/ylL2zxoYZKer9IDe3bd3asdIRKqBoCCfEhsX3w=="],
 
-    "@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1", "@opentelemetry/api": "^1.9.1" } }, "sha512-iM9BqWLxmQyoyKILxDlwwiQBMZv7bHKET5lQku4/E8S1mXHYblUMLWHLzoIa5H0SbR5qULcLp48VFFBLOiNNcQ=="],
+    "@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0", "@oh-my-pi/snapcompact": "19.2.0", "@opentelemetry/api": "^1.9.1" } }, "sha512-W5XagG4Yfjgqe8CdFP2Fl63+dwqWnV8VXcpw1k2suDGmggGoqOn7hFBs4uMjtMWfvRozuDeeH3yO0GyI/Tlp7w=="],
 
-    "@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-J8he3UHx3DW0Ke6dyZs5wmUoni7WLaUaZzonGoLw1KdSjb7rUCL3RY+J5GO0+JbsQepg2tOapzvchChdeCSjtw=="],
+    "@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0" } }, "sha512-rRbkU2qG55hOUNj9i80SJTPpJd9kBfxvat5YmswJ2x3wNOb4nS+QMrjH/bpYvGGnRz+q47ecK/7qaBeSvf9Ygw=="],
 
-    "@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" } }, "sha512-I3ZpbVGCLPgrJOftYvFy8/28J/uvxnW0OlRNcyGkXYgPb8/nC76POWGXoei6a4torWs959DPxjL7s1uVYXsXjA=="],
+    "@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0" } }, "sha512-JwAJT1HhrNlVXK7+hzzcS1NuJjX2fuPnOAyImYIr3xnFaEAvV5DPSXkBBPOX8DtV0RL/kS2d8MLOwpJXjdvNnA=="],
 
-    "@oh-my-pi/pi-coding-agent": ["@oh-my-pi/pi-coding-agent@19.1.1", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.1.1", "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-agent-core": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-mnemopi": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-tui": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-x/7xQXQ5F/ga4LTNOCSQs+cggWY1H5EF34+juTPP9QOyoFgfmOFVspXA4cBCp9EH8D967oje/HiCPpoNsWAyhw=="],
+    "@oh-my-pi/pi-coding-agent": ["@oh-my-pi/pi-coding-agent@19.2.0", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.2.0", "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-agent-core": "19.2.0", "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-mnemopi": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-tui": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0", "@oh-my-pi/snapcompact": "19.2.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-E4eMyBMYG6KZkq6pTCRPEC2PyzCx/lpbV2rJpXqS3/WJ63BMySvwKnQlGi1qNeECB+Oszs8/fZSg2V5xReBpqA=="],
 
-    "@oh-my-pi/pi-mnemopi": ["@oh-my-pi/pi-mnemopi@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" }, "peerDependencies": { "fastembed": "3.0.0", "onnxruntime-node": "1.21.0" }, "optionalPeers": ["fastembed", "onnxruntime-node"], "bin": { "mnemopi": "src/cli.ts" } }, "sha512-1AGZohRb4P0RjlxrGmzdoQCINsfy5KLWJDBU0cfx8PKVpm0cmimSQ/iSYmErrnYwTpXG4HbKReZyKiJzmA8MZw=="],
+    "@oh-my-pi/pi-mnemopi": ["@oh-my-pi/pi-mnemopi@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0" }, "peerDependencies": { "fastembed": "3.0.0", "onnxruntime-node": "1.21.0" }, "optionalPeers": ["fastembed", "onnxruntime-node"], "bin": { "mnemopi": "src/cli.ts" } }, "sha512-cAR7CVhNVgUGeA+kfqSGO4rHhARYgktBv44qjHkF2gEqrBfSokSYEfnhuepl9PIasVkgynXjfP/PKA7QWBQWIA=="],
 
-    "@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.1.1", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.1.1", "@oh-my-pi/pi-natives-darwin-x64": "19.1.1", "@oh-my-pi/pi-natives-linux-arm64": "19.1.1", "@oh-my-pi/pi-natives-linux-x64": "19.1.1", "@oh-my-pi/pi-natives-win32-arm64": "19.1.1", "@oh-my-pi/pi-natives-win32-x64": "19.1.1" } }, "sha512-Pd8rxQdHJk6giUzfssZYywONVmOp1aNq2SndbfDeqQELJy40EjQhwJlNlxabVGUIsmEbfzc1N+3ujZPN9QQx5w=="],
+    "@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.2.0", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.2.0", "@oh-my-pi/pi-natives-darwin-x64": "19.2.0", "@oh-my-pi/pi-natives-linux-arm64": "19.2.0", "@oh-my-pi/pi-natives-linux-x64": "19.2.0", "@oh-my-pi/pi-natives-win32-arm64": "19.2.0", "@oh-my-pi/pi-natives-win32-x64": "19.2.0" } }, "sha512-/zSsAuoo0CRrvKJ4lhkyvR1b7r2QP3x1XirKBvUCMy71K/i9TJk4KMPOYOoLY9lGIjpteiIrADeChd7KNt8KKQ=="],
 
-    "@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.1.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-J8r1c+Pr4HX3goKmnJrxN0WIh8bWPf+UXLhJ3Zk1evXWh9dtzCBtiCW4BhsXBKWuiyeKi+qVl5ulxEQs677HLg=="],
+    "@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.2.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-SwzWcsS0RTK2zLhBU4L1XZqCpnq9t8J+Z1YTrsQ0sxzIXdWQog/Nkfvvgt0uIES8dcClFQGvR7MJOmq4KMXl0g=="],
 
-    "@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.1.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-Sz1DIpAYmdqoGXKdRXmPE2kvDQ3GJ+1XuoaWBnYmO+QE1q+9c79lXDeSoVNBzsihAQao+yeT3NftY40l0n6rXA=="],
+    "@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.2.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-jZUYrKwCYD2+aEH2tzrHcn4IBd/vzxaHQ9jrpKbN5cIxCTcvOD7FtnsPZLdJG4OHh6SLjbq0QS86L9ZXvzKaaQ=="],
 
-    "@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.1.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-hRjKslpfHwxRo1IXFhwsr6gIbkz/uPJ+U2GvvAaHdjlxLFtEbOu9dRMeve/MAPsqlAi/0XUkYLXWwBUNziLmNw=="],
+    "@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.2.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-1dKYVHYusIc0FmlvWQPMEA0b3tiobTH/h1MFzTQAb+1peZOwOu3SpTSxqeOPhEYtFyd6AM29xG4KxraVEqqIuQ=="],
 
-    "@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.1.1", "", { "os": "linux", "cpu": "x64" }, "sha512-nvjqK5xpnSVUPQX4QwSM0YBFf9FULwWpJtPz8cJsP5z0jMXTb+UFYxdKHy+lsC7A8rT8m3E10yJe6cmw5lNZPg=="],
+    "@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.2.0", "", { "os": "linux", "cpu": "x64" }, "sha512-rzu42oKfUx+/wg+pn6SdUZArapGLhBejhYa0VsmW6qK8NyHmE8nGLsBf8r2OwE74IXifMPFxZMlI/Fc1Kusxww=="],
 
-    "@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.1.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-ao0GvI5wC+K+TsukisgiUx44CHzvVQauQLtPB3zy13aS2zufD2283KZUcu3jF2xl1vE7t5Ot8wofOBSOJIG8DQ=="],
+    "@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.2.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-pvGc05uBk7tTBGU8W6RQWMqpEkocxSUZBVjcxdsL+IlSutzZgBIE//5A0R/a87UbPnoBIdif3PLwFnTcIDwSEA=="],
 
-    "@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.1.1", "", { "os": "win32", "cpu": "x64" }, "sha512-9BHP4lr/5eHl4vNLqtMxKYayvkxa6frw1cBttUMg/4UC5FMLr5+gabYY7O780Hx2wVK15nq3DIbxktLIBfhEcQ=="],
+    "@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.2.0", "", { "os": "win32", "cpu": "x64" }, "sha512-tLSIY33N4PxgLGqqG9WVpj3AEBXKIiT7owBFDyQ0bE0tdghQdWuaw7BueMWrOjUOYb9IbaOzICDHc20JDseJ7Q=="],
 
-    "@oh-my-pi/pi-tui": ["@oh-my-pi/pi-tui@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-agent-core": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1" } }, "sha512-bcmHZzJ0kDRnXiZ5u5SB9V4RjnosS5AC3iPz0L2Udi2jM2BFEFacsfTVzlBGZZgyXL0JnXGzmzbwHbtrWzwNbg=="],
+    "@oh-my-pi/pi-tui": ["@oh-my-pi/pi-tui@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0" } }, "sha512-xeUEecX40HXjqWNxBVadld9WTLxgOOcD+0xg/cetgXeJ/DaZnRyBYQeJ+RVzMMlyO5Ic3+6q2EtmI7eHvIy9Yw=="],
 
-    "@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1" } }, "sha512-HIO83o8Ot/LOKJR+zbUXTFvvO0F4TP9+0yCr5mIjJs2y1wofWUX0K5Ph4sORSm4gLwody1uyrSKXBqk21bTgpg=="],
+    "@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0" } }, "sha512-XXVLFDQqmvvti+h04XD4DwehJcrOmaMNsYJ7UVE6K1rghWcOA9k8++DFJertrHTrVZRiMoqjHs1LrIWvEqHLiw=="],
 
-    "@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.1.1", "", {}, "sha512-ebhDjqUZy7d+du5UPHno5hdtpdget/d1J0E53g9eTKiySfYTk7iYEkzj6hLmk/zK0xXn7nFYIXJ0Vh3EAstRpw=="],
+    "@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.2.0", "", {}, "sha512-TBM++hR9zEY8oYn9MhUvQVMsabEd1+NtS5wM04/GMSWb/3SaInTa0VsPFEG0yCc0E2HZ8EdP6eULoPhQoDK09g=="],
 
-    "@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-/capyJhcAr9CP+gxKb/lGqjctABDIs6psPt9Qr3l/Vrmv6T7dIvQv5Y4ekWyEb91oCnt+Qo5jD2sgX2vDMAfyg=="],
+    "@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0" } }, "sha512-Nv9yX5+nWGvAGa3c7YuvdgxPUAm2c9llCHyxK0De8X+ltSC6OIFq2KvtUgRfeRQ8oBgVMABSh9WG2Rw5NSRCLQ=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
@@ -146,11 +146,11 @@
 
     "omp-api-1920": ["@oh-my-pi/pi-coding-agent@19.2.0", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.2.0", "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-agent-core": "19.2.0", "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-mnemopi": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-tui": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0", "@oh-my-pi/snapcompact": "19.2.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-E4eMyBMYG6KZkq6pTCRPEC2PyzCx/lpbV2rJpXqS3/WJ63BMySvwKnQlGi1qNeECB+Oszs8/fZSg2V5xReBpqA=="],
 
-    "omp-host-1901": ["@oh-my-pi/pi-coding-agent@19.0.1", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.0.1", "@oh-my-pi/omptype": "19.0.1", "@oh-my-pi/pi-agent-core": "19.0.1", "@oh-my-pi/pi-ai": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-mnemopi": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1", "@oh-my-pi/pi-tui": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1", "@oh-my-pi/pi-wire": "19.0.1", "@oh-my-pi/snapcompact": "19.0.1", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-N9UvH93R5TKnLQeNFS5N6IpB8nf8KhC4bBVuyQpf4dXPivDo+SBeruvpSHrROFwRJeM9hC/TUmjzRKLRb96tYQ=="],
-
     "omp-host-1910": ["@oh-my-pi/pi-coding-agent@19.1.0", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.1.0", "@oh-my-pi/omptype": "19.1.0", "@oh-my-pi/pi-agent-core": "19.1.0", "@oh-my-pi/pi-ai": "19.1.0", "@oh-my-pi/pi-catalog": "19.1.0", "@oh-my-pi/pi-mnemopi": "19.1.0", "@oh-my-pi/pi-natives": "19.1.0", "@oh-my-pi/pi-tui": "19.1.0", "@oh-my-pi/pi-utils": "19.1.0", "@oh-my-pi/pi-wire": "19.1.0", "@oh-my-pi/snapcompact": "19.1.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-HQb+ucNYUuNJDYWKkSXj+yFQ4ao/LlQcTDUSUb0/g9/F5PKToHlVDLbiKnYmdQawtBSv1vT7x4F418Lwd7iLNA=="],
 
     "omp-host-1911": ["@oh-my-pi/pi-coding-agent@19.1.1", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.1.1", "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-agent-core": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-mnemopi": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-tui": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-x/7xQXQ5F/ga4LTNOCSQs+cggWY1H5EF34+juTPP9QOyoFgfmOFVspXA4cBCp9EH8D967oje/HiCPpoNsWAyhw=="],
+
+    "omp-host-1920": ["@oh-my-pi/pi-coding-agent@19.2.0", "", { "dependencies": { "@babel/parser": "^7.29.7", "@oh-my-pi/omp-stats": "19.2.0", "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-agent-core": "19.2.0", "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-mnemopi": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-tui": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0", "@oh-my-pi/snapcompact": "19.2.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/api-logs": "^0.220.0", "@opentelemetry/context-async-hooks": "2.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.220.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0", "@opentelemetry/resources": "2.9.0", "@opentelemetry/sdk-logs": "^0.220.0", "@opentelemetry/sdk-metrics": "2.9.0", "@opentelemetry/sdk-trace-base": "2.9.0", "@opentelemetry/sdk-trace-node": "2.9.0", "axe-core": "4.13.0", "puppeteer-core": "25.3.0" }, "bin": { "omp": "dist/cli.js" } }, "sha512-E4eMyBMYG6KZkq6pTCRPEC2PyzCx/lpbV2rJpXqS3/WJ63BMySvwKnQlGi1qNeECB+Oszs8/fZSg2V5xReBpqA=="],
 
     "omp-tui-1911": ["@oh-my-pi/pi-tui@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-agent-core": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1" } }, "sha512-bcmHZzJ0kDRnXiZ5u5SB9V4RjnosS5AC3iPz0L2Udi2jM2BFEFacsfTVzlBGZZgyXL0JnXGzmzbwHbtrWzwNbg=="],
 
@@ -190,49 +190,27 @@
 
     "cliui/string-width": ["string-width@7.2.0", "", { "dependencies": { "emoji-regex": "^10.3.0", "get-east-asian-width": "^1.0.0", "strip-ansi": "^7.1.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
 
-    "omp-api-1920/@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-Dpk4pC9wCC/3v4gduX82g3sJJ8uNC/LSlFp00vb/CRsePHXn3vsECV/1WEn0z2E6dHcht3izrmmXZ5VbK7v7rg=="],
+    "omp-api-1911/@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-GuxFNClnYNRyuPFIqPD5L1K6X4wlIBWf5JsEqDPYfc2Jf6eQgmUgk+VXfltZDKUNd6KWmx4SwaVgP9Cp3HILjA=="],
 
-    "omp-api-1920/@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.2.0", "", {}, "sha512-gaeJpLjfMU9fOzi9qMaKP71qPy69uyhfUiEGb8fCpCZuxT5/ylL2zxoYZKer9IDe3bd3asdIRKqBoCCfEhsX3w=="],
+    "omp-api-1911/@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.1.1", "", {}, "sha512-sTMAQQX0bvUn2FYFdTlWbmzF2Z+wnjtbrFZBZfixWji3pNGGSFzbf3b4wYeGpD3UOvblx3Opjk2+LUVVrkM4zA=="],
 
-    "omp-api-1920/@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0", "@oh-my-pi/snapcompact": "19.2.0", "@opentelemetry/api": "^1.9.1" } }, "sha512-W5XagG4Yfjgqe8CdFP2Fl63+dwqWnV8VXcpw1k2suDGmggGoqOn7hFBs4uMjtMWfvRozuDeeH3yO0GyI/Tlp7w=="],
+    "omp-api-1911/@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1", "@opentelemetry/api": "^1.9.1" } }, "sha512-iM9BqWLxmQyoyKILxDlwwiQBMZv7bHKET5lQku4/E8S1mXHYblUMLWHLzoIa5H0SbR5qULcLp48VFFBLOiNNcQ=="],
 
-    "omp-api-1920/@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0" } }, "sha512-rRbkU2qG55hOUNj9i80SJTPpJd9kBfxvat5YmswJ2x3wNOb4nS+QMrjH/bpYvGGnRz+q47ecK/7qaBeSvf9Ygw=="],
+    "omp-api-1911/@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-J8he3UHx3DW0Ke6dyZs5wmUoni7WLaUaZzonGoLw1KdSjb7rUCL3RY+J5GO0+JbsQepg2tOapzvchChdeCSjtw=="],
 
-    "omp-api-1920/@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0" } }, "sha512-JwAJT1HhrNlVXK7+hzzcS1NuJjX2fuPnOAyImYIr3xnFaEAvV5DPSXkBBPOX8DtV0RL/kS2d8MLOwpJXjdvNnA=="],
+    "omp-api-1911/@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" } }, "sha512-I3ZpbVGCLPgrJOftYvFy8/28J/uvxnW0OlRNcyGkXYgPb8/nC76POWGXoei6a4torWs959DPxjL7s1uVYXsXjA=="],
 
-    "omp-api-1920/@oh-my-pi/pi-mnemopi": ["@oh-my-pi/pi-mnemopi@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0" }, "peerDependencies": { "fastembed": "3.0.0", "onnxruntime-node": "1.21.0" }, "optionalPeers": ["fastembed", "onnxruntime-node"], "bin": { "mnemopi": "src/cli.ts" } }, "sha512-cAR7CVhNVgUGeA+kfqSGO4rHhARYgktBv44qjHkF2gEqrBfSokSYEfnhuepl9PIasVkgynXjfP/PKA7QWBQWIA=="],
+    "omp-api-1911/@oh-my-pi/pi-mnemopi": ["@oh-my-pi/pi-mnemopi@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" }, "peerDependencies": { "fastembed": "3.0.0", "onnxruntime-node": "1.21.0" }, "optionalPeers": ["fastembed", "onnxruntime-node"], "bin": { "mnemopi": "src/cli.ts" } }, "sha512-1AGZohRb4P0RjlxrGmzdoQCINsfy5KLWJDBU0cfx8PKVpm0cmimSQ/iSYmErrnYwTpXG4HbKReZyKiJzmA8MZw=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.2.0", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.2.0", "@oh-my-pi/pi-natives-darwin-x64": "19.2.0", "@oh-my-pi/pi-natives-linux-arm64": "19.2.0", "@oh-my-pi/pi-natives-linux-x64": "19.2.0", "@oh-my-pi/pi-natives-win32-arm64": "19.2.0", "@oh-my-pi/pi-natives-win32-x64": "19.2.0" } }, "sha512-/zSsAuoo0CRrvKJ4lhkyvR1b7r2QP3x1XirKBvUCMy71K/i9TJk4KMPOYOoLY9lGIjpteiIrADeChd7KNt8KKQ=="],
+    "omp-api-1911/@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.1.1", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.1.1", "@oh-my-pi/pi-natives-darwin-x64": "19.1.1", "@oh-my-pi/pi-natives-linux-arm64": "19.1.1", "@oh-my-pi/pi-natives-linux-x64": "19.1.1", "@oh-my-pi/pi-natives-win32-arm64": "19.1.1", "@oh-my-pi/pi-natives-win32-x64": "19.1.1" } }, "sha512-Pd8rxQdHJk6giUzfssZYywONVmOp1aNq2SndbfDeqQELJy40EjQhwJlNlxabVGUIsmEbfzc1N+3ujZPN9QQx5w=="],
 
-    "omp-api-1920/@oh-my-pi/pi-tui": ["@oh-my-pi/pi-tui@19.2.0", "", { "dependencies": { "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0" } }, "sha512-xeUEecX40HXjqWNxBVadld9WTLxgOOcD+0xg/cetgXeJ/DaZnRyBYQeJ+RVzMMlyO5Ic3+6q2EtmI7eHvIy9Yw=="],
+    "omp-api-1911/@oh-my-pi/pi-tui": ["@oh-my-pi/pi-tui@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-agent-core": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1" } }, "sha512-bcmHZzJ0kDRnXiZ5u5SB9V4RjnosS5AC3iPz0L2Udi2jM2BFEFacsfTVzlBGZZgyXL0JnXGzmzbwHbtrWzwNbg=="],
 
-    "omp-api-1920/@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0" } }, "sha512-XXVLFDQqmvvti+h04XD4DwehJcrOmaMNsYJ7UVE6K1rghWcOA9k8++DFJertrHTrVZRiMoqjHs1LrIWvEqHLiw=="],
+    "omp-api-1911/@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1" } }, "sha512-HIO83o8Ot/LOKJR+zbUXTFvvO0F4TP9+0yCr5mIjJs2y1wofWUX0K5Ph4sORSm4gLwody1uyrSKXBqk21bTgpg=="],
 
-    "omp-api-1920/@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.2.0", "", {}, "sha512-TBM++hR9zEY8oYn9MhUvQVMsabEd1+NtS5wM04/GMSWb/3SaInTa0VsPFEG0yCc0E2HZ8EdP6eULoPhQoDK09g=="],
+    "omp-api-1911/@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.1.1", "", {}, "sha512-ebhDjqUZy7d+du5UPHno5hdtpdget/d1J0E53g9eTKiySfYTk7iYEkzj6hLmk/zK0xXn7nFYIXJ0Vh3EAstRpw=="],
 
-    "omp-api-1920/@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-ai": "19.2.0", "@oh-my-pi/pi-catalog": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0", "@oh-my-pi/pi-utils": "19.2.0", "@oh-my-pi/pi-wire": "19.2.0" } }, "sha512-Nv9yX5+nWGvAGa3c7YuvdgxPUAm2c9llCHyxK0De8X+ltSC6OIFq2KvtUgRfeRQ8oBgVMABSh9WG2Rw5NSRCLQ=="],
-
-    "omp-host-1901/@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.0.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-04RlIvSQJnTyqFLryF2DHsTwvC1GORNNmyxJSGTf62hGlsEVrSvI6ulaarv+k5Z3sDahoLclcgYtxDCINkT+jQ=="],
-
-    "omp-host-1901/@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.0.1", "", {}, "sha512-smAcBR1fIzZ6rHM/XZ/4c0RnNYAqt4uagLy0I0t4w0yqqSg3GhKpX9mFJXsMuMc+ECMSN1xjOFmsmhEjhKF6Sg=="],
-
-    "omp-host-1901/@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.0.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1", "@oh-my-pi/pi-wire": "19.0.1", "@oh-my-pi/snapcompact": "19.0.1", "@opentelemetry/api": "^1.9.1" } }, "sha512-prgvfREZsB2Xldl0pnnR/Nqo+zOaBlFDVKxmrFr9Wyrbfr3A+tIxLOBjIHedaRT/ajyOZfPuhtAwdu/sHJhPnQ=="],
-
-    "omp-host-1901/@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.0.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1", "@oh-my-pi/pi-wire": "19.0.1" } }, "sha512-Zn0DLrWe0LNw3OQRFwxbQ+Atziek4UkZP+yRxrIeEglL/twx+KotjZ3UyKC0vX9dKURjfZV5T1ZxIx3RKwEV7g=="],
-
-    "omp-host-1901/@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.0.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1" } }, "sha512-CHW37Le/UNCTyfa3ehmOUzvH0C0kx9OBGwrQbmm6nFEv3GQ6B1A9ONhP3FFwkxt4h+h6OIXnLy4dtmQqxaigtA=="],
-
-    "omp-host-1901/@oh-my-pi/pi-mnemopi": ["@oh-my-pi/pi-mnemopi@19.0.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1" }, "peerDependencies": { "fastembed": "3.0.0", "onnxruntime-node": "1.21.0" }, "optionalPeers": ["fastembed", "onnxruntime-node"], "bin": { "mnemopi": "src/cli.ts" } }, "sha512-KXpXCM4nCIbeRvhOu/QJQS1NBhPHA+DTWOxLFEUSIW+nVUhvSjzd4KgHk3Cjs4jtUTGTt8M4BZIopFilE4NLag=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.0.1", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.0.1", "@oh-my-pi/pi-natives-darwin-x64": "19.0.1", "@oh-my-pi/pi-natives-linux-arm64": "19.0.1", "@oh-my-pi/pi-natives-linux-x64": "19.0.1", "@oh-my-pi/pi-natives-win32-arm64": "19.0.1", "@oh-my-pi/pi-natives-win32-x64": "19.0.1" } }, "sha512-xyU80X8lK8/7ZRe3jxy3qyC4BuRNKx5lLiWNfbYLr7Zhhjn5gEw2bmK4hn9/4gQV6pgsXjf/Q6CYDgT5UE2QXw=="],
-
-    "omp-host-1901/@oh-my-pi/pi-tui": ["@oh-my-pi/pi-tui@19.0.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.0.1", "@oh-my-pi/pi-agent-core": "19.0.1", "@oh-my-pi/pi-ai": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1", "@oh-my-pi/pi-wire": "19.0.1", "@oh-my-pi/snapcompact": "19.0.1" } }, "sha512-Y7CJ752KBaeMrVhbWNZBJzvHG+r5QebyNuV71tWlV8LyBwbSrC/0mCd+vFF+4ue+UJZEE+rJ122h3Lz+6hOuGw=="],
-
-    "omp-host-1901/@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.0.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1" } }, "sha512-q2WuWygy1L4syjSeuJZB5DYcC/4hMw5xMiGUOzUMVYOFxY2TLTCq+3n7kqfiQxckRGcWyWM94yBRdjaHfQFgCQ=="],
-
-    "omp-host-1901/@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.0.1", "", {}, "sha512-1ab5KQKVMpScW+gniVPEvGBBur8v4luPkCGBpUQQXaRBasP3zTluEyu5F1FwVp1E63x7qXuGZtyq85zBWaD2Gg=="],
-
-    "omp-host-1901/@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.0.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.0.1", "@oh-my-pi/pi-ai": "19.0.1", "@oh-my-pi/pi-catalog": "19.0.1", "@oh-my-pi/pi-natives": "19.0.1", "@oh-my-pi/pi-utils": "19.0.1", "@oh-my-pi/pi-wire": "19.0.1" } }, "sha512-ry5/BeyDmNNs7g1HDklaRwF6f9bcFFSwNdcPNTYndKtGjepC7j5IJrvQehlXNSkL/nCNsrY8UOjBPADMwkA5wg=="],
+    "omp-api-1911/@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-/capyJhcAr9CP+gxKb/lGqjctABDIs6psPt9Qr3l/Vrmv6T7dIvQv5Y4ekWyEb91oCnt+Qo5jD2sgX2vDMAfyg=="],
 
     "omp-host-1910/@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.1.0", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.0", "@oh-my-pi/pi-catalog": "19.1.0", "@oh-my-pi/pi-utils": "19.1.0", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-tpLMmW5zqxozlB2vMYtiXEFIkq6h8jS+KbSn4BZHsfQas/JSNxX/jwIgV19vmb1QnjLzF3C6fG9wlZNvaiVzJQ=="],
 
@@ -256,37 +234,57 @@
 
     "omp-host-1910/@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.1.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.0", "@oh-my-pi/pi-ai": "19.1.0", "@oh-my-pi/pi-catalog": "19.1.0", "@oh-my-pi/pi-natives": "19.1.0", "@oh-my-pi/pi-utils": "19.1.0", "@oh-my-pi/pi-wire": "19.1.0" } }, "sha512-QKyNjI0WdUBLF6JzeURq/lYtBou2gcQkTsdHqZ2tMV6RQXyf5Y1zc0l3jv89UHjtA1aahA9XihEqv6M1Fnix6w=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.2.0", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.2.0", "@oh-my-pi/pi-natives-darwin-x64": "19.2.0", "@oh-my-pi/pi-natives-linux-arm64": "19.2.0", "@oh-my-pi/pi-natives-linux-x64": "19.2.0", "@oh-my-pi/pi-natives-win32-arm64": "19.2.0", "@oh-my-pi/pi-natives-win32-x64": "19.2.0" } }, "sha512-/zSsAuoo0CRrvKJ4lhkyvR1b7r2QP3x1XirKBvUCMy71K/i9TJk4KMPOYOoLY9lGIjpteiIrADeChd7KNt8KKQ=="],
+    "omp-host-1911/@oh-my-pi/omp-stats": ["@oh-my-pi/omp-stats@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "lucide-react": "^1.24.0", "react": "19.2.7", "react-dom": "19.2.7" }, "bin": { "omp-stats": "src/index.ts" } }, "sha512-GuxFNClnYNRyuPFIqPD5L1K6X4wlIBWf5JsEqDPYfc2Jf6eQgmUgk+VXfltZDKUNd6KWmx4SwaVgP9Cp3HILjA=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.2.0", "", { "dependencies": { "@oh-my-pi/omptype": "19.2.0", "@oh-my-pi/pi-natives": "19.2.0" } }, "sha512-XXVLFDQqmvvti+h04XD4DwehJcrOmaMNsYJ7UVE6K1rghWcOA9k8++DFJertrHTrVZRiMoqjHs1LrIWvEqHLiw=="],
+    "omp-host-1911/@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.1.1", "", {}, "sha512-sTMAQQX0bvUn2FYFdTlWbmzF2Z+wnjtbrFZBZfixWji3pNGGSFzbf3b4wYeGpD3UOvblx3Opjk2+LUVVrkM4zA=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.2.0", "", {}, "sha512-TBM++hR9zEY8oYn9MhUvQVMsabEd1+NtS5wM04/GMSWb/3SaInTa0VsPFEG0yCc0E2HZ8EdP6eULoPhQoDK09g=="],
+    "omp-host-1911/@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1", "@opentelemetry/api": "^1.9.1" } }, "sha512-iM9BqWLxmQyoyKILxDlwwiQBMZv7bHKET5lQku4/E8S1mXHYblUMLWHLzoIa5H0SbR5qULcLp48VFFBLOiNNcQ=="],
+
+    "omp-host-1911/@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-J8he3UHx3DW0Ke6dyZs5wmUoni7WLaUaZzonGoLw1KdSjb7rUCL3RY+J5GO0+JbsQepg2tOapzvchChdeCSjtw=="],
+
+    "omp-host-1911/@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" } }, "sha512-I3ZpbVGCLPgrJOftYvFy8/28J/uvxnW0OlRNcyGkXYgPb8/nC76POWGXoei6a4torWs959DPxjL7s1uVYXsXjA=="],
+
+    "omp-host-1911/@oh-my-pi/pi-mnemopi": ["@oh-my-pi/pi-mnemopi@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" }, "peerDependencies": { "fastembed": "3.0.0", "onnxruntime-node": "1.21.0" }, "optionalPeers": ["fastembed", "onnxruntime-node"], "bin": { "mnemopi": "src/cli.ts" } }, "sha512-1AGZohRb4P0RjlxrGmzdoQCINsfy5KLWJDBU0cfx8PKVpm0cmimSQ/iSYmErrnYwTpXG4HbKReZyKiJzmA8MZw=="],
+
+    "omp-host-1911/@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.1.1", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.1.1", "@oh-my-pi/pi-natives-darwin-x64": "19.1.1", "@oh-my-pi/pi-natives-linux-arm64": "19.1.1", "@oh-my-pi/pi-natives-linux-x64": "19.1.1", "@oh-my-pi/pi-natives-win32-arm64": "19.1.1", "@oh-my-pi/pi-natives-win32-x64": "19.1.1" } }, "sha512-Pd8rxQdHJk6giUzfssZYywONVmOp1aNq2SndbfDeqQELJy40EjQhwJlNlxabVGUIsmEbfzc1N+3ujZPN9QQx5w=="],
+
+    "omp-host-1911/@oh-my-pi/pi-tui": ["@oh-my-pi/pi-tui@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-agent-core": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1" } }, "sha512-bcmHZzJ0kDRnXiZ5u5SB9V4RjnosS5AC3iPz0L2Udi2jM2BFEFacsfTVzlBGZZgyXL0JnXGzmzbwHbtrWzwNbg=="],
+
+    "omp-host-1911/@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1" } }, "sha512-HIO83o8Ot/LOKJR+zbUXTFvvO0F4TP9+0yCr5mIjJs2y1wofWUX0K5Ph4sORSm4gLwody1uyrSKXBqk21bTgpg=="],
+
+    "omp-host-1911/@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.1.1", "", {}, "sha512-ebhDjqUZy7d+du5UPHno5hdtpdget/d1J0E53g9eTKiySfYTk7iYEkzj6hLmk/zK0xXn7nFYIXJ0Vh3EAstRpw=="],
+
+    "omp-host-1911/@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-/capyJhcAr9CP+gxKb/lGqjctABDIs6psPt9Qr3l/Vrmv6T7dIvQv5Y4ekWyEb91oCnt+Qo5jD2sgX2vDMAfyg=="],
+
+    "omp-tui-1911/@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.1.1", "", {}, "sha512-sTMAQQX0bvUn2FYFdTlWbmzF2Z+wnjtbrFZBZfixWji3pNGGSFzbf3b4wYeGpD3UOvblx3Opjk2+LUVVrkM4zA=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-agent-core": ["@oh-my-pi/pi-agent-core@19.1.1", "", { "dependencies": { "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1", "@oh-my-pi/snapcompact": "19.1.1", "@opentelemetry/api": "^1.9.1" } }, "sha512-iM9BqWLxmQyoyKILxDlwwiQBMZv7bHKET5lQku4/E8S1mXHYblUMLWHLzoIa5H0SbR5qULcLp48VFFBLOiNNcQ=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-ai": ["@oh-my-pi/pi-ai@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-J8he3UHx3DW0Ke6dyZs5wmUoni7WLaUaZzonGoLw1KdSjb7rUCL3RY+J5GO0+JbsQepg2tOapzvchChdeCSjtw=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-catalog": ["@oh-my-pi/pi-catalog@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1" } }, "sha512-I3ZpbVGCLPgrJOftYvFy8/28J/uvxnW0OlRNcyGkXYgPb8/nC76POWGXoei6a4torWs959DPxjL7s1uVYXsXjA=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-natives": ["@oh-my-pi/pi-natives@19.1.1", "", { "optionalDependencies": { "@oh-my-pi/pi-natives-darwin-arm64": "19.1.1", "@oh-my-pi/pi-natives-darwin-x64": "19.1.1", "@oh-my-pi/pi-natives-linux-arm64": "19.1.1", "@oh-my-pi/pi-natives-linux-x64": "19.1.1", "@oh-my-pi/pi-natives-win32-arm64": "19.1.1", "@oh-my-pi/pi-natives-win32-x64": "19.1.1" } }, "sha512-Pd8rxQdHJk6giUzfssZYywONVmOp1aNq2SndbfDeqQELJy40EjQhwJlNlxabVGUIsmEbfzc1N+3ujZPN9QQx5w=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-utils": ["@oh-my-pi/pi-utils@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1" } }, "sha512-HIO83o8Ot/LOKJR+zbUXTFvvO0F4TP9+0yCr5mIjJs2y1wofWUX0K5Ph4sORSm4gLwody1uyrSKXBqk21bTgpg=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-wire": ["@oh-my-pi/pi-wire@19.1.1", "", {}, "sha512-ebhDjqUZy7d+du5UPHno5hdtpdget/d1J0E53g9eTKiySfYTk7iYEkzj6hLmk/zK0xXn7nFYIXJ0Vh3EAstRpw=="],
+
+    "omp-tui-1911/@oh-my-pi/snapcompact": ["@oh-my-pi/snapcompact@19.1.1", "", { "dependencies": { "@oh-my-pi/omptype": "19.1.1", "@oh-my-pi/pi-ai": "19.1.1", "@oh-my-pi/pi-catalog": "19.1.1", "@oh-my-pi/pi-natives": "19.1.1", "@oh-my-pi/pi-utils": "19.1.1", "@oh-my-pi/pi-wire": "19.1.1" } }, "sha512-/capyJhcAr9CP+gxKb/lGqjctABDIs6psPt9Qr3l/Vrmv6T7dIvQv5Y4ekWyEb91oCnt+Qo5jD2sgX2vDMAfyg=="],
 
     "wrap-ansi/string-width": ["string-width@7.2.0", "", { "dependencies": { "emoji-regex": "^10.3.0", "get-east-asian-width": "^1.0.0", "strip-ansi": "^7.1.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.2.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-SwzWcsS0RTK2zLhBU4L1XZqCpnq9t8J+Z1YTrsQ0sxzIXdWQog/Nkfvvgt0uIES8dcClFQGvR7MJOmq4KMXl0g=="],
+    "omp-api-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.1.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-J8r1c+Pr4HX3goKmnJrxN0WIh8bWPf+UXLhJ3Zk1evXWh9dtzCBtiCW4BhsXBKWuiyeKi+qVl5ulxEQs677HLg=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.2.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-jZUYrKwCYD2+aEH2tzrHcn4IBd/vzxaHQ9jrpKbN5cIxCTcvOD7FtnsPZLdJG4OHh6SLjbq0QS86L9ZXvzKaaQ=="],
+    "omp-api-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.1.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-Sz1DIpAYmdqoGXKdRXmPE2kvDQ3GJ+1XuoaWBnYmO+QE1q+9c79lXDeSoVNBzsihAQao+yeT3NftY40l0n6rXA=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.2.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-1dKYVHYusIc0FmlvWQPMEA0b3tiobTH/h1MFzTQAb+1peZOwOu3SpTSxqeOPhEYtFyd6AM29xG4KxraVEqqIuQ=="],
+    "omp-api-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.1.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-hRjKslpfHwxRo1IXFhwsr6gIbkz/uPJ+U2GvvAaHdjlxLFtEbOu9dRMeve/MAPsqlAi/0XUkYLXWwBUNziLmNw=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.2.0", "", { "os": "linux", "cpu": "x64" }, "sha512-rzu42oKfUx+/wg+pn6SdUZArapGLhBejhYa0VsmW6qK8NyHmE8nGLsBf8r2OwE74IXifMPFxZMlI/Fc1Kusxww=="],
+    "omp-api-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.1.1", "", { "os": "linux", "cpu": "x64" }, "sha512-nvjqK5xpnSVUPQX4QwSM0YBFf9FULwWpJtPz8cJsP5z0jMXTb+UFYxdKHy+lsC7A8rT8m3E10yJe6cmw5lNZPg=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.2.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-pvGc05uBk7tTBGU8W6RQWMqpEkocxSUZBVjcxdsL+IlSutzZgBIE//5A0R/a87UbPnoBIdif3PLwFnTcIDwSEA=="],
+    "omp-api-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.1.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-ao0GvI5wC+K+TsukisgiUx44CHzvVQauQLtPB3zy13aS2zufD2283KZUcu3jF2xl1vE7t5Ot8wofOBSOJIG8DQ=="],
 
-    "omp-api-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.2.0", "", { "os": "win32", "cpu": "x64" }, "sha512-tLSIY33N4PxgLGqqG9WVpj3AEBXKIiT7owBFDyQ0bE0tdghQdWuaw7BueMWrOjUOYb9IbaOzICDHc20JDseJ7Q=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.0.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-ZMSRGUEdJoZTL1CDdvHSlxb3V5OK/0qwBoanStdIgvIV4kK22bPn8odZBivkUyWNVHSz7tSnqJuiZ7m+czJ56A=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.0.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-g9V61F8sGAjpBlQpqfu4720sIRGawQsK9hH920brbHm7XwCqqHSXpoYcgbPwCW9VpIO3SJDhVR4Rk+A1a586MA=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.0.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-Gbrq4WFLcFATq06ge76yiD7MFq16RnIMJSWbqcH+nvzDh/jAbtqa4asMgk9oM41GR2FKLLqzs9M0EI4owc6gog=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.0.1", "", { "os": "linux", "cpu": "x64" }, "sha512-AARFjaugklIIVD719sFO1p+M+wiP/KaIt7XFldi19/yvzEmXonUx3kfYtsyiZX21i7rCTM1w4vI6faP4HAOqkA=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.0.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-JSlSp89Y6GKTz8lQs2ddGo3bMnhMz0nqmA0DvzlKUtUhPbDb6NneNrP5NepSu/X9+9Yg1AqmZWv2qJlUark0+A=="],
-
-    "omp-host-1901/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.0.1", "", { "os": "win32", "cpu": "x64" }, "sha512-k4dvP7tpI7lgaqa/rtLDVanRM7NDBw5co2jzEjOBNC749w7quWGbcSq0cc4HqGwjwJLWmQbyYnwWYbjIbde+zQ=="],
+    "omp-api-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.1.1", "", { "os": "win32", "cpu": "x64" }, "sha512-9BHP4lr/5eHl4vNLqtMxKYayvkxa6frw1cBttUMg/4UC5FMLr5+gabYY7O780Hx2wVK15nq3DIbxktLIBfhEcQ=="],
 
     "omp-host-1910/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.1.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-DuA/hKhr+iwu5wd+EE8T9B/QabqUJI+vY/ILaG73RLkBlnMi1q6xAYBR45ZEaauVs01flkJ/A5iPL/YpjXvbyw=="],
 
@@ -300,18 +298,28 @@
 
     "omp-host-1910/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.1.0", "", { "os": "win32", "cpu": "x64" }, "sha512-LyNO1TGM90/1eolvVCeTOCX4kqktIrP/voh4j6ntkXAXXVxPLMBYzoDj8vfl+SExvMC0dIvEF3i9O3rclfim1w=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.2.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-SwzWcsS0RTK2zLhBU4L1XZqCpnq9t8J+Z1YTrsQ0sxzIXdWQog/Nkfvvgt0uIES8dcClFQGvR7MJOmq4KMXl0g=="],
+    "omp-host-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.1.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-J8r1c+Pr4HX3goKmnJrxN0WIh8bWPf+UXLhJ3Zk1evXWh9dtzCBtiCW4BhsXBKWuiyeKi+qVl5ulxEQs677HLg=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.2.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-jZUYrKwCYD2+aEH2tzrHcn4IBd/vzxaHQ9jrpKbN5cIxCTcvOD7FtnsPZLdJG4OHh6SLjbq0QS86L9ZXvzKaaQ=="],
+    "omp-host-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.1.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-Sz1DIpAYmdqoGXKdRXmPE2kvDQ3GJ+1XuoaWBnYmO+QE1q+9c79lXDeSoVNBzsihAQao+yeT3NftY40l0n6rXA=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.2.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-1dKYVHYusIc0FmlvWQPMEA0b3tiobTH/h1MFzTQAb+1peZOwOu3SpTSxqeOPhEYtFyd6AM29xG4KxraVEqqIuQ=="],
+    "omp-host-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.1.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-hRjKslpfHwxRo1IXFhwsr6gIbkz/uPJ+U2GvvAaHdjlxLFtEbOu9dRMeve/MAPsqlAi/0XUkYLXWwBUNziLmNw=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.2.0", "", { "os": "linux", "cpu": "x64" }, "sha512-rzu42oKfUx+/wg+pn6SdUZArapGLhBejhYa0VsmW6qK8NyHmE8nGLsBf8r2OwE74IXifMPFxZMlI/Fc1Kusxww=="],
+    "omp-host-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.1.1", "", { "os": "linux", "cpu": "x64" }, "sha512-nvjqK5xpnSVUPQX4QwSM0YBFf9FULwWpJtPz8cJsP5z0jMXTb+UFYxdKHy+lsC7A8rT8m3E10yJe6cmw5lNZPg=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.2.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-pvGc05uBk7tTBGU8W6RQWMqpEkocxSUZBVjcxdsL+IlSutzZgBIE//5A0R/a87UbPnoBIdif3PLwFnTcIDwSEA=="],
+    "omp-host-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.1.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-ao0GvI5wC+K+TsukisgiUx44CHzvVQauQLtPB3zy13aS2zufD2283KZUcu3jF2xl1vE7t5Ot8wofOBSOJIG8DQ=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.2.0", "", { "os": "win32", "cpu": "x64" }, "sha512-tLSIY33N4PxgLGqqG9WVpj3AEBXKIiT7owBFDyQ0bE0tdghQdWuaw7BueMWrOjUOYb9IbaOzICDHc20JDseJ7Q=="],
+    "omp-host-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.1.1", "", { "os": "win32", "cpu": "x64" }, "sha512-9BHP4lr/5eHl4vNLqtMxKYayvkxa6frw1cBttUMg/4UC5FMLr5+gabYY7O780Hx2wVK15nq3DIbxktLIBfhEcQ=="],
 
-    "omp-tui-1920/@oh-my-pi/pi-utils/@oh-my-pi/omptype": ["@oh-my-pi/omptype@19.2.0", "", {}, "sha512-gaeJpLjfMU9fOzi9qMaKP71qPy69uyhfUiEGb8fCpCZuxT5/ylL2zxoYZKer9IDe3bd3asdIRKqBoCCfEhsX3w=="],
+    "omp-tui-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-arm64": ["@oh-my-pi/pi-natives-darwin-arm64@19.1.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-J8r1c+Pr4HX3goKmnJrxN0WIh8bWPf+UXLhJ3Zk1evXWh9dtzCBtiCW4BhsXBKWuiyeKi+qVl5ulxEQs677HLg=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-darwin-x64": ["@oh-my-pi/pi-natives-darwin-x64@19.1.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-Sz1DIpAYmdqoGXKdRXmPE2kvDQ3GJ+1XuoaWBnYmO+QE1q+9c79lXDeSoVNBzsihAQao+yeT3NftY40l0n6rXA=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-arm64": ["@oh-my-pi/pi-natives-linux-arm64@19.1.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-hRjKslpfHwxRo1IXFhwsr6gIbkz/uPJ+U2GvvAaHdjlxLFtEbOu9dRMeve/MAPsqlAi/0XUkYLXWwBUNziLmNw=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-linux-x64": ["@oh-my-pi/pi-natives-linux-x64@19.1.1", "", { "os": "linux", "cpu": "x64" }, "sha512-nvjqK5xpnSVUPQX4QwSM0YBFf9FULwWpJtPz8cJsP5z0jMXTb+UFYxdKHy+lsC7A8rT8m3E10yJe6cmw5lNZPg=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-arm64": ["@oh-my-pi/pi-natives-win32-arm64@19.1.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-ao0GvI5wC+K+TsukisgiUx44CHzvVQauQLtPB3zy13aS2zufD2283KZUcu3jF2xl1vE7t5Ot8wofOBSOJIG8DQ=="],
+
+    "omp-tui-1911/@oh-my-pi/pi-natives/@oh-my-pi/pi-natives-win32-x64": ["@oh-my-pi/pi-natives-win32-x64@19.1.1", "", { "os": "win32", "cpu": "x64" }, "sha512-9BHP4lr/5eHl4vNLqtMxKYayvkxa6frw1cBttUMg/4UC5FMLr5+gabYY7O780Hx2wVK15nq3DIbxktLIBfhEcQ=="],
   }
 }
