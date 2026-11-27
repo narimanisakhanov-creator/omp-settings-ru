@@ -1,3 +1,10 @@
+## 0.41.0
+
+OMP 19.2.0 → 19.2.1.
+
+- Новые настройки на русском: 1 — Завершение фоновых процессов (`bash.reapBackground`).
+- Покрытие: 19.1.1 483/483, 19.2.0 486/486, 19.2.1 487/487. [Полный список](https://github.com/narimanisakhanov-creator/omp-settings-ru/blob/v0.41.0/upgrade-report.md).
+
 ## 0.40.0
 
 OMP 19.1.1 → 19.2.0.
